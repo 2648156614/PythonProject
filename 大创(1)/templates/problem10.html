@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}第十题{% endblock %}
+
+{% block content %}
+<div class="card mb-4">
+    <div class="card-header bg-primary text-white">
+        <h4><i class="bi bi-calculator"></i> 第一题：自然光与线偏振光的光强比</h4>
+        {% if attempt_count > 0 %}
+        <div class="alert alert-warning mt-2 py-2">
+            <i class="bi bi-exclamation-triangle-fill me-2"></i>
+            第 {{ attempt_count }} 次尝试（最多3次）
+        </div>
+        {% endif %}
+    </div>
+    <div class="card-body">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="math-formula">
+            <h5>题目描述：</h5>
+            <p>一束光是自然光和线偏振光的混合光，让它垂直通过一偏振片。若以此入射光束为轴旋转偏振片，测得透射光强度最大值是最小值的5倍。</p>
+            <p>试求：<strong>入射光束中自然光与线偏振光的光强比值</strong>。</p>
+
+            <div class="alert alert-info mt-3">
+                <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
+                <ol>
+                    <li>设自然光强度为 \( I_n \)，线偏振光强度为 \( I_p \)</li>
+                    <li>自然光通过偏振片后的强度恒为 \( \frac{I_n}{2} \)</li>
+                    <li>线偏振光通过偏振片后的强度为 \( I_p\cos^2\theta \)，其中θ是偏振方向夹角</li>
+                    <li>透射光总强度：
+                        \[ I = \frac{I_n}{2} + I_p\cos^2\theta \]
+                    </li>
+                    <li>最大强度（θ=0°）：
+                        \[ I_{max} = \frac{I_n}{2} + I_p \]
+                    </li>
+                    <li>最小强度（θ=90°）：
+                        \[ I_{min} = \frac{I_n}{2} \]
+                    </li>
+                    <li>根据题意 \( \frac{I_{max}}{I_{min}} = 5 \)，代入可得：
+                        \[ \frac{\frac{I_n}{2} + I_p}{\frac{I_n}{2}} = 5 \]
+                    </li>
+                    <li>解得自然光与线偏振光的光强比：
+                        \[ \frac{I_n}{I_p} = \frac{1}{2} \]
+                    </li>
+                </ol>
+            </div>
+        </div>
+
+        <form method="POST" id="answerForm" class="mt-4">
+            <div class="mb-3">
+                <label for="answer" class="form-label">
+                    <strong>自然光与线偏振光的光强比值 \( \frac{I_n}{I_p} \)：</strong>
+                </label>
+                <input type="number" step="0.01" class="form-control form-control-lg"
+                       id="answer" name="answer" required
+                       value="{{ request.form.get('answer', '') }}">
+                <div class="form-text">请输入保留两位小数的数值</div>
+            </div>
+
+            <div class="d-grid gap-2 d-md-flex justify-content-md-start mt-4">
+                <button type="submit" class="btn btn-primary me-md-2 btn-lg">
+                    <i class="bi bi-send-fill me-1"></i> 提交答案
+                </button>
+                {% if attempt_count > 0 %}
+                <a href="{{ url_for('dashboard') }}" class="btn btn-outline-danger btn-lg">
+                    <i class="bi bi-x-circle me-1"></i> 退出答题
+                </a>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-header bg-light">
+        <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i> 光学原理说明</h5>
+    </div>
+    <div class="card-body">
+        <table class="table table-bordered variable-table">
+            <thead>
+                <tr>
+                    <th>光类型</th>
+                    <th>通过偏振片后的强度</th>
+                    <th>特性</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>自然光</td>
+                    <td>\( \frac{I_n}{2} \)</td>
+                    <td>与偏振片旋转角度无关</td>
+                </tr>
+                <tr>
+                    <td>线偏振光</td>
+                    <td>\( I_p\cos^2\theta \)</td>
+                    <td>θ为偏振方向与偏振片透光轴夹角</td>
+                </tr>
+                <tr>
+                    <td>混合光</td>
+                    <td>\( \frac{I_n}{2} + I_p\cos^2\theta \)</td>
+                    <td>强度在\( \frac{I_n}{2} \)到\( \frac{I_n}{2}+I_p \)之间变化</td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <div class="mt-3">
+            <h5>强度变化示意图：</h5>
+            <img src="{{ url_for('static', filename='images/polarization_graph.png') }}" 
+                 alt="偏振光强度变化图" class="img-fluid">
+            <p class="text-muted">图：旋转偏振片时透射光强度的变化</p>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('answerForm').addEventListener('submit', function() {
+    const submitBtn = this.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 正在提交';
+});
+</script>
+{% endblock %}

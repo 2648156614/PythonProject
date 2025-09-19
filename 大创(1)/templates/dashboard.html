@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}仪表盘{% endblock %}
+
+{% block content %}
+<h2>欢迎, {{ username }}!</h2>
+<p>请继续完成您的习题：</p>
+
+<div class="card">
+    <div class="card-body">
+        <h5 class="card-title">当前进度</h5>
+        <div class="progress mb-3">
+            {% set progress = (current_problem-1)/5*100 %}
+            <div class="progress-bar" role="progressbar"
+                 style="width: {{ progress }}%"
+                 aria-valuenow="{{ progress }}"
+                 aria-valuemin="0"
+                 aria-valuemax="100">
+                已完成 {{ current_problem-1 }}/5 题
+            </div>
+        </div>
+        <a href="/problem/{{ current_problem }}" class="btn btn-primary">
+            {% if current_problem > 1 %}继续{% endif %}第 {{ current_problem }} 题
+        </a>
+    </div>
+</div>
+{% endblock %}

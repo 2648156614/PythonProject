@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block title %}第四题{% endblock %}
+
+{% block content %}
+<div class="card mb-4">
+    <div class="card-header bg-primary text-white">
+        <h4><i class="bi bi-globe"></i> 第四题：质点受引力的速度</h4>
+        {% if attempt_count > 0 %}
+        <div class="alert alert-warning mt-2 py-2">
+            <i class="bi bi-exclamation-triangle-fill me-2"></i>
+            第 {{ attempt_count }} 次尝试（最多3次）
+        </div>
+        {% endif %}
+    </div>
+    <div class="card-body">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="math-formula">
+            <h5>题目描述：</h5>
+            <p>已知一质量为 \( m = {{ problem.var_values.m }} \, \text{kg} \) 的质点在x轴上运动，质点只受到指向原点的引力作用，引力大小与质点离原点的距离 \( x \) 的平方成反比：</p>
+            \[ \vec{F} = -\frac{k}{x^2}\hat{i} \]
+            <p>其中比例系数 \( k = {{ problem.var_values.k }} \, \text{N}\cdot\text{m}^2 \)。</p>
+            <p>设质点在 \( x = A = {{ problem.var_values.A }} \, \text{m} \) 时的速度为零，求质点在 \( x = \frac{A}{4} = {{ problem.var_values.A/4 }} \, \text{m} \) 处的速度的大小 \( v \)。</p>
+
+            <div class="alert alert-info mt-3">
+                <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
+                <p>利用动能定理：\( W = \Delta K \)</p>
+                <p>功的计算：\( W = \int_{x_1}^{x_2} F dx \)</p>
+                <p>动能变化：\( \Delta K = \frac{1}{2}mv_2^2 - \frac{1}{2}mv_1^2 \)</p>
+            </div>
+        </div>
+
+        <form method="POST" id="answerForm" class="mt-4">
+            <div class="mb-3">
+                <label for="answer" class="form-label">
+                    <strong>\( x = \frac{A}{4} = {{ problem.var_values.A/4 }} \, \text{m} \) 处的速度 \( v \) (m/s)：</strong>
+                </label>
+                <input type="number" step="0.01" class="form-control form-control-lg"
+                       id="answer" name="answer" required
+                       value="{{ request.form.get('answer', '') }}">
+                <div class="form-text">请输入保留两位小数的数值</div>
+            </div>
+
+            <div class="d-grid gap-2 d-md-flex justify-content-md-start mt-4">
+                <button type="submit" class="btn btn-primary me-md-2 btn-lg">
+                    <i class="bi bi-send-fill me-1"></i> 提交答案
+                </button>
+                {% if attempt_count > 0 %}
+                <a href="{{ url_for('dashboard') }}" class="btn btn-outline-danger btn-lg">
+                    <i class="bi bi-x-circle me-1"></i> 退出答题
+                </a>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-header bg-light">
+        <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i> 题目参数表</h5>
+    </div>
+    <div class="card-body">
+        <table class="table table-bordered variable-table">
+            <thead>
+                <tr>
+                    <th>物理量</th>
+                    <th>符号</th>
+                    <th>值</th>
+                    <th>单位</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>质点质量</td>
+                    <td>\( m \)</td>
+                    <td>{{ problem.var_values.m }}</td>
+                    <td>kg</td>
+                </tr>
+                <tr>
+                    <td>比例系数</td>
+                    <td>\( k \)</td>
+                    <td>{{ problem.var_values.k }}</td>
+                    <td>N·m²</td>
+                </tr>
+                <tr>
+                    <td>初始位置</td>
+                    <td>\( A \)</td>
+                    <td>{{ problem.var_values.A }}</td>
+                    <td>m</td>
+                </tr>
+                <tr>
+                    <td>目标位置</td>
+                    <td>\( A/4 \)</td>
+                    <td>{{ problem.var_values.A/4 }}</td>
+                    <td>m</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+document.getElementById('answerForm').addEventListener('submit', function() {
+    const submitBtn = this.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 提交中...';
+});
+</script>
+{% endblock %}

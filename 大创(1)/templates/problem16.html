@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+
+{% block title %}第十六题{% endblock %}
+
+{% block content %}
+<div class="card mb-4">
+    <div class="card-header bg-primary text-white">
+        <h4><i class="bi bi-atom"></i> 第一题：量子态电子填充数</h4>
+        {% if attempt_count > 0 %}
+        <div class="alert alert-warning mt-2 py-2">
+            <i class="bi bi-exclamation-triangle-fill me-2"></i>
+            第 {{ attempt_count }} 次尝试（最多3次）
+        </div>
+        {% endif %}
+    </div>
+    <div class="card-body">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="math-formula">
+            <h5>题目描述：</h5>
+            <p>在主量子数 \( n=2 \)，自旋磁量子数 \( m_s=-\frac{1}{2} \) 的量子态中：</p>
+            <p>求：能够填充的最大电子数是多少？</p>
+
+            <div class="alert alert-info mt-3">
+                <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
+                <p>1. 主量子数 \( n \) 决定电子层</p>
+                <p>2. 每个 \( m_s \) 对应一个自旋方向</p>
+                <p>3. 泡利不相容原理限制电子填充</p>
+                <p>4. 电子状态由四个量子数 \( (n,l,m_l,m_s) \) 共同确定</p>
+            </div>
+        </div>
+
+        <form method="POST" id="answerForm" class="mt-4">
+            <div class="mb-3">
+                <label for="answer" class="form-label">
+                    <strong>最大电子数：</strong>
+                </label>
+                <input type="number" min="0" step="1" class="form-control form-control-lg"
+                       id="answer" name="answer" required
+                       placeholder="输入整数"
+                       value="{{ request.form.get('answer', '') }}">
+            </div>
+
+            <div class="d-grid gap-2 d-md-flex justify-content-md-start mt-4">
+                <button type="submit" class="btn btn-primary me-md-2 btn-lg">
+                    <i class="bi bi-send-fill me-1"></i> 提交答案
+                </button>
+                {% if attempt_count > 0 %}
+                <a href="{{ url_for('dashboard') }}" class="btn btn-outline-danger btn-lg">
+                    <i class="bi bi-x-circle me-1"></i> 退出答题
+                </a>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-header bg-light">
+        <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i> 解答</h5>
+    </div>
+    <div class="card-body">
+        <h5>解答过程：</h5>
+        <p><strong>1. 确定可能的量子态：</strong></p>
+        <p>当 \( n=2 \) 时，轨道角量子数 \( l \) 的可能取值为：</p>
+        <p>\[ l = 0,1 \]</p>
+        
+        <p><strong>2. 列出所有可能状态：</strong></p>
+        <table class="table table-bordered">
+            <thead>
+                <tr>
+                    <th>\( l \)</th>
+                    <th>\( m_l \)</th>
+                    <th>\( m_s \)</th>
+                    <th>量子态</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td rowspan="2">0 (s轨道)</td>
+                    <td>0</td>
+                    <td>±½</td>
+                    <td>(2,0,0,-½)</td>
+                </tr>
+                <tr>
+                    <td>0</td>
+                    <td>+½</td>
+                    <td>(2,0,0,+½)</td>
+                </tr>
+                <tr>
+                    <td rowspan="6">1 (p轨道)</td>
+                    <td>-1</td>
+                    <td>±½</td>
+                    <td>(2,1,-1,-½)</td>
+                </tr>
+                <tr>
+                    <td>0</td>
+                    <td>±½</td>
+                    <td>(2,1,0,-½)</td>
+                </tr>
+                <tr>
+                    <td>1</td>
+                    <td>±½</td>
+                    <td>(2,1,1,-½)</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p><strong>3. 筛选符合条件的状态：</strong></p>
+        <p>题目限定 \( m_s = -\frac{1}{2} \)，因此符合条件的量子态有：</p>
+        <ul>
+            <li>(2,0,0,-½)</li>
+            <li>(2,1,-1,-½)</li>
+            <li>(2,1,0,-½)</li>
+            <li>(2,1,1,-½)</li>
+        </ul>
+        
+        <p><strong>4. 计算最大电子数：</strong></p>
+        <p>根据泡利不相容原理，每个量子态只能容纳1个电子</p>
+        <p>符合条件的量子态共有4个</p>
+        
+        <div class="alert alert-success mt-3">
+            <h5><i class="bi bi-check-circle-fill"></i> 最终答案：</h5>
+            <p>能够填充的最大电子数是 <strong>4个</strong></p>
+        </div>
+        
+        <div class="alert alert-secondary mt-3">
+            <h5><i class="bi bi-gear-wide-connected"></i> 原理说明：</h5>
+            <p>1. 电子状态由四个量子数共同确定：\( (n,l,m_l,m_s) \)</p>
+            <p>2. \( n=2 \) 时共有8个可能量子态（2s轨道2个 + 2p轨道6个）</p>
+            <p>3. 当限定 \( m_s=-\frac{1}{2} \) 时，量子态数减半</p>
+            <p>4. 泡利不相容原理保证每个量子态最多1个电子</p>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('answerForm').addEventListener('submit', function() {
+    const submitBtn = this.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 正在提交';
+});
+</script>
+{% endblock %}

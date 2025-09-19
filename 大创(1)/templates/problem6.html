@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block title %}第六题{% endblock %}
+
+{% block content %}
+<div class="card mb-4">
+    <div class="card-header bg-primary text-white">
+        <h4><i class="bi bi-calculator"></i> 第一题：动量守恒与功的计算</h4>
+        {% if attempt_count > 0 %}
+        <div class="alert alert-warning mt-2 py-2">
+            <i class="bi bi-exclamation-triangle-fill me-2"></i>
+            第 {{ attempt_count }} 次尝试（最多3次）
+        </div>
+        {% endif %}
+    </div>
+    <div class="card-body">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="math-formula">
+            <h5>题目描述：</h5>
+            <p>质量为 \( M = {{ problem.var_values.M }} \, \text{kg} \) 的木块静止在光滑的水平面上。质量为 \( m = {{ problem.var_values.m }} \, \text{kg} \)、速率为 \( v = {{ problem.var_values.v }} \, \text{m/s} \) 的子弹沿水平方向打入木块并陷在其中。</p>
+            
+            <p>试计算：<strong>相对于地面参考系，木块对子弹所作的功 \( W \)。</strong></p>
+
+            <div class="alert alert-info mt-3">
+                <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
+                <ol>
+                    <li>应用动量守恒定律求出子弹与木块共同运动的速度 \( V \)</li>
+                    <li>计算子弹初动能 \( E_{k1} = \frac{1}{2}mv^2 \)</li>
+                    <li>计算子弹嵌入木块后的动能 \( E_{k2} = \frac{1}{2}mV^2 \)</li>
+                    <li>根据动能定理：\( W = \Delta E_k = E_{k2} - E_{k1} \)</li>
+                    <li>注意：功为负值，表示木块对子弹做负功（阻力做功）</li>
+                </ol>
+            </div>
+        </div>
+
+        <form method="POST" id="answerForm" class="mt-4">
+            <div class="mb-3">
+                <label for="answer" class="form-label">
+                    <strong>木块对子弹所作的功 \( W \) (J)：</strong>
+                </label>
+                <input type="number" step="0.01" class="form-control form-control-lg"
+                       id="answer" name="answer" required
+                       value="{{ request.form.get('answer', '') }}">
+                <div class="form-text">请输入保留两位小数的数值（负值表示做负功）</div>
+            </div>
+
+            <div class="d-grid gap-2 d-md-flex justify-content-md-start mt-4">
+                <button type="submit" class="btn btn-primary me-md-2 btn-lg">
+                    <i class="bi bi-send-fill me-1"></i> 提交答案
+                </button>
+                {% if attempt_count > 0 %}
+                <a href="{{ url_for('dashboard') }}" class="btn btn-outline-danger btn-lg">
+                    <i class="bi bi-x-circle me-1"></i> 退出答题
+                </a>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-header bg-light">
+        <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i> 题目参数表</h5>
+    </div>
+    <div class="card-body">
+        <table class="table table-bordered variable-table">
+            <thead>
+                <tr>
+                    <th>物理量</th>
+                    <th>符号</th>
+                    <th>值</th>
+                    <th>单位</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>木块质量</td>
+                    <td>\( M \)</td>
+                    <td>{{ problem.var_values.M }}</td>
+                    <td>kg</td>
+                </tr>
+                <tr>
+                    <td>子弹质量</td>
+                    <td>\( m \)</td>
+                    <td>{{ problem.var_values.m }}</td>
+                    <td>kg</td>
+                </tr>
+                <tr>
+                    <td>子弹初速度</td>
+                    <td>\( v \)</td>
+                    <td>{{ problem.var_values.v }}</td>
+                    <td>m/s</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+document.getElementById('answerForm').addEventListener('submit', function() {
+    const submitBtn = this.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 正在提交';
+});
+</script>
+{% endblock %}
