@@ -1,0 +1,304 @@
+{% extends "base.html" %}
+
+{% block title %}所有题目{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0">所有物理题目</h2>
+        <div>
+            <button class="btn btn-outline-secondary" onclick="refreshAllProblems()">
+                <i class="bi bi-arrow-clockwise"></i> 刷新所有题目
+            </button>
+            <a href="{{ url_for('dashboard') }}" class="btn btn-outline-primary">
+                <i class="bi bi-house"></i> 返回主页
+            </a>
+        </div>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="alert alert-{{ category }} alert-dismissible fade show">
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <!-- 统计信息卡片 -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card text-white bg-info">
+                <div class="card-body">
+                    <h5 class="card-title">{{ problems|length }}</h5>
+                    <p class="card-text">总题目数</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-9">
+            <div class="card">
+                <div class="card-body">
+                    <h6 class="card-title">进度概览</h6>
+                    <div class="progress" style="height: 20px;">
+                        {% set completed = namespace(count=0) %}
+                        {% for problem in problems %}
+                            {% if problem.completed %}
+                                {% set completed.count = completed.count + 1 %}
+                            {% endif %}
+                        {% endfor %}
+                        {% set progress = (completed.count / problems|length * 100) if problems|length > 0 else 0 %}
+                        <div class="progress-bar bg-success" role="progressbar"
+                             style="width: {{ progress }}%;"
+                             aria-valuenow="{{ progress }}" aria-valuemin="0" aria-valuemax="100">
+                            {{ "%.1f"|format(progress) }}%
+                        </div>
+                    </div>
+                    <small class="text-muted">已完成 {{ completed.count }}/{{ problems|length }} 题</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 筛选和搜索 -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label for="searchInput" class="form-label">搜索题目</label>
+                    <input type="text" class="form-control" id="searchInput"
+                           placeholder="输入题目名称或内容...">
+                </div>
+                <div class="col-md-3">
+                    <label for="statusFilter" class="form-label">状态筛选</label>
+                    <select class="form-select" id="statusFilter">
+                        <option value="all">全部状态</option>
+                        <option value="completed">已完成</option>
+                        <option value="incomplete">未完成</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="difficultyFilter" class="form-label">难度筛选</label>
+                    <select class="form-select" id="difficultyFilter">
+                        <option value="all">全部难度</option>
+                        <option value="easy">简单</option>
+                        <option value="medium">中等</option>
+                        <option value="hard">困难</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 题目列表 -->
+    {% for problem in problems %}
+    <div class="card mb-4 problem-card"
+         data-id="{{ problem.id }}"
+         data-name="{{ problem.name }}"
+         data-status="{{ 'completed' if problem.completed else 'incomplete' }}"
+         data-difficulty="{{ problem.difficulty|default('medium') }}">
+        <div class="card-header d-flex justify-content-between align-items-center
+                    {{ 'bg-success text-white' if problem.completed else 'bg-primary text-white' }}">
+            <h4 class="mb-0">
+                <i class="bi {{ 'bi-check-circle-fill' if problem.completed else 'bi-question-circle' }} me-2"></i>
+                第{{ problem.id }}题：{{ problem.name }}
+            </h4>
+            <div>
+                {% if problem.completed %}
+                <span class="badge bg-light text-success me-2">
+                    <i class="bi bi-check-lg"></i> 已完成
+                </span>
+                {% endif %}
+                <span class="badge bg-warning text-dark">
+                    {% if problem.difficulty == 'easy' %}
+                    <i class="bi bi-arrow-down"></i> 简单
+                    {% elif problem.difficulty == 'hard' %}
+                    <i class="bi bi-arrow-up"></i> 困难
+                    {% else %}
+                    <i class="bi bi-dash"></i> 中等
+                    {% endif %}
+                </span>
+            </div>
+        </div>
+        <div class="card-body">
+            <!-- 题目内容 -->
+            <div class="math-formula mb-3">
+                {{ problem.content|safe }}
+            </div>
+
+            <!-- 题目参数摘要 -->
+            {% if problem.var_values %}
+            <div class="card bg-light mb-3">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-list-check"></i> 题目参数</h6>
+                </div>
+                <div class="card-body py-2">
+                    <div class="row">
+                        {% for key, value in problem.var_values.items() %}
+                        <div class="col-md-3 col-6 mb-1">
+                            <small class="text-muted">{{ key }}:</small>
+                            <strong>{{ value }}</strong>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- 答题统计（如果已完成） -->
+            {% if problem.completed and problem.stats %}
+            <div class="alert alert-success py-2">
+                <small>
+                    <i class="bi bi-graph-up"></i>
+                    上次答题: 用时 {{ problem.stats.time_taken }}秒 |
+                    尝试 {{ problem.stats.attempt_count }}次 |
+                    得分: {{ problem.stats.score }}/100
+                </small>
+            </div>
+            {% endif %}
+
+            <!-- 操作按钮 -->
+            <div class="d-flex gap-2 flex-wrap">
+                <a href="{{ url_for('problem_ajax', problem_id=problem.id) }}"
+                   class="btn {{ 'btn-outline-success' if problem.completed else 'btn-primary' }}">
+                    <i class="bi {{ 'bi-arrow-repeat' if problem.completed else 'bi-play-circle' }}"></i>
+                    {{ '重新答题' if problem.completed else '开始答题' }}
+                </a>
+
+                <button class="btn btn-outline-warning btn-sm"
+                        onclick="refreshSingleProblem({{ problem.id }})">
+                    <i class="bi bi-arrow-clockwise"></i> 刷新题目
+                </button>
+
+                {% if problem.completed %}
+                <button class="btn btn-outline-secondary btn-sm"
+                        onclick="showSolution({{ problem.id }})">
+                    <i class="bi bi-journal-text"></i> 查看解析
+                </button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="text-center py-5">
+        <i class="bi bi-inbox display-1 text-muted"></i>
+        <h4 class="text-muted">暂无题目</h4>
+        <p class="text-muted">当前没有可用的题目</p>
+    </div>
+    {% endfor %}
+</div>
+
+<script>
+// 搜索和筛选功能
+function setupFilters() {
+    const searchInput = document.getElementById('searchInput');
+    const statusFilter = document.getElementById('statusFilter');
+    const difficultyFilter = document.getElementById('difficultyFilter');
+    const problemCards = document.querySelectorAll('.problem-card');
+
+    function filterProblems() {
+        const searchTerm = searchInput.value.toLowerCase();
+        const statusValue = statusFilter.value;
+        const difficultyValue = difficultyFilter.value;
+
+        problemCards.forEach(card => {
+            const name = card.getAttribute('data-name').toLowerCase();
+            const status = card.getAttribute('data-status');
+            const difficulty = card.getAttribute('data-difficulty');
+
+            const matchesSearch = name.includes(searchTerm) ||
+                                card.textContent.toLowerCase().includes(searchTerm);
+            const matchesStatus = statusValue === 'all' || status === statusValue;
+            const matchesDifficulty = difficultyValue === 'all' || difficulty === difficultyValue;
+
+            if (matchesSearch && matchesStatus && matchesDifficulty) {
+                card.style.display = 'block';
+            } else {
+                card.style.display = 'none';
+            }
+        });
+    }
+
+    searchInput.addEventListener('input', filterProblems);
+    statusFilter.addEventListener('change', filterProblems);
+    difficultyFilter.addEventListener('change', filterProblems);
+}
+
+// 刷新单个题目
+function refreshSingleProblem(problemId) {
+    if (confirm('确定要刷新这道题目吗？这将生成新的题目参数。')) {
+        fetch(`/refresh_problem/${problemId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                alert('刷新失败: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('刷新失败');
+        });
+    }
+}
+
+// 刷新所有题目
+function refreshAllProblems() {
+    if (confirm('确定要刷新所有题目吗？这将重新生成所有题目的参数。')) {
+        fetch('/refresh_all_problems', {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                alert('刷新失败: ' + data.message);
+            }
+        });
+    }
+}
+
+// 显示解析
+function showSolution(problemId) {
+    alert('解析功能开发中...');
+}
+
+// 初始化
+document.addEventListener('DOMContentLoaded', function() {
+    setupFilters();
+
+    // 添加键盘快捷键
+    document.addEventListener('keydown', function(e) {
+        if (e.ctrlKey && e.key === 'r') {
+            e.preventDefault();
+            refreshAllProblems();
+        }
+    });
+});
+</script>
+
+<style>
+.problem-card {
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.problem-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+.math-formula {
+    font-size: 1.1em;
+    line-height: 1.6;
+}
+.badge {
+    font-size: 0.75em;
+}
+</style>
+{% endblock %}

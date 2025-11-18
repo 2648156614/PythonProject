@@ -1,0 +1,932 @@
+{% extends "base.html" %}
+
+{% block title %}第{{ problem_id }}题{% endblock %}
+
+{% block content %}
+<div class="card mb-4">
+    <div class="card-header bg-primary text-white">
+        <div class="d-flex justify-content-between align-items-center">
+            <h4 class="mb-0">
+                <i class="bi bi-calculator me-2"></i> 第{{ problem_id }}题：{{ problem.template_name }}
+            </h4>
+            <div class="d-flex align-items-center">
+                <span class="badge bg-light text-dark me-2" id="timer-display">
+                    <i class="bi bi-clock me-1"></i> 用时: <span id="time-counter">0</span>秒
+                </span>
+                {% if total_attempts > 0 %}
+                <span class="badge bg-warning text-dark">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    累计尝试: {{ total_attempts }} 次
+                </span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="card-body">
+        <!-- 动态消息显示区域 -->
+        <div id="message-area">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }} alert-dismissible fade show">
+                            {{ message }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+        </div>
+
+        <!-- 进度指示器 -->
+        <div class="progress mb-4" style="height: 8px;">
+            {% set progress_width = (problem_id / 8 * 100) %}
+            <div class="progress-bar bg-success" role="progressbar"
+                 style="width: {{ progress_width }}%"
+                 aria-valuenow="{{ progress_width }}" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+        <div class="d-flex justify-content-between mb-3">
+            <small class="text-muted">进度: {{ problem_id }}/8</small>
+            <small class="text-muted">累计尝试: <span id="total-attempts">{{ total_attempts }}</span> 次</small>
+        </div>
+
+        <!-- 题目内容 -->
+        <div class="math-formula mb-4 p-3 border rounded bg-light" id="problem-content">
+            {{ problem.problem_text|safe }}
+        </div>
+
+        <!-- 动态答题表单 -->
+        <form id="answer-form" class="mt-4">
+            <div id="answer-inputs">
+                {% if answer_count == 1 %}
+                <!-- 单答案题目 -->
+                <div class="mb-3">
+                    <label for="answer" class="form-label">
+                        <strong><i class="bi bi-input-cursor-text me-1"></i>请输入答案：</strong>
+                    </label>
+                    <input type="number" step="0.01" class="form-control form-control-lg"
+                           id="answer" name="answer" required
+                           placeholder="输入保留两位小数的数值"
+                           autocomplete="off">
+                    <div class="form-text">
+                        <i class="bi bi-info-circle me-1"></i>请输入保留两位小数的数值，系统会自动进行容错判断（±1%）
+                    </div>
+                </div>
+                {% else %}
+                <!-- 多答案题目 -->
+                <div class="row">
+                    {% for i in range(answer_count) %}
+                    <div class="col-md-6 mb-3">
+                        <label for="answer{{ i+1 }}" class="form-label">
+                            <strong><i class="bi bi-input-cursor-text me-1"></i>答案 {{ i+1 }}：</strong>
+                        </label>
+                        <input type="number" step="0.01" class="form-control form-control-lg"
+                               id="answer{{ i+1 }}" name="answer{{ i+1 }}" required
+                               placeholder="输入答案 {{ i+1 }}"
+                               autocomplete="off">
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="form-text mb-3">
+                    <i class="bi bi-info-circle me-1"></i>请输入保留两位小数的数值（注意正负号），系统会自动进行容错判断（±1%）
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="d-grid gap-2 d-md-flex justify-content-md-start mt-4">
+                <button type="submit" class="btn btn-primary me-md-2 btn-lg" id="submit-btn">
+                    <i class="bi bi-send-fill me-1"></i> 提交答案
+                </button>
+
+                <button type="button" class="btn btn-success btn-lg me-md-2" id="next-btn" style="display: none;">
+                    <i class="bi bi-arrow-right me-1"></i> 下一题
+                </button>
+
+                <button type="button" class="btn btn-warning btn-lg me-md-2" id="refresh-btn">
+                    <i class="bi bi-arrow-clockwise me-1"></i> 刷新题目
+                </button>
+
+                <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary btn-lg me-md-2">
+                    <i class="bi bi-house me-1"></i> 返回主页
+                </a>
+
+                {% if total_attempts > 0 %}
+                <a href="{{ url_for('dashboard') }}" class="btn btn-outline-danger btn-lg">
+                    <i class="bi bi-x-circle me-1"></i> 退出答题
+                </a>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 动态变量表 -->
+<div class="card mt-3">
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i> 题目参数表</h5>
+        <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse"
+                data-bs-target="#variablesTable" aria-expanded="true" aria-controls="variablesTable">
+            <i class="bi bi-chevron-down"></i>
+        </button>
+    </div>
+    <div class="collapse show" id="variablesTable">
+        <div class="card-body">
+            <table class="table table-bordered variable-table table-hover" id="variables-table">
+                <thead class="table-light">
+                    <tr>
+                        <th><i class="bi bi-list-check me-1"></i>物理量</th>
+                        <th><i class="bi bi-symbol me-1"></i>符号</th>
+                        <th>数值</th>
+                        <th>单位</th>
+                    </tr>
+                </thead>
+                <tbody id="variables-body">
+                    {% for key, value in problem.var_values.items() %}
+                    <tr data-var-key="{{ key }}">
+                        <td>
+                            {% if key == 'r' %}<i class="bi bi-circle me-1"></i>线圈半径
+                            {% elif key == 'R' %}<i class="bi bi-lightning-charge me-1"></i>电阻
+                            {% elif key == 'i' %}<i class="bi bi-lightning me-1"></i>感应电流
+                            {% elif key == 'N' %}<i class="bi bi-123 me-1"></i>线圈匝数
+                            {% elif key == 'B' or key == 'B0' %}<i class="bi bi-magnet me-1"></i>磁感应强度
+                            {% elif key == 'A' %}<i class="bi bi-arrow-up-down me-1"></i>振幅
+                            {% elif key == 'omega' %}<i class="bi bi-arrow-clockwise me-1"></i>角速度
+                            {% elif key == 'l' %}<i class="bi bi-rulers me-1"></i>边长
+                            {% elif key == 'v' %}<i class="bi bi-speedometer me-1"></i>速度
+                            {% elif key == 'dBdt' %}<i class="bi bi-graph-up me-1"></i>磁场变化率
+                            {% elif key == 'alpha' %}<i class="bi bi-graph-up-arrow me-1"></i>电流变化率
+                            {% elif key == 'I' %}<i class="bi bi-lightning-fill me-1"></i>电流
+                            {% elif key == 'm' %}<i class="bi bi-calculator me-1"></i>质量
+                            {% elif key == 'AC' %}<i class="bi bi-arrow-right me-1"></i>导体长度
+                            {% elif key == 'L' %}<i class="bi bi-arrow-right me-1"></i>导线长度
+                            {% elif key == 'x' %}<i class="bi bi-arrow-right me-1"></i>距离
+                            {% elif key == 'd' %}<i class="bi bi-arrows-h me-1"></i>间距
+                            {% elif key == 'a' %}<i class="bi bi-circle me-1"></i>小圆半径
+                            {% else %}<i class="bi bi-question-circle me-1"></i>{{ key }}{% endif %}
+                        </td>
+                        <td class="math-symbol">
+                            {% if key == 'dBdt' %}\( \frac{dB}{dt} \)
+                            {% elif key == 'B0' %}\( B_0 \)
+                            {% elif key == 'omega' %}\( \omega \)
+                            {% elif key == 'alpha' %}\( \alpha \)
+                            {% else %}\( {{ key }} \){% endif %}
+                        </td>
+                        <td class="var-value">
+                            <strong>
+                                {% if key in ['i', 'A', 'l'] %}
+                                    {{ "%.3f"|format(value) if value is number else value }}
+                                {% elif key in ['B', 'B0', 'v', 'dBdt', 'alpha', 'm'] %}
+                                    {{ "%.2f"|format(value) if value is number else value }}
+                                {% else %}
+                                    {{ value }}
+                                {% endif %}
+                            </strong>
+                        </td>
+                        <td class="var-unit">
+                            {% if key == 'r' or key == 'a' or key == 'AC' or key == 'x' %}cm
+                            {% elif key == 'l' or key == 'L' or key == 'd' or key == 'R' %}m
+                            {% elif key == 'R' %}Ω
+                            {% elif key == 'i' or key == 'I' %}A
+                            {% elif key == 'B' or key == 'B0' %}T
+                            {% elif key == 'A' %}m
+                            {% elif key == 'omega' %}rad/s
+                            {% elif key == 'v' %}m/s
+                            {% elif key == 'dBdt' %}T/s
+                            {% elif key == 'alpha' %}A/s
+                            {% elif key == 'm' %}kg
+                            {% elif key == 'density' %}kg/m³
+                            {% else %}-{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    <!-- 固定电阻率行（仅第九题显示） -->
+                    {% if problem_id == 9 %}
+                    <tr>
+                        <td><i class="bi bi-droplet me-1"></i>电阻率</td>
+                        <td class="math-symbol">\( \rho \)</td>
+                        <td class="var-value"><strong>1.7×10⁻⁷</strong></td>
+                        <td class="var-unit">Ω·m</td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 答题统计卡片 -->
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card bg-light">
+            <div class="card-body text-center">
+                <h6><i class="bi bi-clock-history me-2"></i>答题统计</h6>
+                <div class="row">
+                    <div class="col-6">
+                        <small class="text-muted">当前用时</small>
+                        <div class="h5 mb-0" id="current-time">0秒</div>
+                    </div>
+                    <div class="col-6">
+                        <small class="text-muted">累计尝试</small>
+                        <div class="h5 mb-0" id="total-attempts-display">{{ total_attempts }} 次</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card bg-light">
+            <div class="card-body text-center">
+                <h6><i class="bi bi-lightbulb me-2"></i>解题提示</h6>
+                <div class="hint-content">
+                    {% if problem_id == 1 %}
+                    <small class="text-muted">法拉第电磁感应定律：\( \varepsilon = -\frac{d\Phi}{dt} \)，磁通量：\( \Phi = B \cdot S = B \cdot \pi r^2 \)，感应电流：\( i = \frac{\varepsilon}{R} \)</small>
+                    {% elif problem_id == 2 %}
+                    <small class="text-muted">速度单位换算：km/h → m/s，磁场单位换算：μT → T，感应电动势：ε = BLv</small>
+                    {% elif problem_id == 3 %}
+                    <small class="text-muted">动生电动势：\( \varepsilon = \int (\vec{v} \times \vec{B}) \cdot d\vec{l} \)，考虑各边的运动情况和磁场方向</small>
+                    {% elif problem_id == 4 %}
+                    <small class="text-muted">动生电动势：导体切割磁感线产生，感生电动势：磁场变化产生，总电动势为两者之和</small>
+                    {% elif problem_id == 5 %}
+                    <small class="text-muted">动生电动势公式：\( \varepsilon = \int (\vec{v} \times \vec{B}) \cdot d\vec{l} \)，考虑不同运动方向时各段的电动势</small>
+                    {% elif problem_id == 6 %}
+                    <small class="text-muted">感应电荷量：\( q = \frac{\Delta\Phi}{R} \)，做功与功率和时间有关</small>
+                    {% elif problem_id == 7 %}
+                    <small class="text-muted">法拉第电磁感应定律，总电动势为两个线圈电动势之和，感应电流最大值</small>
+                    {% elif problem_id == 8 %}
+                    <small class="text-muted">导线长度与质量关系，回路电阻计算，感应电动势与电流关系</small>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 全局变量
+let startTime = Date.now();
+let isSubmitting = false;
+let timerInterval = null;
+const problemId = {{ problem_id }};
+const answerCount = {{ answer_count }};
+let totalAttempts = {{ total_attempts }};
+
+// 初始化全局正确答案变量
+let currentCorrectAnswers = {{ problem.correct_answers | tojson }};
+console.log('Ajax问题页面初始化 - 问题ID:', problemId, '答案数量:', answerCount, '累计尝试:', totalAttempts);
+console.log('初始正确答案:', currentCorrectAnswers);
+
+// 初始化计时器
+function initTimer() {
+    clearInterval(timerInterval);
+    startTime = Date.now();
+
+    timerInterval = setInterval(() => {
+        const currentTime = Math.floor((Date.now() - startTime) / 1000);
+        document.getElementById('time-counter').textContent = currentTime;
+        document.getElementById('current-time').textContent = currentTime + '秒';
+    }, 1000);
+}
+
+// 显示消息（不会自动消失）
+function showMessage(message, type = 'info') {
+    const messageArea = document.getElementById('message-area');
+    const alertClass = type === 'error' ? 'alert-danger' :
+                      type === 'success' ? 'alert-success' :
+                      type === 'warning' ? 'alert-warning' : 'alert-info';
+
+    // 创建不自动消失的alert
+    const messageId = 'message-' + Date.now();
+    messageArea.innerHTML = `
+        <div id="${messageId}" class="alert ${alertClass}">
+            <div class="d-flex align-items-center">
+                <i class="bi ${type === 'success' ? 'bi-check-circle-fill' :
+                              type === 'error' ? 'bi-exclamation-triangle-fill' :
+                              type === 'warning' ? 'bi-exclamation-circle-fill' : 'bi-info-circle-fill'}
+                    me-2"></i>
+                <div class="flex-grow-1">${message}</div>
+                <button type="button" class="btn-close" onclick="document.getElementById('${messageId}').remove()"></button>
+            </div>
+        </div>
+    `;
+
+    // 自动滚动到消息区域
+    messageArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// 显示临时消息（会自动消失）
+function showTempMessage(message, type = 'info', duration = 3000) {
+    const messageArea = document.getElementById('message-area');
+    const alertClass = type === 'error' ? 'alert-danger' :
+                      type === 'success' ? 'alert-success' :
+                      type === 'warning' ? 'alert-warning' : 'alert-info';
+
+    const messageId = 'temp-message-' + Date.now();
+    const tempMessage = document.createElement('div');
+    tempMessage.id = messageId;
+    tempMessage.className = `alert ${alertClass} alert-dismissible fade show`;
+    tempMessage.innerHTML = `
+        <div class="d-flex align-items-center">
+            <i class="bi ${type === 'success' ? 'bi-check-circle-fill' :
+                          type === 'error' ? 'bi-exclamation-triangle-fill' :
+                          type === 'warning' ? 'bi-exclamation-circle-fill' : 'bi-info-circle-fill'}
+                me-2"></i>
+            <div>${message}</div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+
+    messageArea.appendChild(tempMessage);
+
+    // 自动滚动到消息区域
+    messageArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    // 自动消失
+    setTimeout(() => {
+        const messageElement = document.getElementById(messageId);
+        if (messageElement) {
+            messageElement.remove();
+        }
+    }, duration);
+}
+
+// 更新尝试次数显示
+function updateAttemptsDisplay() {
+    document.getElementById('total-attempts').textContent = totalAttempts;
+    document.getElementById('total-attempts-display').textContent = totalAttempts + ' 次';
+}
+
+// 恢复按钮状态
+function resetSubmitButton() {
+    const submitBtn = document.getElementById('submit-btn');
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = '<i class="bi bi-send-fill me-1"></i> 提交答案';
+    submitBtn.style.display = 'inline-block';
+    isSubmitting = false;
+}
+
+// 获取答案数据 - 关键修改：包含正确答案
+function getAnswerData() {
+    const answerData = {
+        time_taken: (Date.now() - startTime) / 1000,
+        correct_answers: currentCorrectAnswers  // 关键：传递当前正确答案
+    };
+
+    if (answerCount === 1) {
+        const answerValue = document.getElementById('answer').value;
+        if (answerValue) {
+            answerData.answer = parseFloat(answerValue);
+        }
+    } else {
+        for (let i = 1; i <= answerCount; i++) {
+            const answerValue = document.getElementById(`answer${i}`).value;
+            if (answerValue) {
+                answerData[`answer${i}`] = parseFloat(answerValue);
+            }
+        }
+    }
+
+    console.log('提交的答案数据:', answerData);
+    console.log('使用的正确答案:', currentCorrectAnswers);
+    return answerData;
+}
+
+// 验证输入
+function validateInputs() {
+    if (answerCount === 1) {
+        const answer = document.getElementById('answer').value;
+        if (!answer || isNaN(parseFloat(answer))) {
+            showMessage('请输入有效的数字', 'error');
+            return false;
+        }
+    } else {
+        for (let i = 1; i <= answerCount; i++) {
+            const answer = document.getElementById(`answer${i}`).value;
+            if (!answer || isNaN(parseFloat(answer))) {
+                showMessage(`请输入有效的答案${i}`, 'error');
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// 清空输入框
+function clearInputs() {
+    if (answerCount === 1) {
+        document.getElementById('answer').value = '';
+    } else {
+        for (let i = 1; i <= answerCount; i++) {
+            document.getElementById(`answer${i}`).value = '';
+        }
+    }
+}
+
+// 禁用输入框
+function disableInputs() {
+    if (answerCount === 1) {
+        document.getElementById('answer').disabled = true;
+    } else {
+        for (let i = 1; i <= answerCount; i++) {
+            document.getElementById(`answer${i}`).disabled = true;
+        }
+    }
+}
+
+// 启用输入框
+function enableInputs() {
+    if (answerCount === 1) {
+        document.getElementById('answer').disabled = false;
+    } else {
+        for (let i = 1; i <= answerCount; i++) {
+            document.getElementById(`answer${i}`).disabled = false;
+        }
+    }
+}
+
+// 重置表单状态
+function resetFormState() {
+    clearInputs();
+    enableInputs();
+    resetSubmitButton();
+    initTimer();
+}
+
+// 异步刷新题目参数
+async function refreshProblemParams() {
+    console.log('开始异步刷新题目参数...');
+
+    try {
+        showMessage('正在刷新题目参数...', 'info');
+
+        const response = await fetch(`/refresh_problem/${problemId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP错误: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log('刷新API响应:', data);
+
+        if (data.success) {
+            // 重新加载页面以获取新题目
+            window.location.reload();
+        } else {
+            throw new Error(data.message);
+        }
+
+    } catch (error) {
+        console.error('刷新题目参数失败:', error);
+        showMessage('刷新失败: ' + error.message, 'error');
+        return false;
+    }
+}
+
+// 更新题目参数和正确答案
+async function updateProblemParameters(newVarValues, newCorrectAnswers, newProblemText) {
+    console.log('更新题目参数:', newVarValues);
+    console.log('更新正确答案:', newCorrectAnswers);
+
+    // 更新全局正确答案变量
+    currentCorrectAnswers = newCorrectAnswers;
+
+    // 更新变量表中的数值
+    for (const [key, value] of Object.entries(newVarValues)) {
+        const rows = document.querySelectorAll(`tr[data-var-key="${key}"]`);
+        rows.forEach(row => {
+            const valueCell = row.querySelector('.var-value');
+            if (valueCell) {
+                // 添加更新动画
+                valueCell.classList.add('param-updating');
+                setTimeout(() => {
+                    let displayValue = value;
+                    if (key in ['i', 'A', 'l']) {
+                        displayValue = parseFloat(value).toFixed(3);
+                    } else if (key in ['B', 'B0', 'v', 'dBdt', 'alpha', 'm']) {
+                        displayValue = parseFloat(value).toFixed(2);
+                    }
+                    valueCell.innerHTML = `<strong>${displayValue}</strong>`;
+                    valueCell.classList.remove('param-updating');
+                    valueCell.classList.add('param-updated');
+                    setTimeout(() => valueCell.classList.remove('param-updated'), 1000);
+                }, 300);
+            }
+        });
+    }
+
+    // 更新题目文本
+    if (newProblemText) {
+        await updateProblemText(newProblemText);
+    }
+
+    console.log('题目参数和正确答案更新完成，当前正确答案:', currentCorrectAnswers);
+}
+
+// 更新题目文本
+async function updateProblemText(newProblemText) {
+    const mathFormulaDiv = document.getElementById('problem-content');
+    if (!mathFormulaDiv) return;
+
+    // 使用淡出效果
+    mathFormulaDiv.style.opacity = '0.7';
+    mathFormulaDiv.style.transition = 'opacity 0.3s ease';
+
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    // 更新题目文本
+    mathFormulaDiv.innerHTML = newProblemText;
+
+    // 使用淡入效果
+    mathFormulaDiv.style.opacity = '0';
+    await new Promise(resolve => setTimeout(resolve, 50));
+    mathFormulaDiv.style.opacity = '1';
+
+    // 重新渲染数学公式
+    if (window.MathJax) {
+        MathJax.typesetPromise([mathFormulaDiv]).catch(console.error);
+    }
+}
+
+// 处理表单提交
+document.getElementById('answer-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    if (isSubmitting) {
+        console.log('正在提交中，忽略重复提交');
+        return;
+    }
+
+    if (!validateInputs()) {
+        console.log('输入验证失败');
+        return;
+    }
+
+    const submitBtn = document.getElementById('submit-btn');
+    const answerData = getAnswerData();
+
+    // 更新按钮状态
+    isSubmitting = true;
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span> 提交中...';
+
+    console.log('开始提交答案...');
+    console.log('当前正确答案:', currentCorrectAnswers);
+
+    try {
+        const response = await fetch('/api/submit/' + problemId, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(answerData)
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP错误: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log('API响应:', data);
+
+        if (data.success) {
+            if (data.correct) {
+                // 回答正确
+                showMessage(data.message, 'success');
+                document.getElementById('next-btn').style.display = 'inline-block';
+                submitBtn.style.display = 'none';
+                disableInputs();
+                clearInterval(timerInterval);
+
+                // 自动跳转到下一题
+                if (data.next_problem) {
+                    setTimeout(() => {
+                        showTempMessage(`3秒后自动跳转到第${data.next_problem}题...`, 'info');
+                    }, 500);
+
+                    setTimeout(() => {
+                        window.location.href = '/problem_ajax/' + data.next_problem;
+                    }, 3000);
+                } else {
+                    setTimeout(() => {
+                        showTempMessage('恭喜完成所有题目！3秒后返回主页...', 'success');
+                    }, 500);
+
+                    setTimeout(() => {
+                        window.location.href = '{{ url_for("dashboard") }}';
+                    }, 3000);
+                }
+            } else {
+                // 回答错误 - 更新尝试次数显示
+                totalAttempts = data.total_attempts;
+                updateAttemptsDisplay();
+
+                showMessage(data.message, 'error');
+
+                if (data.new_problem_generated && data.new_var_values) {
+                    // 异步刷新题目参数
+                    showMessage('正在生成新题目...', 'info');
+
+                    // 异步更新页面参数和正确答案
+                    updateProblemParameters(data.new_var_values, data.new_correct_answers, data.new_problem_text)
+                        .then(() => {
+                            showMessage('新题目已生成！请重新作答。', 'success');
+                            resetFormState();
+                        })
+                        .catch(error => {
+                            console.error('更新题目参数失败:', error);
+                            showMessage('题目更新失败，请手动刷新页面', 'error');
+                            resetFormState();
+                        });
+                } else {
+                    // 没有生成新题目，重置表单状态
+                    resetFormState();
+                }
+            }
+        } else {
+            showMessage('提交失败: ' + data.message, 'error');
+            resetSubmitButton();
+        }
+
+    } catch (error) {
+        console.error('提交错误:', error);
+        showMessage('网络错误: ' + error.message, 'error');
+        resetSubmitButton();
+    }
+});
+
+// 下一题按钮
+document.getElementById('next-btn').addEventListener('click', function() {
+    const nextProblem = problemId + 1;
+    if (nextProblem <= 8) {
+        window.location.href = '/problem_ajax/' + nextProblem;
+    } else {
+        window.location.href = '{{ url_for("dashboard") }}';
+    }
+});
+
+// 刷新题目按钮
+document.getElementById('refresh-btn').addEventListener('click', function() {
+    if (confirm('确定要刷新题目吗？这将生成新的题目参数，但不会增加尝试次数。')) {
+        refreshProblemParams()
+            .then(success => {
+                if (success) {
+                    resetFormState();
+                }
+            });
+    }
+});
+
+// 输入框获取焦点时重置计时器
+function setupInputListeners() {
+    if (answerCount === 1) {
+        const answerInput = document.getElementById('answer');
+        answerInput.addEventListener('focus', () => {
+            console.log('输入框获取焦点，重置计时器');
+            startTime = Date.now();
+        });
+
+        // 回车键提交
+        answerInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                document.getElementById('answer-form').dispatchEvent(new Event('submit'));
+            }
+        });
+    } else {
+        for (let i = 1; i <= answerCount; i++) {
+            const answerInput = document.getElementById(`answer${i}`);
+            answerInput.addEventListener('focus', () => {
+                console.log(`答案${i}输入框获取焦点，重置计时器`);
+                startTime = Date.now();
+            });
+
+            // 最后一个输入框回车键提交
+            if (i === answerCount) {
+                answerInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        document.getElementById('answer-form').dispatchEvent(new Event('submit'));
+                    }
+                });
+            }
+        }
+    }
+}
+
+// 页面初始化
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('动态问题页面加载完成');
+
+    // 初始化功能
+    initTimer();
+    setupInputListeners();
+    updateAttemptsDisplay();
+
+    // 自动聚焦到第一个输入框
+    setTimeout(() => {
+        if (answerCount === 1) {
+            document.getElementById('answer').focus();
+        } else if (answerCount > 1) {
+            document.getElementById('answer1').focus();
+        }
+    }, 500);
+});
+
+// 页面卸载前清理
+window.addEventListener('beforeunload', function() {
+    clearInterval(timerInterval);
+});
+</script>
+
+<style>
+.math-formula {
+    font-size: 1.1em;
+    line-height: 1.6;
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+}
+
+.variable-table {
+    font-size: 0.9em;
+}
+
+.variable-table th {
+    background-color: #f8f9fa;
+    font-weight: 600;
+}
+
+.math-symbol {
+    font-family: 'Times New Roman', serif;
+    font-style: italic;
+}
+
+.progress {
+    border-radius: 10px;
+}
+
+.progress-bar {
+    border-radius: 10px;
+    transition: width 0.3s ease;
+}
+
+.card {
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    border: 1px solid rgba(0, 0, 0, 0.125);
+}
+
+.card-header {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.125);
+}
+
+.btn {
+    border-radius: 8px;
+    transition: all 0.2s ease;
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.form-control {
+    border-radius: 8px;
+    border: 2px solid #e9ecef;
+    transition: border-color 0.2s ease;
+}
+
+.form-control:focus {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+
+.alert {
+    border-radius: 8px;
+    border: none;
+}
+
+.table-hover tbody tr:hover {
+    background-color: rgba(0, 0, 0, 0.025);
+}
+
+#timer-display {
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+}
+
+/* 参数更新动画 */
+.param-updating {
+    background-color: #fff3cd !important;
+    transition: background-color 0.3s ease;
+}
+
+.param-updated {
+    animation: highlightUpdate 1s ease;
+}
+
+@keyframes highlightUpdate {
+    0% { background-color: #d4edda; }
+    50% { background-color: #c3e6cb; }
+    100% { background-color: transparent; }
+}
+
+/* 永久提示样式 - 确保不会消失 */
+.permanent-hint {
+    position: relative;
+    border-left: 4px solid #0dcaf0 !important;
+}
+
+.permanent-hint .btn-close {
+    display: none !important;
+}
+
+.hint-content {
+    min-height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* 统一图片样式控制 */
+.problem-image {
+    width: 100%;
+    max-width: 480px;
+    height: auto;
+    max-height: 320px;
+    object-fit: contain;
+    border: 2px solid #dee2e6;
+    border-radius: 10px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    margin: 15px auto;
+    display: block;
+    background: white;
+    padding: 5px;
+}
+
+.problem-image-container {
+    text-align: center;
+    margin: 10px 0;
+}
+
+.image-caption {
+    font-size: 0.85em;
+    font-style: italic;
+    margin-top: 8px;
+    color: #6c757d;
+    text-align: center;
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+    .problem-image {
+        max-width: 100%;
+        max-height: 250px;
+    }
+}
+
+@media (max-width: 576px) {
+    .problem-image {
+        max-width: 100%;
+        max-height: 200px;
+    }
+}
+
+/* 悬停效果 */
+.problem-image {
+    transition: all 0.3s ease;
+}
+
+.problem-image:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+}
+
+/* 图片占位符样式 */
+.problem-image-placeholder {
+    max-width: 400px;
+    height: 200px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    margin: 10px auto;
+    border: 2px dashed #dee2e6;
+    border-radius: 8px;
+}
+
+/* 响应式图片 */
+@media (max-width: 768px) {
+    .problem-image {
+        max-width: 100%;
+    }
+
+    .problem-image-placeholder {
+        max-width: 100%;
+        height: 150px;
+    }
+}
+</style>
+{% endblock %}

@@ -1,0 +1,317 @@
+{% extends "base.html" %}
+
+{% block title %}仪表盘{% endblock %}
+
+{% block content %}
+<!-- 顶部欢迎区域 -->
+<div class="welcome-header bg-gradient-primary text-white rounded-3 p-4 mb-4">
+    <div class="row align-items-center">
+        <div class="col-md-8">
+            <h1 class="display-6 fw-bold mb-2">
+                {% if completed_all %}
+                    🎉 恭喜完成所有题目, {{ username }}!
+                {% else %}
+                    欢迎回来, {{ username }}! 👋
+                {% endif %}
+            </h1>
+            <p class="lead mb-0">
+                {% if completed_all %}
+                    您已成功完成所有物理微积分练习！
+                {% else %}
+                    继续您的物理微积分学习之旅
+                {% endif %}
+            </p>
+        </div>
+        <div class="col-md-4 text-md-end">
+            <div class="btn-group">
+                {% if not completed_all %}
+                <a href="{{ url_for('problem_ajax', problem_id=current_problem) }}" class="btn btn-light btn-lg">
+                    <i class="bi bi-play-circle me-2"></i>
+                    {% if completed_count > 0 %}继续{% endif %}学习
+                </a>
+                {% endif %}
+                <a href="{{ url_for('all_problems') }}" class="btn btn-outline-light btn-lg">
+                    <i class="bi bi-list-check me-2"></i>所有题目
+                </a>
+                <!-- 管理员功能按钮 -->
+                {% if is_admin %}
+                <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-light btn-lg">
+                    <i class="bi bi-gear me-2"></i>管理后台
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- 侧边栏 -->
+    <div class="col-lg-3 mb-4">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <!-- 学习进度 -->
+                <div class="text-center mb-4">
+                    {% if completed_all %}
+                        {% set progress = 100 %}
+                    {% else %}
+                        {% set progress = (completed_count / total_problems * 100) %}
+                    {% endif %}
+                    <div class="progress-circle mx-auto mb-3" data-progress="{{ progress }}">
+                        <span class="progress-value">{{ "%.0f"|format(progress) }}%</span>
+                    </div>
+                    <h6 class="text-muted">学习进度</h6>
+                    <small class="text-muted">
+                        {% if completed_all %}
+                            已完成 {{ completed_count }}/{{ total_problems }} 题
+                        {% else %}
+                            已完成 {{ completed_count }}/{{ total_problems }} 题
+                        {% endif %}
+                    </small>
+                </div>
+
+                <!-- 快捷导航 -->
+                <h6 class="sidebar-title">快捷导航</h6>
+                <div class="list-group list-group-flush">
+                    <a href="{{ url_for('dashboard') }}" class="list-group-item list-group-item-action active">
+                        <i class="bi bi-speedometer2 me-2"></i>学习仪表盘
+                    </a>
+                    <a href="{{ url_for('all_problems') }}" class="list-group-item list-group-item-action">
+                        <i class="bi bi-journal-text me-2"></i>所有题目
+                    </a>
+                    <a href="{{ url_for('history') }}" class="list-group-item list-group-item-action">
+                        <i class="bi bi-clock-history me-2"></i>答题历史
+                    </a>
+                    <a href="{{ url_for('statistics') }}" class="list-group-item list-group-item-action">
+                        <i class="bi bi-graph-up me-2"></i>学习统计
+                    </a>
+                    <!-- 管理员导航 -->
+                    {% if is_admin %}
+                    <a href="{{ url_for('admin_dashboard') }}" class="list-group-item list-group-item-action">
+                        <i class="bi bi-gear me-2"></i>系统管理
+                    </a>
+                    <a href="{{ url_for('user_management') }}" class="list-group-item list-group-item-action">
+                        <i class="bi bi-people me-2"></i>用户管理
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主内容区 -->
+    <div class="col-lg-9">
+        <!-- 统计卡片 -->
+        <div class="row mb-4">
+            <div class="col-xl-3 col-md-6 mb-3">
+                <div class="card stat-card bg-primary text-white">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-grow-1">
+                                <h4 class="card-title">{{ completed_count }}</h4>
+                                <p class="card-text">已完成题目</p>
+                            </div>
+                            <div class="stat-icon">
+                                <i class="bi bi-check-circle"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-xl-3 col-md-6 mb-3">
+                <div class="card stat-card bg-success text-white">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-grow-1">
+                                <h4 class="card-title">{{ total_problems - completed_count }}</h4>
+                                <p class="card-text">待完成题目</p>
+                            </div>
+                            <div class="stat-icon">
+                                <i class="bi bi-list-task"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-xl-3 col-md-6 mb-3">
+                <div class="card stat-card bg-info text-white">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-grow-1">
+                                <h4 class="card-title">{{ "%.0f"|format(completed_count / total_problems * 100) }}%</h4>
+                                <p class="card-text">总体进度</p>
+                            </div>
+                            <div class="stat-icon">
+                                <i class="bi bi-graph-up"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-xl-3 col-md-6 mb-3">
+                <div class="card stat-card bg-warning text-white">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-grow-1">
+                                <h4 class="card-title">
+                                    {% if completed_all %}
+                                        {{ completed_count }}
+                                    {% else %}
+                                        {{ completed_count }}
+                                    {% endif %}
+                                </h4>
+                                <p class="card-text">连续正确</p>
+                            </div>
+                            <div class="stat-icon">
+                                <i class="bi bi-award"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 当前进度卡片 -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white border-0">
+                <h5 class="mb-0"><i class="bi bi-activity me-2"></i>当前学习进度</h5>
+            </div>
+            <div class="card-body">
+                {% if completed_all %}
+                    {% set progress = 100 %}
+                {% else %}
+                    {% set progress = (completed_count / total_problems * 100) %}
+                {% endif %}
+
+                <div class="progress mb-3" style="height: 20px;">
+                    <div class="progress-bar bg-gradient-progress" role="progressbar"
+                         style="width: {{ progress }}%"
+                         aria-valuenow="{{ progress }}" aria-valuemin="0" aria-valuemax="100">
+                        {{ "%.0f"|format(progress) }}%
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center">
+                    {% if completed_all %}
+                        <p class="mb-0">🎉 恭喜！您已经完成了所有{{ total_problems }}道题目！</p>
+                        <a href="{{ url_for('all_problems') }}" class="btn btn-success">
+                            <i class="bi bi-trophy me-1"></i>查看成绩
+                        </a>
+                    {% else %}
+                        <p class="mb-0">
+                            {% if completed_count > 0 %}
+                                您已完成 {{ completed_count }} 题，正在学习第 {{ current_problem }} 题
+                            {% else %}
+                                开始学习第 {{ current_problem }} 题吧！
+                            {% endif %}
+                        </p>
+                        <a href="{{ url_for('problem_ajax', problem_id=current_problem) }}" class="btn btn-primary">
+                            <i class="bi bi-play-circle me-1"></i>
+                            {% if completed_count > 0 %}继续{% endif %}学习
+                        </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- 完成状态提示 -->
+        {% if completed_all %}
+        <div class="alert alert-success">
+            <div class="d-flex align-items-center">
+                <i class="bi bi-trophy-fill me-3 fs-2"></i>
+                <div>
+                    <h5 class="alert-heading mb-2">学习完成！</h5>
+                    <p class="mb-0">您已经成功完成了所有物理微积分练习题目。可以查看<a href="{{ url_for('statistics') }}" class="alert-link">学习统计</a>或<a href="{{ url_for('history') }}" class="alert-link">答题历史</a>回顾您的学习成果。</p>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- 管理员专属区域 -->
+        {% if is_admin %}
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white border-0">
+                <h5 class="mb-0"><i class="bi bi-shield-check me-2"></i>管理员功能</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <a href="{{ url_for('user_management') }}" class="btn btn-outline-primary w-100">
+                            <i class="bi bi-people me-2"></i>用户管理
+                        </a>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <a href="{{ url_for('problem_management') }}" class="btn btn-outline-success w-100">
+                            <i class="bi bi-journal-text me-2"></i>题目管理
+                        </a>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <a href="{{ url_for('system_settings') }}" class="btn btn-outline-info w-100">
+                            <i class="bi bi-gear me-2"></i>系统设置
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<style>
+.welcome-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.stat-card {
+    border-radius: 12px;
+    transition: transform 0.2s;
+}
+
+.stat-card:hover {
+    transform: translateY(-5px);
+}
+
+.stat-icon {
+    font-size: 2.5rem;
+    opacity: 0.7;
+}
+
+.progress-circle {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: conic-gradient(#4e73df 0% {{ completed_count / total_problems * 100 }}%, #eaecf4 {{ completed_count / total_problems * 100 }}% 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+.progress-circle::before {
+    content: '';
+    width: 70px;
+    height: 70px;
+    background: white;
+    border-radius: 50%;
+    position: absolute;
+}
+
+.progress-value {
+    position: relative;
+    z-index: 1;
+    font-weight: bold;
+    color: #4e73df;
+}
+
+.bg-gradient-progress {
+    background: linear-gradient(45deg, #4e73df, #1cc88a);
+}
+
+.sidebar-title {
+    color: #6e707e;
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    margin: 1rem 0 0.5rem 0;
+}
+</style>
+{% endblock %}

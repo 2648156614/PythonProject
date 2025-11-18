@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block title %}第五题{% endblock %}
+
+{% block content %}
+<div class="card mb-4">
+    <div class="card-header bg-primary text-white">
+        <h4><i class="bi bi-droplet"></i> 第五题：提水桶的功</h4>
+        {% if attempt_count > 0 %}
+        <div class="alert alert-warning mt-2 py-2">
+            <i class="bi bi-exclamation-triangle-fill me-2"></i>
+            第 {{ attempt_count }} 次尝试（最多3次）
+        </div>
+        {% endif %}
+    </div>
+    <div class="card-body">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="math-formula">
+            <h5>题目描述：</h5>
+            <p>一人从 \( h = {{ problem.var_values.h }} \, \text{m} \) 深的井中提水，已知：</p>
+            <ul>
+                <li>起始时桶中装有 \( m_0 = {{ problem.var_values.m0 }} \, \text{kg} \) 的水</li>
+                <li>桶的质量为 \( m_1 = {{ problem.var_values.m1 }} \, \text{kg} \)</li>
+                <li>由于水桶漏水，每升高 \( 1 \, \text{m} \) 要漏去 \( u = {{ problem.var_values.u }} \, \text{kg} \) 的水</li>
+            </ul>
+            <p>求水桶匀速地从井中提到井口，人所作的功 \( W \)。</p>
+
+            <div class="alert alert-info mt-3">
+                <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
+                <p>总质量随高度变化：\( m(h) = (m_0 + m_1) - uh \)</p>
+                <p>功的计算：\( W = \int_0^H F(h) dh = \int_0^H m(h)g dh \)</p>
+                <p>重力加速度 \( g = 9.8 \, \text{m/s}^2 \)</p>
+            </div>
+        </div>
+
+        <form method="POST" id="answerForm" class="mt-4">
+            <div class="mb-3">
+                <label for="answer" class="form-label">
+                    <strong>人所作的功 \( W \) (J)：</strong>
+                </label>
+                <input type="number" step="0.01" class="form-control form-control-lg"
+                       id="answer" name="answer" required
+                       value="{{ request.form.get('answer', '') }}">
+                <div class="form-text">请输入保留两位小数的数值</div>
+            </div>
+
+            <div class="d-grid gap-2 d-md-flex justify-content-md-start mt-4">
+                <button type="submit" class="btn btn-primary me-md-2 btn-lg">
+                    <i class="bi bi-send-fill me-1"></i> 提交答案
+                </button>
+                {% if attempt_count > 0 %}
+                <a href="{{ url_for('dashboard') }}" class="btn btn-outline-danger btn-lg">
+                    <i class="bi bi-x-circle me-1"></i> 退出答题
+                </a>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-header bg-light">
+        <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i> 题目参数表</h5>
+    </div>
+    <div class="card-body">
+        <table class="table table-bordered variable-table">
+            <thead>
+                <tr>
+                    <th>物理量</th>
+                    <th>符号</th>
+                    <th>值</th>
+                    <th>单位</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>井深</td>
+                    <td>\( h \)</td>
+                    <td>{{ problem.var_values.h }}</td>
+                    <td>m</td>
+                </tr>
+                <tr>
+                    <td>初始水重</td>
+                    <td>\( m_0 \)</td>
+                    <td>{{ problem.var_values.m0 }}</td>
+                    <td>kg</td>
+                </tr>
+                <tr>
+                    <td>桶重</td>
+                    <td>\( m_1 \)</td>
+                    <td>{{ problem.var_values.m1 }}</td>
+                    <td>kg</td>
+                </tr>
+                <tr>
+                    <td>漏水率</td>
+                    <td>\( u \)</td>
+                    <td>{{ problem.var_values.u }}</td>
+                    <td>kg/m</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+document.getElementById('answerForm').addEventListener('submit', function() {
+    const submitBtn = this.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 提交中...';
+});
+</script>
+{% endblock %}
