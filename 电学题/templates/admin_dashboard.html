@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+
+{% block title %}管理员后台{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0"><i class="bi bi-speedometer me-2"></i>管理员后台</h2>
+        <div class="btn-group">
+            <a href="{{ url_for('admin_students_by_status', status='completed') }}" class="btn btn-success">
+                <i class="bi bi-check-circle"></i> 已完成学生
+            </a>
+            <a href="{{ url_for('admin_students_by_status', status='incomplete') }}" class="btn btn-warning">
+                <i class="bi bi-exclamation-triangle"></i> 未完成学生
+            </a>
+            <a href="{{ url_for('admin_all_problems_stats') }}" class="btn btn-info">
+                <i class="bi bi-graph-up"></i> 题目统计
+            </a>
+        </div>
+    </div>
+
+    <!-- 总体统计 -->
+    <div class="row mb-4">
+        <div class="col-xl-3 col-md-6 mb-3">
+            <div class="card text-white bg-primary">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="flex-grow-1">
+                            <h4 class="card-title">{{ stats.stats.total_students or 0 }}</h4>
+                            <p class="card-text">总学生数</p>
+                        </div>
+                        <div class="stat-icon">
+                            <i class="bi bi-people fs-2"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-xl-3 col-md-6 mb-3">
+            <div class="card text-white bg-success">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="flex-grow-1">
+                            <h4 class="card-title">{{ stats.stats.completed_count or 0 }}</h4>
+                            <p class="card-text">已完成学生</p>
+                        </div>
+                        <div class="stat-icon">
+                            <i class="bi bi-check-circle fs-2"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-xl-3 col-md-6 mb-3">
+            <div class="card text-white bg-warning">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="flex-grow-1">
+                            <h4 class="card-title">{{ (stats.stats.total_students - stats.stats.completed_count) or 0 }}</h4>
+                            <p class="card-text">未完成学生</p>
+                        </div>
+                        <div class="stat-icon">
+                            <i class="bi bi-exclamation-triangle fs-2"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-xl-3 col-md-6 mb-3">
+            <div class="card text-white bg-info">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="flex-grow-1">
+                            <h4 class="card-title">{{ stats.stats.completion_rate or 0 }}%</h4>
+                            <p class="card-text">完成率</p>
+                        </div>
+                        <div class="stat-icon">
+                            <i class="bi bi-graph-up fs-2"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- 最近完成的学生 -->
+        <div class="col-lg-6 mb-4">
+            <div class="card">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0"><i class="bi bi-trophy me-2"></i>最近完成的学生</h5>
+                </div>
+                <div class="card-body">
+                    {% if recent_completions %}
+                    <div class="list-group list-group-flush">
+                        {% for student in recent_completions %}
+                        <div class="list-group-item d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="mb-1">{{ student.username }}</h6>
+                                <small class="text-muted">完成时间: {{ student.completed_at.strftime('%m-%d %H:%M') }}</small>
+                            </div>
+                            <div class="text-end">
+                                <span class="badge bg-primary rounded-pill">{{ student.total_score }}题</span>
+                                <br>
+                                <small class="text-muted">{{ "%.1f"|format(student.total_time) }}秒</small>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-emoji-frown display-4 text-muted"></i>
+                        <p class="text-muted mt-2">暂无完成的学生</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- 需要督促的学生 -->
+        <div class="col-lg-6 mb-4">
+            <div class="card">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-exclamation-triangle me-2"></i>需要督促的学生</h5>
+                </div>
+                <div class="card-body">
+                    {% if incomplete_students %}
+                    <div class="list-group list-group-flush">
+                        {% for student in incomplete_students %}
+                        <div class="list-group-item d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="mb-1">{{ student.username }}</h6>
+                                <small class="text-muted">注册时间: {{ student.created_at.strftime('%m-%d %H:%M') }}</small>
+                            </div>
+                            <div class="text-end">
+                                <span class="badge bg-warning rounded-pill">{{ student.total_score or 0 }}/8</span>
+                                <br>
+                                <a href="{{ url_for('admin_student_details', user_id=student.id) }}"
+                                   class="btn btn-sm btn-outline-primary mt-1">查看详情</a>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-emoji-smile display-4 text-muted"></i>
+                        <p class="text-muted mt-2">所有学生都已完成！</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 今日统计 -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-calendar-day me-2"></i>今日统计</h5>
+        </div>
+        <div class="card-body">
+            <div class="row text-center">
+                <div class="col-md-4">
+                    <h3 class="text-primary">{{ stats.today_stats.today_completions or 0 }}</h3>
+                    <p class="text-muted">今日完成人数</p>
+                </div>
+                <div class="col-md-4">
+                    <h3 class="text-success">{{ "%.1f"|format(stats.stats.avg_score or 0) }}</h3>
+                    <p class="text-muted">平均正确题数</p>
+                </div>
+                <div class="col-md-4">
+                    <h3 class="text-info">{{ "%.1f"|format(stats.stats.avg_time or 0) }}</h3>
+                    <p class="text-muted">平均用时(秒)</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 快捷操作 - 已移除导出按钮 -->
+    <div class="card mt-4">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-lightning me-2"></i>快捷操作</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <!-- 只保留两个按钮 -->
+                <div class="col-md-6 mb-3">
+                    <a href="{{ url_for('update_all_status') }}" class="btn btn-outline-success w-100">
+                        <i class="bi bi-arrow-clockwise me-2"></i>更新状态
+                    </a>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <a href="{{ url_for('admin_all_problems_stats') }}" class="btn btn-outline-info w-100">
+                        <i class="bi bi-graph-up me-2"></i>题目统计
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.stat-icon {
+    opacity: 0.8;
+}
+.card {
+    transition: transform 0.2s;
+}
+.card:hover {
+    transform: translateY(-2px);
+}
+.list-group-item {
+    border: none;
+    padding: 1rem 0;
+}
+</style>
+{% endblock %}

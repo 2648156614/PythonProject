@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+
+{% block title %}题目统计 - 所有学生{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0">题目统计 - 所有学生</h2>
+        <div>
+            <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> 返回管理后台
+            </a>
+        </div>
+    </div>
+
+    <!-- 总体统计 -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card text-white bg-primary">
+                <div class="card-body text-center">
+                    <h5 class="card-title">{{ total_students }}</h5>
+                    <p class="card-text">总学生数</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-white bg-info">
+                <div class="card-body text-center">
+                    <h5 class="card-title">{{ problem_stats|length }}</h5>
+                    <p class="card-text">题目总数</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-white bg-success">
+                <div class="card-body text-center">
+                    <h5 class="card-title">
+                        {% set total_completions = problem_stats|sum(attribute='completed_students') %}
+                        {{ total_completions }}
+                    </h5>
+                    <p class="card-text">总完成次数</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-white bg-warning">
+                <div class="card-body text-center">
+                    <h5 class="card-title">
+                        {% set total_attempts = problem_stats|sum(attribute='total_attempts') %}
+                        {{ total_attempts }}
+                    </h5>
+                    <p class="card-text">总答题次数</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 题目统计表格 -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-graph-up me-2"></i> 题目详细统计</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>#</th>
+                            <th>题目名称</th>
+                            <th>完成学生数</th>
+                            <th>完成率</th>
+                            <th>总答题次数</th>
+                            <th>正确次数</th>
+                            <th>正确率</th>
+                            <th>平均用时(正确)</th>
+                            <th>总体平均用时</th>
+                            <th>难度</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for stat in problem_stats %}
+                        <tr>
+                            <td>{{ stat.template_id }}</td>
+                            <td>{{ stat.template_name }}</td>
+                            <td>
+                                <span class="fw-bold">{{ stat.completed_students }}</span>
+                                <small class="text-muted">/ {{ total_students }}</small>
+                            </td>
+                            <td>
+                                {% set completion_rate = (stat.completed_students/total_students*100) if total_students > 0 else 0 %}
+                                <span class="badge bg-{{ 'success' if completion_rate >= 50 else 'warning' }}">
+                                    {{ "%.1f"|format(completion_rate) }}%
+                                </span>
+                            </td>
+                            <td>
+                                <span class="fw-bold text-primary">{{ stat.total_attempts }}</span>
+                            </td>
+                            <td>
+                                <span class="fw-bold text-success">{{ stat.correct_attempts }}</span>
+                            </td>
+                            <td>
+                                <span class="badge bg-{{ 'success' if stat.correct_rate >= 50 else 'warning' }}">
+                                    {{ stat.correct_rate }}%
+                                </span>
+                            </td>
+                            <td>
+                                {% if stat.avg_correct_time %}
+                                <span class="text-success">{{ "%.1f"|format(stat.avg_correct_time) }}秒</span>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if stat.avg_time %}
+                                <span class="text-info">{{ "%.1f"|format(stat.avg_time) }}秒</span>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% set completion_rate = (stat.completed_students/total_students*100) if total_students > 0 else 0 %}
+                                {% if completion_rate >= 80 %}
+                                <span class="badge bg-success">简单</span>
+                                {% elif completion_rate >= 50 %}
+                                <span class="badge bg-warning">中等</span>
+                                {% else %}
+                                <span class="badge bg-danger">困难</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
