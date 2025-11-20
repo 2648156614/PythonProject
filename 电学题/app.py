@@ -5,6 +5,7 @@ import random
 import sympy as sp
 import time
 import os
+import re
 from functools import wraps
 from math import pi, log
 
@@ -1363,6 +1364,7 @@ def debug_images():
         'files': files
     })
 
+
 @app.route('/history')
 @login_required
 def history():
@@ -1372,7 +1374,7 @@ def history():
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        # 获取基础答题历史
+        # 修复SQL查询
         cursor.execute("""
             SELECT 
                 r.id,
@@ -1382,7 +1384,7 @@ def history():
                 r.correct_answer,
                 r.is_correct,
                 r.attempt_count,
-                DATE_FORMAT(r.response_time, '%%Y-%%m-%%d %%H:%%i:%%s') as formatted_time,
+                DATE_FORMAT(r.response_time, '%Y-%m-%d %H:%i:%s') as formatted_time,
                 r.time_taken,
                 t.id as template_id
             FROM user_responses r
@@ -1393,16 +1395,29 @@ def history():
 
         responses = cursor.fetchall()
 
-        # 获取统计信息
+        # 获取统计信息 - 修复字段名
         cursor.execute("""
             SELECT 
                 COUNT(*) as total,
-                SUM(is_correct) as correct,
+                SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) as correct_count,
                 AVG(time_taken) as avg_time
             FROM user_responses 
             WHERE user_id = %s
         """, (session['user_id'],))
-        stats = cursor.fetchone()
+
+        stats_result = cursor.fetchone()
+
+        # 处理统计信息
+        stats = None
+        if stats_result and stats_result['total']:
+            stats = {
+                'total': int(stats_result['total']),
+                'correct': int(stats_result['correct_count'] or 0),
+                'avg_time': float(stats_result['avg_time'] or 0)
+            }
+
+        print(f"[DEBUG] 答题记录数量: {len(responses)}")
+        print(f"[DEBUG] 统计信息: {stats}")
 
         return render_template('history.html',
                                responses=responses,
@@ -1411,6 +1426,8 @@ def history():
 
     except Exception as e:
         print(f"[系统错误] 获取答题历史失败: {str(e)}")
+        import traceback
+        print(f"[详细错误] {traceback.format_exc()}")
         flash('获取答题历史失败，请稍后再试', 'danger')
         return render_template('history.html',
                                responses=[],
@@ -1419,7 +1436,6 @@ def history():
     finally:
         if conn:
             conn.close()
-
 
 @app.route('/all_problems')
 @login_required
@@ -2047,7 +2063,25 @@ def admin_all_problems_stats():
         cursor.close()
         conn.close()
 
+def is_mobile_device():
+    """检测是否为移动设备"""
+    user_agent = request.headers.get('User-Agent', '').lower()
+    mobile_pattern = re.compile(r'mobile|android|webos|iphone|ipad|ipod|blackberry|windows phone')
+    return bool(mobile_pattern.search(user_agent))
 
+def is_touch_device():
+    """检测是否为触摸设备（简化版）"""
+    user_agent = request.headers.get('User-Agent', '').lower()
+    touch_pattern = re.compile(r'mobile|android|iphone|ipad|ipod')
+    return bool(touch_pattern.search(user_agent))
+
+@app.context_processor
+def inject_device_status():
+    """向所有模板注入设备状态"""
+    return {
+        'is_mobile': is_mobile_device(),
+        'is_touch': is_touch_device()
+    }
 
 
 if __name__ == '__main__':

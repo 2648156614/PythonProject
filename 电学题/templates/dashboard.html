@@ -313,5 +313,72 @@
     text-transform: uppercase;
     margin: 1rem 0 0.5rem 0;
 }
+
+@media (max-width: 768px) {
+    .welcome-header {
+        padding: 1.5rem !important;
+    }
+
+    .welcome-header .display-6 {
+        font-size: 1.5rem;
+    }
+
+    .welcome-header .lead {
+        font-size: 1rem;
+    }
+
+    .stat-card .card-title {
+        font-size: 1.5rem;
+    }
+
+    .progress-circle {
+        width: 60px;
+        height: 60px;
+    }
+
+    .progress-circle::before {
+        width: 50px;
+        height: 50px;
+    }
+
+    .progress-value {
+        font-size: 0.8rem;
+    }
+
+    /* 侧边栏在移动端全宽 */
+    .col-lg-3 {
+        margin-bottom: 1rem;
+    }
+
+    /* 统计卡片在移动端堆叠 */
+    .row .col-xl-3 {
+        margin-bottom: 1rem;
+    }
+}
+
+/* 超小屏幕优化 */
+@media (max-width: 576px) {
+    .welcome-header {
+        text-align: center;
+    }
+
+    .welcome-header .btn-group {
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .welcome-header .btn {
+        margin-bottom: 0.5rem;
+        width: 100%;
+    }
+
+    .list-group-item {
+        padding: 0.75rem 1rem;
+    }
+
+    .sidebar-title {
+        font-size: 0.7rem;
+    }
+}
 </style>
 {% endblock %}

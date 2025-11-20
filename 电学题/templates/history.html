@@ -6,7 +6,7 @@
 <div class="container">
     <h2 class="my-4">答题历史</h2>
 
-    {% if stats %}
+    {% if stats and stats.total > 0 %}
     <div class="card mb-4">
         <div class="card-header bg-info text-white">
             <h5><i class="bi bi-graph-up"></i> 统计概览</h5>
@@ -16,14 +16,20 @@
                 <div class="col-md-4">
                     <div class="alert alert-success">
                         <h6>正确率</h6>
-                        <h3>{{ "%.1f"|format(stats.correct/stats.total*100 if stats.total > 0 else 0) }}%</h3>
+                        <h3>
+                            {% if stats.total > 0 %}
+                                {{ "%.1f"|format((stats.correct / stats.total) * 100) }}%
+                            {% else %}
+                                0%
+                            {% endif %}
+                        </h3>
                         <small>{{ stats.correct }} / {{ stats.total }} 题</small>
                     </div>
                 </div>
                 <div class="col-md-4">
                     <div class="alert alert-primary">
                         <h6>平均用时</h6>
-                        <h3>{{ "%.1f"|format(stats.avg_time|default(0)) }} 秒</h3>
+                        <h3>{{ "%.1f"|format(stats.avg_time) }} 秒</h3>
                     </div>
                 </div>
                 <div class="col-md-4">
