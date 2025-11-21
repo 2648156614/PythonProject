@@ -34,7 +34,7 @@
                     <i class="bi bi-list-check me-2"></i>所有题目
                 </a>
                 <!-- 管理员功能按钮 -->
-                {% if is_admin %}
+                {% if username == 'admin' %}
                 <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-light btn-lg">
                     <i class="bi bi-gear me-2"></i>管理后台
                 </a>
@@ -85,11 +85,11 @@
                         <i class="bi bi-graph-up me-2"></i>学习统计
                     </a>
                     <!-- 管理员导航 -->
-                    {% if is_admin %}
+                    {% if username == 'admin' %}
                     <a href="{{ url_for('admin_dashboard') }}" class="list-group-item list-group-item-action">
                         <i class="bi bi-gear me-2"></i>系统管理
                     </a>
-                    <a href="{{ url_for('user_management') }}" class="list-group-item list-group-item-action">
+                    <a href="{{ url_for('admin_students_by_status', status='completed') }}" class="list-group-item list-group-item-action">
                         <i class="bi bi-people me-2"></i>用户管理
                     </a>
                     {% endif %}
@@ -227,7 +227,7 @@
         {% endif %}
 
         <!-- 管理员专属区域 -->
-        {% if is_admin %}
+        {% if username == 'admin' %}
         <div class="card border-0 shadow-sm">
             <div class="card-header bg-white border-0">
                 <h5 class="mb-0"><i class="bi bi-shield-check me-2"></i>管理员功能</h5>
@@ -235,18 +235,18 @@
             <div class="card-body">
                 <div class="row">
                     <div class="col-md-4 mb-3">
-                        <a href="{{ url_for('user_management') }}" class="btn btn-outline-primary w-100">
+                        <a href="{{ url_for('admin_students_by_status', status='completed') }}" class="btn btn-outline-primary w-100">
                             <i class="bi bi-people me-2"></i>用户管理
                         </a>
                     </div>
                     <div class="col-md-4 mb-3">
-                        <a href="{{ url_for('problem_management') }}" class="btn btn-outline-success w-100">
-                            <i class="bi bi-journal-text me-2"></i>题目管理
+                        <a href="{{ url_for('admin_all_problems_stats') }}" class="btn btn-outline-success w-100">
+                            <i class="bi bi-journal-text me-2"></i>题目统计
                         </a>
                     </div>
                     <div class="col-md-4 mb-3">
-                        <a href="{{ url_for('system_settings') }}" class="btn btn-outline-info w-100">
-                            <i class="bi bi-gear me-2"></i>系统设置
+                        <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-info w-100">
+                            <i class="bi bi-gear me-2"></i>系统管理
                         </a>
                     </div>
                 </div>

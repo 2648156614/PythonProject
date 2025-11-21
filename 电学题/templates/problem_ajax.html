@@ -39,13 +39,13 @@
 
         <!-- 进度指示器 -->
         <div class="progress mb-4" style="height: 8px;">
-            {% set progress_width = (problem_id / 8 * 100) %}
+            {% set progress_width = (problem_id / total_problems * 100) %}
             <div class="progress-bar bg-success" role="progressbar"
                  style="width: {{ progress_width }}%"
                  aria-valuenow="{{ progress_width }}" aria-valuemin="0" aria-valuemax="100"></div>
         </div>
         <div class="d-flex justify-content-between mb-3">
-            <small class="text-muted">进度: {{ problem_id }}/8</small>
+            <small class="text-muted">进度: {{ problem_id }}/{{ total_problems }}</small>
             <small class="text-muted">累计尝试: <span id="total-attempts">{{ total_attempts }}</span> 次</small>
         </div>
 
@@ -253,6 +253,8 @@
                     <small class="text-muted">法拉第电磁感应定律，总电动势为两个线圈电动势之和，感应电流最大值</small>
                     {% elif problem_id == 8 %}
                     <small class="text-muted">导线长度与质量关系，回路电阻计算，感应电动势与电流关系</small>
+                    {% elif problem_id == 9 %}
+                    <small class="text-muted">铜制回路的感应电流计算，考虑电阻率和密度</small>
                     {% endif %}
                 </div>
             </div>
@@ -269,11 +271,12 @@ let isSubmitting = false;
 let timerInterval = null;
 const problemId = {{ problem_id }};
 const answerCount = {{ answer_count }};
+const totalProblems = {{ total_problems }};
 let totalAttempts = {{ total_attempts }};
 
 // 初始化全局正确答案变量
 let currentCorrectAnswers = {{ problem.correct_answers | tojson }};
-console.log('Ajax问题页面初始化 - 问题ID:', problemId, '答案数量:', answerCount, '累计尝试:', totalAttempts);
+console.log('Ajax问题页面初始化 - 问题ID:', problemId, '答案数量:', answerCount, '累计尝试:', totalAttempts, '总题目数:', totalProblems);
 console.log('初始正确答案:', currentCorrectAnswers);
 
 // 初始化计时器
@@ -662,7 +665,7 @@ document.getElementById('answer-form').addEventListener('submit', async function
 // 下一题按钮
 document.getElementById('next-btn').addEventListener('click', function() {
     const nextProblem = problemId + 1;
-    if (nextProblem <= 8) {
+    if (nextProblem <= totalProblems) {
         window.location.href = '/problem_ajax/' + nextProblem;
     } else {
         window.location.href = '{{ url_for("dashboard") }}';

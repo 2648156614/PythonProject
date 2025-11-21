@@ -724,12 +724,16 @@ def update_existing_templates():
     conn.close()
     print("所有模板图片URL更新完成")
 
+
 def update_user_completion_status(user_id):
-    """更新用户完成状态"""
+    """更新用户完成状态 - 使用动态题目总数"""
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
     try:
+        # 动态获取题目总数
+        total_problems = get_total_problem_count()
+
         # 检查是否完成所有题目
         cursor.execute("""
             SELECT COUNT(DISTINCT template_id) as completed_count 
@@ -748,7 +752,7 @@ def update_user_completion_status(user_id):
         """, (user_id,))
         stats = cursor.fetchone()
 
-        completed_all = completed_count >= 9  # 现在有9道题
+        completed_all = completed_count >= total_problems  # 使用动态总数
 
         # 更新用户表
         if completed_all:
@@ -970,6 +974,9 @@ def dashboard():
     cursor = conn.cursor(dictionary=True)
 
     try:
+        # 动态获取题目总数
+        total_problems = get_total_problem_count()
+
         # 获取用户完成状态
         cursor.execute("""
             SELECT 
@@ -988,10 +995,10 @@ def dashboard():
         completed_all = user_data['completed_all']
         completed_count = user_data['completed_count'] or 0
 
-        # 确定当前应该做的题目
+        # 动态确定当前应该做的题目
         current_problem = 1
         if not completed_all:
-            for problem_id in range(1, 10):  # 现在有9道题
+            for problem_id in range(1, total_problems + 1):
                 cursor.execute("""
                     SELECT COUNT(*) as count FROM user_responses 
                     WHERE user_id = %s AND template_id = %s AND is_correct = TRUE
@@ -1010,7 +1017,7 @@ def dashboard():
                                current_problem=current_problem,
                                completed_count=completed_count,
                                completed_all=completed_all,
-                               total_problems=8)  # 总题目数设为8，与模板一致
+                               total_problems=total_problems)  # 使用动态总数
 
     except mysql.connector.Error as err:
         print(f"数据库查询错误: {err}")
@@ -1019,241 +1026,6 @@ def dashboard():
     finally:
         cursor.close()
         conn.close()
-
-@app.route('/problem/<int:problem_id>', methods=['GET', 'POST'])
-@login_required
-def problem(problem_id):
-    """处理问题展示和答案提交 - 修复变量引用错误"""
-    print(f"\n=== 问题页面开始 ===")
-    print(f"问题ID: {problem_id}")
-    print(f"请求方法: {request.method}")
-
-    # 验证题目ID范围
-    if problem_id < 1 or problem_id > 9:  # 现在有9道题
-        flash('无效的题目编号', 'danger')
-        return redirect(url_for('dashboard'))
-
-    # 检查前置题目是否完成
-    if problem_id > 1:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT COUNT(*) FROM user_responses
-            WHERE user_id = %s AND template_id = %s AND is_correct = TRUE
-        """, (session['user_id'], problem_id - 1))
-        if cursor.fetchone()[0] == 0:
-            flash(f'请先完成第{problem_id - 1}题!', 'danger')
-            return redirect(url_for('problem', problem_id=problem_id - 1))
-        cursor.close()
-        conn.close()
-
-    # 初始化或获取题目数据
-    if 'current_problem' not in session or session['current_problem']['id'] != problem_id:
-        print("生成新题目...")
-        problem_data = generate_problem_from_template(problem_id)
-        if not problem_data:
-            flash('题目生成失败', 'danger')
-            return redirect(url_for('dashboard'))
-
-        session['current_problem'] = {
-            'id': problem_id,
-            'data': problem_data,
-            'attempt_count': 0,
-            'answered_correctly': False,
-            'start_time': time.time()
-        }
-        print(f"新题目生成成功，答案数量: {problem_data.get('answer_count', 1)}")
-
-    # 获取当前问题数据
-    problem_data = session['current_problem']['data']
-    attempt_count = session['current_problem']['attempt_count']
-    start_time = session['current_problem'].get('start_time', time.time())
-    answer_count = problem_data.get('answer_count', 1)
-
-    print(f"当前问题数据: {problem_data.keys()}")
-    print(f"尝试次数: {attempt_count}")
-    print(f"答案数量: {answer_count}")
-
-    # 处理答案提交
-    if request.method == 'POST':
-        print("处理POST请求...")
-        try:
-            # 计算答题用时（秒）
-            time_taken = round(time.time() - start_time, 2)
-            print(f"答题用时: {time_taken}秒")
-
-            user_id = session['user_id']
-            template_id = problem_data['template_id']
-            problem_text = problem_data['problem_text']
-            correct_answers = problem_data['correct_answers']
-
-            print(f"用户ID: {user_id}")
-            print(f"模板ID: {template_id}")
-            print(f"正确答案: {correct_answers}")
-            print(f"表单数据: {request.form}")
-
-            # 处理不同题型的答案
-            if answer_count > 1:
-                print(f"多答案题目处理，期望{answer_count}个答案")
-                user_answers = []
-                is_correct_list = []
-                all_correct = True
-
-                # 获取所有答案
-                for i in range(answer_count):
-                    answer_key = f'answer{i + 1}' if answer_count > 1 else 'answer'
-                    user_answer = float(request.form.get(answer_key, 0))
-                    user_answers.append(user_answer)
-
-                    # 验证答案
-                    if i < len(correct_answers):
-                        correct = is_correct(user_answer, correct_answers[i])
-                        is_correct_list.append(correct)
-                        if not correct:
-                            all_correct = False
-                        print(
-                            f"答案{i + 1}: 用户={user_answer}, 正确={correct_answers[i]}, 结果={'正确' if correct else '错误'}")
-                    else:
-                        print(f"❌ 答案{i + 1}超出正确答案范围")
-                        is_correct_list.append(False)
-                        all_correct = False
-
-                # 保存答题记录
-                save_success = save_user_response(
-                    user_id, template_id, problem_text, user_answers,
-                    correct_answers, is_correct_list, attempt_count + 1, time_taken
-                )
-
-                if all_correct:
-                    session['current_problem']['answered_correctly'] = True
-                    session['current_problem']['attempt_count'] = 0
-                    flash('回答正确！即将进入下一题', 'success')
-                    next_problem = problem_id + 1
-                    if next_problem <= 9:  # 现在有9道题
-                        return redirect(url_for('problem', problem_id=next_problem))
-                    else:
-                        flash('恭喜你完成所有题目！', 'success')
-                        return redirect(url_for('dashboard'))
-                else:
-                    session['current_problem']['attempt_count'] += 1
-
-                    # 答错时生成新题目
-                    attempts_remaining = 3 - session['current_problem']['attempt_count']
-                    if attempts_remaining > 0:
-                        new_problem_data = generate_problem_from_template(problem_id)
-                        if new_problem_data:
-                            session['current_problem']['data'] = new_problem_data
-                            session['current_problem']['start_time'] = time.time()
-
-                            # 生成正确答案消息
-                            correct_parts = []
-                            for i, correct_answer in enumerate(correct_answers):
-                                correct_parts.append(f"答案{i + 1} = {correct_answer:.2f}")
-                            correct_message = "正确答案: " + ", ".join(correct_parts)
-
-                            flash(f'答案不正确！{correct_message}。已为您生成新题目，请重新作答。', 'warning')
-                        else:
-                            flash('答案不正确！题目刷新失败，请重试。', 'warning')
-                    else:
-                        correct_parts = []
-                        for i, correct_answer in enumerate(correct_answers):
-                            correct_parts.append(f"答案{i + 1} = {correct_answer:.2f}")
-                        correct_message = "正确答案: " + ", ".join(correct_parts)
-                        flash(f'答案不正确！{correct_message}。尝试次数已用完！', 'danger')
-
-                    if not save_success:
-                        flash('部分答题记录保存失败', 'warning')
-
-            else:
-                # 单答案题目处理 - 修复变量名冲突
-                print("单答案题目处理")
-                user_answer = float(request.form.get('answer', 0))
-
-                # 修复：使用不同的变量名，避免与函数名冲突
-                answer_correct = False
-                if correct_answers and len(correct_answers) > 0:
-                    answer_correct = is_correct(user_answer, correct_answers[0])
-                else:
-                    print("❌ 正确答案列表为空")
-                    flash('题目数据错误，请刷新页面重试', 'danger')
-                    return redirect(url_for('problem', problem_id=problem_id))
-
-                print(
-                    f"用户答案: {user_answer}, 正确答案: {correct_answers[0]}, 结果: {'正确' if answer_correct else '错误'}")
-
-                # 保存答题记录
-                save_success = save_user_response(
-                    user_id, template_id, problem_text, [user_answer],
-                    correct_answers, [answer_correct], attempt_count + 1, time_taken
-                )
-
-                if answer_correct:
-                    session['current_problem']['answered_correctly'] = True
-                    session['current_problem']['attempt_count'] = 0
-                    flash('回答正确！', 'success')
-                    next_problem = problem_id + 1
-                    if next_problem <= 9:  # 现在有9道题
-                        return redirect(url_for('problem', problem_id=next_problem))
-                    else:
-                        flash('恭喜你完成所有题目！', 'success')
-                        return redirect(url_for('dashboard'))
-                else:
-                    session['current_problem']['attempt_count'] += 1
-
-                    # 答错时生成新题目
-                    attempts_remaining = 3 - session['current_problem']['attempt_count']
-                    if attempts_remaining > 0:
-                        new_problem_data = generate_problem_from_template(problem_id)
-                        if new_problem_data:
-                            session['current_problem']['data'] = new_problem_data
-                            session['current_problem']['start_time'] = time.time()
-                            flash(f'答案不正确！正确答案: {correct_answers[0]:.2f}。已为您生成新题目，请重新作答。',
-                                  'warning')
-                        else:
-                            flash(f'答案不正确！正确答案: {correct_answers[0]:.2f}。题目刷新失败，请重试。', 'warning')
-                    else:
-                        flash(f'答案不正确！正确答案: {correct_answers[0]:.2f}。尝试次数已用完！', 'danger')
-
-                    if not save_success:
-                        flash('答题记录保存失败', 'warning')
-
-            # 处理尝试次数限制
-            attempt_count = session['current_problem']['attempt_count']
-            if attempt_count >= 3:
-                print(f"尝试次数已用完")
-                session.pop('current_problem', None)
-                flash('很遗憾，三次尝试均失败，请从首页重新开始！', 'danger')
-                return redirect(url_for('dashboard'))
-
-            # 重置计时器
-            session['current_problem']['start_time'] = time.time()
-
-        except ValueError as e:
-            print(f"❌ 数值转换错误: {e}")
-            flash('请输入有效的数字', 'danger')
-        except Exception as e:
-            print(f"❌ 处理答案时发生错误: {str(e)}")
-            import traceback
-            print(f"详细错误信息:\n{traceback.format_exc()}")
-            flash('处理答案时发生错误，请重试', 'danger')
-
-    # 检查是否已经正确回答过（防止通过URL跳过）
-    if session['current_problem'].get('answered_correctly', False):
-        next_problem = problem_id + 1
-        if next_problem <= 9:  # 现在有9道题
-            return redirect(url_for('problem', problem_id=next_problem))
-        else:
-            return redirect(url_for('dashboard'))
-
-    # 渲染问题模板
-    template_file = f'problem{problem_id}.html'
-    print(f"渲染模板: {template_file}")
-    print(f"=== 问题页面结束 ===\n")
-
-    return render_template(template_file,
-                           problem=problem_data,
-                           username=session['username'],
-                           attempt_count=attempt_count)
 
 
 @app.route('/stats')
@@ -1594,12 +1366,15 @@ def refresh_all_problems():
 @app.route('/problem_ajax/<int:problem_id>')
 @login_required
 def problem_ajax(problem_id):
-    """支持Ajax的问题页面 - 完整实现"""
+    """支持Ajax的问题页面 - 使用动态题目总数"""
     print(f"\n=== Ajax问题页面开始 ===")
     print(f"问题ID: {problem_id}")
 
+    # 动态获取题目总数
+    total_problems = get_total_problem_count()
+
     # 1. 验证题目ID
-    if problem_id < 1 or problem_id > 9:  # 现在有9道题
+    if problem_id < 1 or problem_id > total_problems:
         flash('无效的题目编号', 'danger')
         return redirect(url_for('dashboard'))
 
@@ -1637,7 +1412,7 @@ def problem_ajax(problem_id):
     # 4. 检查是否已经完成
     if session['current_problem'].get('answered_correctly', False):
         next_problem = problem_id + 1
-        if next_problem <= 9:  # 现在有9道题
+        if next_problem <= total_problems:
             return redirect(url_for('problem_ajax', problem_id=next_problem))
         else:
             return redirect(url_for('dashboard'))
@@ -1654,21 +1429,25 @@ def problem_ajax(problem_id):
     return render_template('problem_ajax.html',
                            problem=problem_data,
                            problem_id=problem_id,
-                           total_attempts=total_attempts,  # 改为累计尝试次数
+                           total_attempts=total_attempts,
                            answer_count=answer_count,
-                           username=session['username'])
+                           username=session['username'],
+                           total_problems=total_problems)  # 传递到模板
 
 
 @app.route('/api/submit/<int:problem_id>', methods=['POST'])
 @login_required
 def api_submit(problem_id):
-    """API接口：提交答案（支持动态答案数量）- 修改为使用前端传递的正确答案"""
+    """API接口：提交答案 - 使用动态题目总数"""
     try:
         data = request.get_json()
         print(f"[API] 问题 {problem_id} 提交数据: {data}")
 
         if not data:
             return jsonify({'success': False, 'message': '无效的请求数据'})
+
+        # 动态获取题目总数
+        total_problems = get_total_problem_count()
 
         # 验证会话
         if 'current_problem' not in session:
@@ -1751,11 +1530,11 @@ def api_submit(problem_id):
             completed_all = update_user_completion_status(user_id)
 
             session['current_problem']['answered_correctly'] = True
-            next_problem = problem_id + 1 if problem_id < 9 else None  # 现在有9道题
+            next_problem = problem_id + 1 if problem_id < total_problems else None  # 使用动态总数
             message = '🎉 回答正确！'
 
             # 如果完成所有题目，生成验证链接
-            if completed_all and problem_id >= 9:
+            if completed_all and problem_id >= total_problems:
                 verification_url = f"/api/user/{user_id}/completion"
                 session['verification_url'] = verification_url
         else:
@@ -2083,6 +1862,40 @@ def inject_device_status():
         'is_touch': is_touch_device()
     }
 
+
+def get_total_problem_count():
+    """动态获取题目总数"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT COUNT(*) FROM problem_templates")
+        count = cursor.fetchone()[0]
+        return count
+    except Exception as e:
+        print(f"获取题目总数失败: {e}")
+        return 8  # 默认值，防止出错
+    finally:
+        cursor.close()
+        conn.close()
+
+def get_completed_problem_count(user_id):
+    """动态获取用户已完成的题目数量"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT COUNT(DISTINCT template_id) 
+            FROM user_responses 
+            WHERE user_id = %s AND is_correct = TRUE
+        """, (user_id,))
+        count = cursor.fetchone()[0]
+        return count
+    except Exception as e:
+        print(f"获取已完成题目数量失败: {e}")
+        return 0
+    finally:
+        cursor.close()
+        conn.close()
 
 if __name__ == '__main__':
     # 初始化数据库
