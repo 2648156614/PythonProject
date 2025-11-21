@@ -1609,8 +1609,144 @@ def admin_dashboard():
                            incomplete_students=incomplete_students)
 
 
+# 在 admin_dashboard 路由后添加以下代码
+
+@app.route('/admin/add_problem', methods=['GET', 'POST'])
+@login_required
+def admin_add_problem():
+    """添加新题目"""
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    if request.method == 'POST':
+        try:
+            template_name = request.form['template_name']
+            problem_text = request.form['problem_text']
+            variables = request.form['variables']
+            solution_formula = request.form['solution_formula']
+            answer_count = int(request.form.get('answer_count', 1))
+            difficulty = request.form.get('difficulty', 'medium')
+
+            conn = get_db_connection()
+            cursor = conn.cursor()
+
+            # 插入新题目模板
+            cursor.execute("""
+                INSERT INTO problem_templates 
+                (template_name, problem_text, variables, solution_formula, answer_count, difficulty)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (template_name, problem_text, variables, solution_formula, answer_count, difficulty))
+
+            conn.commit()
+            cursor.close()
+            conn.close()
+
+            flash('题目添加成功！', 'success')
+            return redirect(url_for('admin_dashboard'))
+
+        except Exception as e:
+            print(f"添加题目失败: {str(e)}")
+            flash(f'添加题目失败: {str(e)}', 'danger')
+
+    return render_template('admin_add_problem.html')
 
 
+@app.route('/admin/manage_problems')
+@login_required
+def admin_manage_problems():
+    """管理所有题目"""
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute("SELECT * FROM problem_templates ORDER BY id")
+    templates = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    return render_template('admin_manage_problems.html', templates=templates)
+
+
+@app.route('/admin/edit_problem/<int:template_id>', methods=['GET', 'POST'])
+@login_required
+def admin_edit_problem(template_id):
+    """编辑题目"""
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    if request.method == 'POST':
+        try:
+            template_name = request.form['template_name']
+            problem_text = request.form['problem_text']
+            variables = request.form['variables']
+            solution_formula = request.form['solution_formula']
+            answer_count = int(request.form.get('answer_count', 1))
+            difficulty = request.form.get('difficulty', 'medium')
+
+            cursor.execute("""
+                UPDATE problem_templates 
+                SET template_name = %s, problem_text = %s, variables = %s, 
+                    solution_formula = %s, answer_count = %s, difficulty = %s
+                WHERE id = %s
+            """, (template_name, problem_text, variables, solution_formula, answer_count, difficulty, template_id))
+
+            conn.commit()
+            flash('题目更新成功！', 'success')
+            return redirect(url_for('admin_manage_problems'))
+
+        except Exception as e:
+            print(f"更新题目失败: {str(e)}")
+            flash(f'更新题目失败: {str(e)}', 'danger')
+
+    # 获取题目信息
+    cursor.execute("SELECT * FROM problem_templates WHERE id = %s", (template_id,))
+    template = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    if not template:
+        flash('题目不存在', 'danger')
+        return redirect(url_for('admin_manage_problems'))
+
+    return render_template('admin_edit_problem.html', template=template)
+
+
+@app.route('/admin/delete_problem/<int:template_id>')
+@login_required
+def admin_delete_problem(template_id):
+    """删除题目"""
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        # 先删除相关的答题记录
+        cursor.execute("DELETE FROM user_responses WHERE template_id = %s", (template_id,))
+        # 删除题目模板
+        cursor.execute("DELETE FROM problem_templates WHERE id = %s", (template_id,))
+
+        conn.commit()
+        flash('题目删除成功！', 'success')
+    except Exception as e:
+        print(f"删除题目失败: {str(e)}")
+        flash(f'删除题目失败: {str(e)}', 'danger')
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(url_for('admin_manage_problems'))
 
 
 @app.route('/admin/update_all_status')
