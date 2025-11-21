@@ -1362,7 +1362,6 @@ def refresh_all_problems():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
 
-
 @app.route('/problem_ajax/<int:problem_id>')
 @login_required
 def problem_ajax(problem_id):
@@ -1378,19 +1377,7 @@ def problem_ajax(problem_id):
         flash('无效的题目编号', 'danger')
         return redirect(url_for('dashboard'))
 
-    # 2. 检查前置题目（如果需要）
-    if problem_id > 1:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT COUNT(*) FROM user_responses
-            WHERE user_id = %s AND template_id = %s AND is_correct = TRUE
-        """, (session['user_id'], problem_id - 1))
-        if cursor.fetchone()[0] == 0:
-            flash(f'请先完成第{problem_id - 1}题!', 'danger')
-            return redirect(url_for('problem_ajax', problem_id=problem_id - 1))
-        cursor.close()
-        conn.close()
+    # 2. 移除前置题目检查，允许直接跳转到任何题目
 
     # 3. 初始化或获取题目数据
     if 'current_problem' not in session or session['current_problem']['id'] != problem_id:
@@ -1409,13 +1396,10 @@ def problem_ajax(problem_id):
         }
         print(f"新题目生成成功，答案数量: {problem_data.get('answer_count', 1)}")
 
-    # 4. 检查是否已经完成
+    # 4. 检查是否已经完成（但不再强制跳转）
     if session['current_problem'].get('answered_correctly', False):
-        next_problem = problem_id + 1
-        if next_problem <= total_problems:
-            return redirect(url_for('problem_ajax', problem_id=next_problem))
-        else:
-            return redirect(url_for('dashboard'))
+        # 如果已经完成，显示完成状态，但允许继续在当前页面
+        print(f"题目 {problem_id} 已完成")
 
     # 5. 渲染Ajax模板
     problem_data = session['current_problem']['data']
@@ -2032,6 +2016,48 @@ def get_completed_problem_count(user_id):
     finally:
         cursor.close()
         conn.close()
+
+
+@app.route('/api/user/completion_status')
+@login_required
+def api_user_completion_status():
+    """获取用户所有题目的完成状态"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        # 获取所有题目模板
+        cursor.execute("SELECT id FROM problem_templates ORDER BY id")
+        templates = cursor.fetchall()
+
+        completion_status = {}
+
+        for template in templates:
+            template_id = template['id']
+            # 检查该题目是否已完成（有正确答题记录）
+            cursor.execute("""
+                SELECT COUNT(*) as completed 
+                FROM user_responses 
+                WHERE user_id = %s AND template_id = %s AND is_correct = TRUE
+            """, (session['user_id'], template_id))
+            result = cursor.fetchone()
+            completion_status[template_id] = result['completed'] > 0
+
+        cursor.close()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'completion_status': completion_status
+        })
+
+    except Exception as e:
+        print(f"获取完成状态失败: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'获取完成状态失败: {str(e)}'
+        })
+
 
 if __name__ == '__main__':
     # 初始化数据库

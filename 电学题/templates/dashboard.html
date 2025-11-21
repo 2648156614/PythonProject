@@ -107,7 +107,7 @@
                     <div class="card-body">
                         <div class="d-flex align-items-center">
                             <div class="flex-grow-1">
-                                <h4 class="card-title">{{ completed_count }}</h4>
+                                <h4 class="card-title" id="completed-count">{{ completed_count }}</h4>
                                 <p class="card-text">已完成题目</p>
                             </div>
                             <div class="stat-icon">
@@ -122,7 +122,7 @@
                     <div class="card-body">
                         <div class="d-flex align-items-center">
                             <div class="flex-grow-1">
-                                <h4 class="card-title">{{ total_problems - completed_count }}</h4>
+                                <h4 class="card-title" id="remaining-count">{{ total_problems - completed_count }}</h4>
                                 <p class="card-text">待完成题目</p>
                             </div>
                             <div class="stat-icon">
@@ -137,7 +137,7 @@
                     <div class="card-body">
                         <div class="d-flex align-items-center">
                             <div class="flex-grow-1">
-                                <h4 class="card-title">{{ "%.0f"|format(completed_count / total_problems * 100) }}%</h4>
+                                <h4 class="card-title" id="progress-percent">{{ "%.0f"|format(completed_count / total_problems * 100) }}%</h4>
                                 <p class="card-text">总体进度</p>
                             </div>
                             <div class="stat-icon">
@@ -197,7 +197,7 @@
                             <i class="bi bi-trophy me-1"></i>查看成绩
                         </a>
                     {% else %}
-                        <p class="mb-0">
+                        <p class="mb-0" id="progress-text">
                             {% if completed_count > 0 %}
                                 您已完成 {{ completed_count }} 题，正在学习第 {{ current_problem }} 题
                             {% else %}
@@ -209,6 +209,29 @@
                             {% if completed_count > 0 %}继续{% endif %}学习
                         </a>
                     {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- 题目完成状态卡片 -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white border-0">
+                <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>题目完成状态</h5>
+            </div>
+            <div class="card-body">
+                <div class="row" id="problem-status-grid">
+                    <!-- 题目状态将通过JavaScript动态加载 -->
+                    {% for i in range(1, total_problems + 1) %}
+                    <div class="col-6 col-md-4 col-lg-3 mb-3">
+                        <div class="problem-status-card text-center p-3 border rounded" data-problem-id="{{ i }}">
+                            <div class="problem-number mb-2">{{ i }}</div>
+                            <div class="problem-status">
+                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                            </div>
+                            <small class="text-muted">第{{ i }}题</small>
+                        </div>
+                    </div>
+                    {% endfor %}
                 </div>
             </div>
         </div>
@@ -255,6 +278,114 @@
         {% endif %}
     </div>
 </div>
+
+<script>
+// 获取题目完成状态
+async function getProblemCompletionStatus() {
+    try {
+        const response = await fetch('/api/user/completion_status');
+        if (!response.ok) {
+            throw new Error('获取完成状态失败');
+        }
+        const data = await response.json();
+        return data.completion_status;
+    } catch (error) {
+        console.error('获取完成状态失败:', error);
+        return {};
+    }
+}
+
+// 更新题目状态显示
+async function updateProblemStatusDisplay() {
+    const completionStatus = await getProblemCompletionStatus();
+    const statusCards = document.querySelectorAll('.problem-status-card');
+
+    let completedCount = 0;
+
+    statusCards.forEach(card => {
+        const problemId = parseInt(card.getAttribute('data-problem-id'));
+        const isCompleted = completionStatus[problemId] || false;
+        const statusElement = card.querySelector('.problem-status');
+        const numberElement = card.querySelector('.problem-number');
+
+        if (isCompleted) {
+            completedCount++;
+            statusElement.innerHTML = '<span class="badge bg-success"><i class="bi bi-check"></i> 已完成</span>';
+            numberElement.className = 'problem-number mb-2 completed';
+            card.classList.add('completed-card');
+        } else {
+            statusElement.innerHTML = '<span class="badge bg-secondary"><i class="bi bi-circle"></i> 未开始</span>';
+            numberElement.className = 'problem-number mb-2';
+            card.classList.remove('completed-card');
+        }
+    });
+
+    // 更新统计卡片
+    document.getElementById('completed-count').textContent = completedCount;
+    document.getElementById('remaining-count').textContent = {{ total_problems }} - completedCount;
+    document.getElementById('progress-percent').textContent = Math.round((completedCount / {{ total_problems }}) * 100) + '%';
+
+    // 更新进度条
+    const progress = (completedCount / {{ total_problems }}) * 100;
+    const progressBar = document.querySelector('.progress-bar');
+    if (progressBar) {
+        progressBar.style.width = progress + '%';
+        progressBar.setAttribute('aria-valuenow', progress);
+        progressBar.textContent = Math.round(progress) + '%';
+    }
+
+    // 更新进度文本
+    const progressText = document.getElementById('progress-text');
+    if (progressText) {
+        if (completedCount > 0) {
+            // 找到第一个未完成的题目
+            let nextProblem = 1;
+            for (let i = 1; i <= {{ total_problems }}; i++) {
+                if (!completionStatus[i]) {
+                    nextProblem = i;
+                    break;
+                }
+            }
+            progressText.textContent = `您已完成 ${completedCount} 题，正在学习第 ${nextProblem} 题`;
+        } else {
+            progressText.textContent = '开始学习第 1 题吧！';
+        }
+    }
+
+    // 更新圆形进度图
+    updateProgressCircle(progress);
+}
+
+// 更新圆形进度图
+function updateProgressCircle(progress) {
+    const progressCircle = document.querySelector('.progress-circle');
+    if (progressCircle) {
+        progressCircle.style.background = `conic-gradient(#4e73df 0% ${progress}%, #eaecf4 ${progress}% 100%)`;
+        const progressValue = progressCircle.querySelector('.progress-value');
+        if (progressValue) {
+            progressValue.textContent = Math.round(progress) + '%';
+        }
+    }
+}
+
+// 页面初始化
+document.addEventListener('DOMContentLoaded', function() {
+    // 更新题目状态显示
+    updateProblemStatusDisplay();
+
+    // 每30秒自动更新一次状态
+    setInterval(updateProblemStatusDisplay, 30000);
+
+    // 添加点击题目卡片的跳转功能
+    const statusCards = document.querySelectorAll('.problem-status-card');
+    statusCards.forEach(card => {
+        card.addEventListener('click', function() {
+            const problemId = this.getAttribute('data-problem-id');
+            window.location.href = '/problem_ajax/' + problemId;
+        });
+    });
+});
+</script>
 
 <style>
 .welcome-header {
@@ -314,6 +445,49 @@
     margin: 1rem 0 0.5rem 0;
 }
 
+/* 题目状态卡片样式 */
+.problem-status-card {
+    transition: all 0.3s ease;
+    cursor: pointer;
+    background: white;
+}
+
+.problem-status-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    border-color: #0d6efd !important;
+}
+
+.problem-status-card.completed-card {
+    background: linear-gradient(135deg, #f8fff8 0%, #e8f5e8 100%);
+    border-color: #198754 !important;
+}
+
+.problem-number {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #6c757d;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border: 2px solid #6c757d;
+    border-radius: 50%;
+    margin: 0 auto;
+}
+
+.problem-number.completed {
+    background-color: #198754;
+    color: white;
+    border-color: #198754;
+}
+
+.problem-status .badge {
+    font-size: 0.7em;
+}
+
+/* 响应式调整 */
 @media (max-width: 768px) {
     .welcome-header {
         padding: 1.5rem !important;
@@ -354,6 +528,17 @@
     .row .col-xl-3 {
         margin-bottom: 1rem;
     }
+
+    /* 题目状态网格在移动端调整 */
+    .problem-status-card {
+        padding: 1rem !important;
+    }
+
+    .problem-number {
+        width: 35px;
+        height: 35px;
+        font-size: 1.2rem;
+    }
 }
 
 /* 超小屏幕优化 */
@@ -379,6 +564,30 @@
     .sidebar-title {
         font-size: 0.7rem;
     }
+
+    /* 题目状态网格在超小屏幕单列显示 */
+    #problem-status-grid .col-6 {
+        flex: 0 0 100%;
+        max-width: 100%;
+    }
+}
+
+/* 动画效果 */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.problem-status-card {
+    animation: fadeIn 0.5s ease forwards;
+}
+
+.problem-status-card:nth-child(odd) {
+    animation-delay: 0.1s;
+}
+
+.problem-status-card:nth-child(even) {
+    animation-delay: 0.2s;
 }
 </style>
 {% endblock %}
