@@ -23,7 +23,7 @@
                     <h5 class="mb-0"><i class="bi bi-plus-circle me-2"></i> 题目信息</h5>
                 </div>
                 <div class="card-body">
-                    <form method="POST">
+                    <form method="POST" enctype="multipart/form-data">
                         <div class="mb-3">
                             <label for="template_name" class="form-label">题目名称</label>
                             <input type="text" class="form-control" id="template_name" name="template_name" required>
@@ -34,6 +34,15 @@
                             <textarea class="form-control" id="problem_text" name="problem_text" rows="8" required></textarea>
                             <div class="form-text">
                                 提示：使用 <code>&#123;&#123; problem.var_values.变量名 &#125;&#125;</code> 插入变量，使用 <code>\( LaTeX公式 \)</code> 插入数学公式
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="problem_image" class="form-label">题目图片 (可选)</label>
+                            <input type="file" class="form-control" id="problem_image" name="problem_image"
+                                   accept=".png,.jpg,.jpeg,.gif,.svg">
+                            <div class="form-text">
+                                支持格式：PNG, JPG, GIF, SVG。最大16MB。
                             </div>
                         </div>
 
@@ -117,6 +126,26 @@
                         <li>LaTeX数学公式</li>
                         <li>图片路径：<code>/static/images/图片名.png</code></li>
                     </ul>
+                </div>
+            </div>
+
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-image me-2"></i> 图片使用说明</h5>
+                </div>
+                <div class="card-body">
+                    <h6>图片规范：</h6>
+                    <ul class="small">
+                        <li>建议尺寸：400×300 像素</li>
+                        <li>格式：PNG（推荐）、JPG、GIF、SVG</li>
+                        <li>文件命名：使用英文和数字，避免中文</li>
+                        <li>图片将自动插入到题目内容开头</li>
+                    </ul>
+
+                    <h6>现有图片：</h6>
+                    <a href="{{ url_for('admin_image_manager') }}" class="btn btn-sm btn-outline-info">
+                        <i class="bi bi-images"></i> 管理图片库
+                    </a>
                 </div>
             </div>
 

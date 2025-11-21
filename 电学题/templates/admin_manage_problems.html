@@ -28,6 +28,7 @@
                         <tr>
                             <th>ID</th>
                             <th>题目名称</th>
+                            <th>图片</th>
                             <th>变量</th>
                             <th>答案数量</th>
                             <th>难度</th>
@@ -43,6 +44,15 @@
                                 <div class="text-muted small mt-1">
                                     {{ template.problem_text|striptags|truncate(100) }}
                                 </div>
+                            </td>
+                            <td>
+                                {% if template.image_filename %}
+                                <span class="badge bg-success" title="{{ template.image_filename }}">
+                                    <i class="bi bi-image"></i> 有图片
+                                </span>
+                                {% else %}
+                                <span class="badge bg-secondary">无图片</span>
+                                {% endif %}
                             </td>
                             <td>
                                 <span class="badge bg-info">{{ template.variables or '无' }}</span>

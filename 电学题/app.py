@@ -8,8 +8,9 @@ import os
 import re
 from functools import wraps
 from math import pi, log
+from werkzeug.utils import secure_filename
 
-app = Flask(__name__, template_folder='templates',static_folder='static',static_url_path='/static')
+app = Flask(__name__, template_folder='templates', static_folder='static', static_url_path='/static')
 app.secret_key = 'your_secret_key_here'
 
 # 数据库配置
@@ -17,8 +18,40 @@ db_config = {
     'host': 'localhost',
     'user': 'root',
     'password': '123456',
-    'database': 'physics_new2'
+    'database': 'physics_new3'
 }
+
+# 图片上传配置
+UPLOAD_FOLDER = 'static/images'
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'svg'}
+MAX_FILE_SIZE = 16 * 1024 * 1024  # 16MB
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+
+def allowed_file(filename):
+    """检查文件扩展名是否允许"""
+    return '.' in filename and \
+        filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def save_uploaded_file(file):
+    """保存上传的文件"""
+    if file and file.filename != '' and allowed_file(file.filename):
+        # 生成安全的文件名
+        filename = secure_filename(file.filename)
+        # 确保文件名唯一
+        base, ext = os.path.splitext(filename)
+        counter = 1
+        while os.path.exists(os.path.join(app.config['UPLOAD_FOLDER'], filename)):
+            filename = f"{base}_{counter}{ext}"
+            counter += 1
+
+        # 保存文件
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(file_path)
+        return filename
+    return None
 
 
 def get_db_connection():
@@ -125,7 +158,6 @@ def generate_problem_from_template(template_id):
             var_values[var] = random.randint(35, 45)
         else:
             var_values[var] = random.randint(2, 4)
-
 
     # 使用正则表达式格式化模板
     import re
@@ -393,7 +425,7 @@ def initialize_database():
     )
     """)
 
-    # 创建问题模板表（如果不存在）
+    # 创建问题模板表（如果不存在）- 添加图片文件名字段
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS problem_templates (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -402,7 +434,8 @@ def initialize_database():
         variables TEXT NOT NULL,
         solution_formula TEXT NOT NULL,
         answer_count INT DEFAULT 1,
-        difficulty VARCHAR(20) DEFAULT 'medium'
+        difficulty VARCHAR(20) DEFAULT 'medium',
+        image_filename VARCHAR(255) NULL
     )
     """)
 
@@ -1125,6 +1158,7 @@ def statistics():
         if conn and conn.is_connected():
             conn.close()
 
+
 @app.route('/debug/images')
 def debug_images():
     import os
@@ -1209,6 +1243,7 @@ def history():
         if conn:
             conn.close()
 
+
 @app.route('/all_problems')
 @login_required
 def all_problems():
@@ -1219,7 +1254,7 @@ def all_problems():
 
         # 获取所有题目模板
         cursor.execute(
-            "SELECT id, template_name, problem_text, variables, difficulty FROM problem_templates ORDER BY id")
+            "SELECT id, template_name, problem_text, variables, difficulty, image_filename FROM problem_templates ORDER BY id")
         templates = cursor.fetchall()
 
         problems = []
@@ -1312,7 +1347,8 @@ def all_problems():
                 'var_values': var_values,
                 'completed': completed,
                 'stats': stats,
-                'difficulty': template.get('difficulty', 'medium')
+                'difficulty': template.get('difficulty', 'medium'),
+                'image_filename': template.get('image_filename')
             })
 
         return render_template('all_problem.html',
@@ -1361,6 +1397,7 @@ def refresh_all_problems():
         return jsonify({'success': True, 'message': '所有题目已刷新'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
+
 
 @app.route('/problem_ajax/<int:problem_id>')
 @login_required
@@ -1612,22 +1649,33 @@ def admin_add_problem():
             answer_count = int(request.form.get('answer_count', 1))
             difficulty = request.form.get('difficulty', 'medium')
 
+            # 处理图片上传
+            image_filename = None
+            if 'problem_image' in request.files:
+                file = request.files['problem_image']
+                if file and file.filename != '':
+                    image_filename = save_uploaded_file(file)
+                    if image_filename:
+                        # 在题目内容中插入图片
+                        img_html = f'<div class="text-center mb-3"><img src="/static/images/{image_filename}" alt="{template_name}" class="problem-image img-fluid"><div class="image-caption text-muted">图：{template_name}</div></div>'
+                        problem_text = img_html + problem_text
+
             conn = get_db_connection()
             cursor = conn.cursor()
 
             # 插入新题目模板
             cursor.execute("""
                 INSERT INTO problem_templates 
-                (template_name, problem_text, variables, solution_formula, answer_count, difficulty)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """, (template_name, problem_text, variables, solution_formula, answer_count, difficulty))
+                (template_name, problem_text, variables, solution_formula, answer_count, difficulty, image_filename)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (template_name, problem_text, variables, solution_formula, answer_count, difficulty, image_filename))
 
             conn.commit()
             cursor.close()
             conn.close()
 
             flash('题目添加成功！', 'success')
-            return redirect(url_for('admin_dashboard'))
+            return redirect(url_for('admin_manage_problems'))
 
         except Exception as e:
             print(f"添加题目失败: {str(e)}")
@@ -1675,13 +1723,38 @@ def admin_edit_problem(template_id):
             solution_formula = request.form['solution_formula']
             answer_count = int(request.form.get('answer_count', 1))
             difficulty = request.form.get('difficulty', 'medium')
+            remove_image = request.form.get('remove_image') == 'true'
+            current_image = request.form.get('current_image', '')
+
+            # 处理图片更新
+            image_filename = current_image if current_image else None
+
+            if remove_image:
+                # 删除图片
+                image_filename = None
+                # 从问题文本中移除图片
+                problem_text = re.sub(r'<div class="text-center mb-3">.*?</div>', '', problem_text, count=1,
+                                      flags=re.DOTALL)
+            elif 'problem_image' in request.files:
+                file = request.files['problem_image']
+                if file and file.filename != '':
+                    # 上传新图片
+                    image_filename = save_uploaded_file(file)
+                    if image_filename:
+                        # 在题目内容中插入图片
+                        img_html = f'<div class="text-center mb-3"><img src="/static/images/{image_filename}" alt="{template_name}" class="problem-image img-fluid"><div class="image-caption text-muted">图：{template_name}</div></div>'
+                        # 移除旧的图片并添加新的
+                        problem_text = re.sub(r'<div class="text-center mb-3">.*?</div>', '', problem_text, count=1,
+                                              flags=re.DOTALL)
+                        problem_text = img_html + problem_text
 
             cursor.execute("""
                 UPDATE problem_templates 
                 SET template_name = %s, problem_text = %s, variables = %s, 
-                    solution_formula = %s, answer_count = %s, difficulty = %s
+                    solution_formula = %s, answer_count = %s, difficulty = %s, image_filename = %s
                 WHERE id = %s
-            """, (template_name, problem_text, variables, solution_formula, answer_count, difficulty, template_id))
+            """, (template_name, problem_text, variables, solution_formula, answer_count, difficulty, image_filename,
+                  template_id))
 
             conn.commit()
             flash('题目更新成功！', 'success')
@@ -1962,17 +2035,20 @@ def admin_all_problems_stats():
         cursor.close()
         conn.close()
 
+
 def is_mobile_device():
     """检测是否为移动设备"""
     user_agent = request.headers.get('User-Agent', '').lower()
     mobile_pattern = re.compile(r'mobile|android|webos|iphone|ipad|ipod|blackberry|windows phone')
     return bool(mobile_pattern.search(user_agent))
 
+
 def is_touch_device():
     """检测是否为触摸设备（简化版）"""
     user_agent = request.headers.get('User-Agent', '').lower()
     touch_pattern = re.compile(r'mobile|android|iphone|ipad|ipod')
     return bool(touch_pattern.search(user_agent))
+
 
 @app.context_processor
 def inject_device_status():
@@ -1997,6 +2073,7 @@ def get_total_problem_count():
     finally:
         cursor.close()
         conn.close()
+
 
 def get_completed_problem_count(user_id):
     """动态获取用户已完成的题目数量"""
@@ -2059,7 +2136,79 @@ def api_user_completion_status():
         })
 
 
+# 图片管理功能
+@app.route('/admin/image_manager')
+@login_required
+def admin_image_manager():
+    """图片管理页面"""
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    import os
+    from datetime import datetime
+
+    images = []
+    images_path = os.path.join(app.root_path, 'static', 'images')
+
+    if os.path.exists(images_path):
+        for filename in os.listdir(images_path):
+            if allowed_file(filename):
+                file_path = os.path.join(images_path, filename)
+                file_stat = os.stat(file_path)
+                images.append({
+                    'filename': filename,
+                    'size': round(file_stat.st_size / 1024, 1),  # KB
+                    'modified': datetime.fromtimestamp(file_stat.st_mtime).strftime('%Y-%m-%d %H:%M')
+                })
+
+    return render_template('admin_image_manager.html', images=images)
+
+
+@app.route('/admin/delete_image/<filename>')
+@login_required
+def admin_delete_image(filename):
+    """删除图片"""
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    import os
+    from werkzeug.utils import secure_filename
+
+    # 安全检查
+    filename = secure_filename(filename)
+    image_path = os.path.join(app.root_path, 'static', 'images', filename)
+
+    if os.path.exists(image_path):
+        try:
+            # 检查是否有题目在使用这个图片
+            conn = get_db_connection()
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("SELECT id, template_name FROM problem_templates WHERE image_filename = %s", (filename,))
+            using_templates = cursor.fetchall()
+            cursor.close()
+            conn.close()
+
+            if using_templates:
+                template_names = [t['template_name'] for t in using_templates]
+                flash(f'无法删除图片，以下题目正在使用：{", ".join(template_names)}', 'danger')
+            else:
+                os.remove(image_path)
+                flash('图片删除成功！', 'success')
+        except Exception as e:
+            print(f"删除图片失败: {str(e)}")
+            flash(f'删除图片失败: {str(e)}', 'danger')
+    else:
+        flash('图片不存在', 'danger')
+
+    return redirect(url_for('admin_image_manager'))
+
+
 if __name__ == '__main__':
+    # 确保图片目录存在
+    os.makedirs('static/images', exist_ok=True)
+
     # 初始化数据库
     initialize_database()
     # 创建管理员用户

@@ -16,9 +16,8 @@
             <a href="{{ url_for('admin_all_problems_stats') }}" class="btn btn-info">
                 <i class="bi bi-graph-up"></i> 题目统计
             </a>
-            <!-- 在现有的快捷操作部分添加 -->
-            <a href="{{ url_for('admin_manage_problems') }}" class="btn btn-outline-primary w-100">
-                <i class="bi bi-journal-plus me-2"></i>题目管理
+            <a href="{{ url_for('admin_manage_problems') }}" class="btn btn-primary">
+                <i class="bi bi-journal-plus"></i> 题目管理
             </a>
         </div>
     </div>
@@ -137,7 +136,7 @@
                                 <small class="text-muted">注册时间: {{ student.created_at.strftime('%m-%d %H:%M') }}</small>
                             </div>
                             <div class="text-end">
-                                <span class="badge bg-warning rounded-pill">{{ student.total_score or 0 }}/8</span>
+                                <span class="badge bg-warning rounded-pill">{{ student.total_score or 0 }}/{{ total_problems }}</span>
                                 <br>
                                 <a href="{{ url_for('admin_student_details', user_id=student.id) }}"
                                    class="btn btn-sm btn-outline-primary mt-1">查看详情</a>
@@ -179,23 +178,78 @@
         </div>
     </div>
 
-    <!-- 快捷操作 - 已移除导出按钮 -->
+    <!-- 快捷操作 -->
     <div class="card mt-4">
         <div class="card-header">
             <h5 class="mb-0"><i class="bi bi-lightning me-2"></i>快捷操作</h5>
         </div>
         <div class="card-body">
             <div class="row">
-                <!-- 只保留两个按钮 -->
-                <div class="col-md-6 mb-3">
+                <div class="col-md-4 mb-3">
                     <a href="{{ url_for('update_all_status') }}" class="btn btn-outline-success w-100">
                         <i class="bi bi-arrow-clockwise me-2"></i>更新状态
                     </a>
                 </div>
-                <div class="col-md-6 mb-3">
+                <div class="col-md-4 mb-3">
                     <a href="{{ url_for('admin_all_problems_stats') }}" class="btn btn-outline-info w-100">
                         <i class="bi bi-graph-up me-2"></i>题目统计
                     </a>
+                </div>
+                <div class="col-md-4 mb-3">
+                    <a href="{{ url_for('admin_manage_problems') }}" class="btn btn-outline-primary w-100">
+                        <i class="bi bi-journal-plus me-2"></i>题目管理
+                    </a>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <a href="{{ url_for('admin_students_by_status', status='completed') }}" class="btn btn-outline-success w-100">
+                        <i class="bi bi-check-circle me-2"></i>已完成学生
+                    </a>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <a href="{{ url_for('admin_students_by_status', status='incomplete') }}" class="btn btn-outline-warning w-100">
+                        <i class="bi bi-exclamation-triangle me-2"></i>未完成学生
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 系统信息 -->
+    <div class="card mt-4">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i>系统信息</h5>
+        </div>
+        <div class="card-body">
+            <div class="row text-center">
+                <div class="col-md-3">
+                    <div class="p-3">
+                        <i class="bi bi-journal-text display-4 text-primary"></i>
+                        <h5 class="mt-2">{{ total_problems }}</h5>
+                        <p class="text-muted mb-0">总题目数</p>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="p-3">
+                        <i class="bi bi-clock-history display-4 text-success"></i>
+                        <h5 class="mt-2">{{ stats.today_stats.today_completions or 0 }}</h5>
+                        <p class="text-muted mb-0">今日完成</p>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="p-3">
+                        <i class="bi bi-person-check display-4 text-info"></i>
+                        <h5 class="mt-2">{{ stats.stats.completed_count or 0 }}</h5>
+                        <p class="text-muted mb-0">总完成人数</p>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="p-3">
+                        <i class="bi bi-speedometer2 display-4 text-warning"></i>
+                        <h5 class="mt-2">{{ "%.1f"|format(stats.stats.avg_time or 0) }}s</h5>
+                        <p class="text-muted mb-0">平均用时</p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -215,6 +269,18 @@
 .list-group-item {
     border: none;
     padding: 1rem 0;
+}
+.btn-group .btn {
+    margin-bottom: 0.5rem;
+}
+@media (max-width: 768px) {
+    .btn-group {
+        flex-direction: column;
+    }
+    .btn-group .btn {
+        margin-bottom: 0.5rem;
+        border-radius: 0.375rem !important;
+    }
 }
 </style>
 {% endblock %}
