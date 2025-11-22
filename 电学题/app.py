@@ -1174,13 +1174,13 @@ def debug_images():
 @app.route('/history')
 @login_required
 def history():
-    """获取答题历史（带完整错误处理）"""
+    """获取答题历史"""
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        # 修复SQL查询
+        # 获取答题记录
         cursor.execute("""
             SELECT 
                 r.id,
@@ -1190,7 +1190,7 @@ def history():
                 r.correct_answer,
                 r.is_correct,
                 r.attempt_count,
-                DATE_FORMAT(r.response_time, '%Y-%m-%d %H:%i:%s') as formatted_time,
+                r.response_time,
                 r.time_taken,
                 t.id as template_id
             FROM user_responses r
@@ -1201,11 +1201,18 @@ def history():
 
         responses = cursor.fetchall()
 
-        # 获取统计信息 - 修复字段名
+        # 格式化时间
+        for response in responses:
+            if response['response_time']:
+                response['formatted_time'] = response['response_time'].strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                response['formatted_time'] = '未知时间'
+
+        # 获取统计信息
         cursor.execute("""
             SELECT 
                 COUNT(*) as total,
-                SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) as correct_count,
+                SUM(CASE WHEN is_correct = TRUE THEN 1 ELSE 0 END) as correct_count,
                 AVG(time_taken) as avg_time
             FROM user_responses 
             WHERE user_id = %s
@@ -1222,9 +1229,6 @@ def history():
                 'avg_time': float(stats_result['avg_time'] or 0)
             }
 
-        print(f"[DEBUG] 答题记录数量: {len(responses)}")
-        print(f"[DEBUG] 统计信息: {stats}")
-
         return render_template('history.html',
                                responses=responses,
                                stats=stats,
@@ -1232,8 +1236,6 @@ def history():
 
     except Exception as e:
         print(f"[系统错误] 获取答题历史失败: {str(e)}")
-        import traceback
-        print(f"[详细错误] {traceback.format_exc()}")
         flash('获取答题历史失败，请稍后再试', 'danger')
         return render_template('history.html',
                                responses=[],
@@ -1243,6 +1245,29 @@ def history():
         if conn:
             conn.close()
 
+@app.route('/debug/history')
+@login_required
+def debug_history():
+    """调试历史记录"""
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    # 检查用户记录
+    cursor.execute("SELECT COUNT(*) as count FROM user_responses WHERE user_id = %s", (session['user_id'],))
+    user_count = cursor.fetchone()
+
+    # 检查表结构
+    cursor.execute("DESCRIBE user_responses")
+    table_structure = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    return jsonify({
+        'user_id': session['user_id'],
+        'user_response_count': user_count['count'],
+        'table_structure': table_structure
+    })
 
 @app.route('/all_problems')
 @login_required
