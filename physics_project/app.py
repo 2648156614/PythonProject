@@ -117,75 +117,25 @@ def generate_problem_from_template(template_id):
     variables = [v.strip() for v in template['variables'].split(',')] if template['variables'] else []
     var_values = {}
 
-    # 为每个变量生成随机值
+    # 为每个变量生成随机值 - 简化版本：0-20范围内的随机数
     for var in variables:
-
-        if var == 'r' or var == 'a' or var == 'd' or var == 'x' or var == 'AC' or var == 'L':
-            var_values[var] = random.randint(5, 20)
-        elif var == 'R':
-            var_values[var] = random.randint(5, 20)
-        elif var == 'i':
-            var_values[var] = round(random.uniform(0.01, 0.05), 3)
-        elif var == 'N':
-            var_values[var] = random.randint(50, 200)
-        elif var == 'B' or var == 'B0':
-            var_values[var] = round(random.uniform(0.1, 0.5), 2)
-        elif var == 'A':
-            var_values[var] = round(random.uniform(0.01, 0.05), 3)
-        elif var == 'omega':
-            var_values[var] = random.randint(10, 50)
-        elif var == 'l':
-            var_values[var] = round(random.uniform(0.1, 0.5), 2)
-        elif var == 'v':
-            var_values[var] = round(random.uniform(1, 5), 1)
-        elif var == 'dBdt' or var == 'alpha':
-            var_values[var] = round(random.uniform(0.1, 1.0), 1)
-        elif var == 'I':
-            var_values[var] = random.randint(1, 5)
-        elif var == 'm':
-            var_values[var] = round(random.uniform(0.1, 0.5), 2)
-        elif var == 'rho':
-            var_values[var] = round(random.uniform(1.7e-8, 2.0e-8), 2)
-        elif var == 'density':
-            var_values[var] = 8960
-        elif var == 'L':
-            var_values[var] = 400  # 固定长度
-        elif var == 'h':
-            var_values[var] = 4  # 固定高度
-        elif var == 'v':
-            var_values[var] = random.randint(300, 400)  # 速度300-400km/h
-        elif var == 'B':
-            var_values[var] = random.randint(35, 45)
-        else:
-            var_values[var] = random.randint(2, 4)
+        var_values[var] = round(random.uniform(0, 20.0), 2)  # 0到20，保留2位小数
 
     # 使用正则表达式格式化模板
     import re
     problem_text = template['problem_text']
 
-    # 第一步：替换所有变量
-    pattern1 = r'\{\{\s*problem\.var_values\.(\w+)\s*\}\}'
-    pattern2 = r'\{\s*(\w+)\s*\}'  # 备用模式
+    # 只匹配双下划线包围的变量：__变量名__
+    pattern = r'__(\w+)__'
 
     def replace_var(match):
         var_name = match.group(1)
-        full_match = match.group(0)
-
-        # 排除在数学公式、单位符号和文本中的变量名
-        if '\\text' in full_match or '\\,' in full_match or '\\mathrm' in full_match:
-            return match.group(0)
-
-        unit_indicators = ['\\text', '\\,', '\\mathrm', '\\unit']
-        if any(indicator in full_match for indicator in unit_indicators):
-            return match.group(0)
-
         if var_name in var_values:
             return str(var_values[var_name])
         else:
-            return match.group(0)
+            return match.group(0)  # 如果没有找到变量，保持原样
 
-    problem_content = re.sub(pattern1, replace_var, problem_text)
-    problem_content = re.sub(pattern2, replace_var, problem_content)
+    problem_content = re.sub(pattern, replace_var, problem_text)
 
     # 第二步：关键修复 - 手动替换所有图片URL
     problem_content = problem_content.replace(
@@ -214,6 +164,7 @@ def generate_problem_from_template(template_id):
     print(f"模板ID: {template_id}")
     print(f"是否包含图片URL: {'/static/images/' in problem_content}")
     print(f"问题内容片段: {problem_content[:500]}")
+    print(f"生成的变量值: {var_values}")
 
     # 计算正确答案
     x, t, h = sp.symbols('x t h')
@@ -247,6 +198,8 @@ def generate_problem_from_template(template_id):
         'answer_count': template.get('answer_count', 1),
         'template_name': template['template_name']
     }
+
+
 
 
 def save_user_response(user_id, template_id, problem_text, user_answers, correct_answers, is_correct_list,
@@ -471,6 +424,7 @@ def initialize_database():
     """)
 
     # 插入电磁学题目模板 - 使用直接图片路径
+    # 插入电磁学题目模板 - 使用新的变量标记格式
     templates = [
         # 题目1：闭合圆形线圈的感应电流
         {
@@ -478,8 +432,8 @@ def initialize_database():
             'text': r"""
                 <div class="math-formula">
                     <h5>题目描述：</h5>
-                    <p>用导线制成一半径为 \( r = {{ problem.var_values.r }} \, \text{cm} \) 的闭合圆形线圈，其电阻 \( R = {{ problem.var_values.R }} \, \Omega \)，均匀磁场垂直于线圈平面。</p>
-                    <p>欲使电路中有一稳定的感应电流 \( i = {{ problem.var_values.i }} \, \text{A} \)，求 \( B \) 的变化率 \( \frac{dB}{dt} \)。</p>
+                    <p>用导线制成一半径为 \( r = __r__ \, \text{cm} \) 的闭合圆形线圈，其电阻 \( R = __R__ \, \Omega \)，均匀磁场垂直于线圈平面。</p>
+                    <p>欲使电路中有一稳定的感应电流 \( i = __i__ \, \text{A} \)，求 \( B \) 的变化率 \( \frac{dB}{dt} \)。</p>
 
                     <div class="alert alert-info mt-3">
                         <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
@@ -494,30 +448,31 @@ def initialize_database():
             'answer_count': 1
         },
 
+        # 题目2：高铁电磁感应问题
         {
             'name': '高铁电磁感应问题',
             'text': r"""
-        <div class="math-formula">
-        <h5>题目描述：</h5>
-        <p>中国是目前世界上高速铁路运行里程最长的国家，已知"复兴号"高铁长度为 L = {{ problem.var_values.L }} m，车厢高 h = {{ problem.var_values.h }} m，正常行驶速度 v = {{ problem.var_values.v }} km/h。</p>
-        <p>假设地面附近地磁场的水平分量约为 B = {{ problem.var_values.B }} μT，将列车视为一整块导体，只考虑地磁场的水平分量。</p>
-        <p>则"复兴号"列车在自西向东正常行驶的过程中，求车头与车尾之间的电势差大小（单位：μV）。</p>
+            <div class="math-formula">
+            <h5>题目描述：</h5>
+            <p>中国是目前世界上高速铁路运行里程最长的国家，已知"复兴号"高铁长度为 L = __L__ m，车厢高 h = __h__ m，正常行驶速度 v = __v__ km/h。</p>
+            <p>假设地面附近地磁场的水平分量约为 B = __B__ μT，将列车视为一整块导体，只考虑地磁场的水平分量。</p>
+            <p>则"复兴号"列车在自西向东正常行驶的过程中，求车头与车尾之间的电势差大小（单位：μV）。</p>
 
-        <div class="alert alert-info mt-3">
-            <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
-            <p>1. 速度单位换算：km/h → m/s</p>
-            <p>2. 磁场单位换算：μT → T</p>
-            <p>3. 导体在磁场中运动产生的感应电动势：ε = BLv</p>
-            <p>4. 最终结果单位转换为微伏(μV)：1 V = 10⁶ μV</p>
-        </div>
-        </div>
-        """,
+            <div class="alert alert-info mt-3">
+                <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
+                <p>1. 速度单位换算：km/h → m/s</p>
+                <p>2. 磁场单位换算：μT → T</p>
+                <p>3. 导体在磁场中运动产生的感应电动势：ε = BLv</p>
+                <p>4. 最终结果单位转换为微伏(μV)：1 V = 10⁶ μV</p>
+            </div>
+            </div>
+            """,
             'variables': 'L,h,v,B',
-            'formula': "B * L * (v / 3.6) ",  # 结果单位改为微伏(μV)
+            'formula': "B * L * (v / 3.6)",  # 结果单位改为微伏(μV)
             'answer_count': 1
         },
 
-        # 题目3：等边三角形金属框转动电动势 - 使用直接路径
+        # 题目3：等边三角形金属框转动电动势
         {
             'name': '等边三角形金属框转动电动势',
             'text': r"""
@@ -528,8 +483,8 @@ def initialize_database():
                              alt="等边三角形金属框示意图" class="problem-image img-fluid">
                         <div class="image-caption text-muted">图2：等边三角形金属框转动示意图</div>
                     </div>
-                    <p>如图所示，等边三角形的金属框，边长为 \( l = {{ problem.var_values.l }} \, \text{m} \)，放在均匀磁场 \( B = {{ problem.var_values.B }} \, \text{T} \) 中。</p>
-                    <p>\( ab \) 边平行于磁感强度 \( B \)，当金属框绕 \( ab \) 边以角速度 \( \omega = {{ problem.var_values.omega }} \, \text{rad/s} \) 转动时：</p>
+                    <p>如图所示，等边三角形的金属框，边长为 \( l = __l__ \, \text{m} \)，放在均匀磁场 \( B = __B__ \, \text{T} \) 中。</p>
+                    <p>\( ab \) 边平行于磁感强度 \( B \)，当金属框绕 \( ab \) 边以角速度 \( \omega = __omega__ \, \text{rad/s} \) 转动时：</p>
                     <ol>
                         <li>求 \( bc \) 边上沿 \( bc \) 的电动势</li>
                         <li>求 \( ca \) 边上沿 \( ca \) 的电动势</li>
@@ -547,7 +502,7 @@ def initialize_database():
             'answer_count': 3
         },
 
-        # 题目4：动生电动势与感生电动势 - 使用直接路径
+        # 题目4：动生电动势与感生电动势
         {
             'name': '动生电动势与感生电动势',
             'text': r"""
@@ -558,9 +513,9 @@ def initialize_database():
                              alt="导体AC运动示意图" class="problem-image img-fluid">
                         <div class="image-caption text-muted">图3：导体AC在变化磁场中运动示意图</div>
                     </div>
-                    <p>导体 \( AC \) 以速度 \( v = {{ problem.var_values.v }} \, \text{m/s} \) 运动。</p>
-                    <p>设 \( AC = {{ problem.var_values.AC }} \, \text{cm} \)，均匀磁场随时间的变化率 \( \frac{dB}{dt} = {{ problem.var_values.dBdt }} \, \text{T/s} \)。</p>
-                    <p>某一时刻 \( B = {{ problem.var_values.B }} \, \text{T} \)，\( x = {{ problem.var_values.x }} \, \text{cm} \)，求：</p>
+                    <p>导体 \( AC \) 以速度 \( v = __v__ \, \text{m/s} \) 运动。</p>
+                    <p>设 \( AC = __AC__ \, \text{cm} \)，均匀磁场随时间的变化率 \( \frac{dB}{dt} = __dBdt__ \, \text{T/s} \)。</p>
+                    <p>某一时刻 \( B = __B__ \, \text{T} \)，\( x = __x__ \, \text{cm} \)，求：</p>
                     <ol>
                         <li>这时动生电动势的大小</li>
                         <li>总感应电动势的大小</li>
@@ -579,32 +534,32 @@ def initialize_database():
             'answer_count': 3
         },
 
-        # 题目5：折形金属导线运动电势差 - 使用直接路径
+        # 题目5：折形金属导线运动电势差
         {
             'name': '折形金属导线运动电势差',
             'text': r"""
-            <div class="math-formula">
-                <h5>题目描述：</h5>
-                <div class="text-center mb-3">
-                    <img src="/static/images/problem5.png" 
-                         alt="折形金属导线示意图" class="problem-image img-fluid">
-                    <div class="image-caption text-muted">图4：折形金属导线在磁场中运动示意图</div>
+                <div class="math-formula">
+                    <h5>题目描述：</h5>
+                    <div class="text-center mb-3">
+                        <img src="/static/images/problem5.png" 
+                             alt="折形金属导线示意图" class="problem-image img-fluid">
+                        <div class="image-caption text-muted">图4：折形金属导线在磁场中运动示意图</div>
+                    </div>
+                    <p>\( aOc \) 为一折成 \( 30^\circ \) 角的金属导线（\( aO = Oc = L = __L__ \, \text{m} \)），位于 \( xy \) 平面中。</p>
+                    <p>其中 \( aO \) 段与 \( x \) 轴夹角为 \( 30^\circ \)，\( Oc \) 段与 \( x \) 轴夹角为 \( 30^\circ \)，两段在 \( O \) 点相接。</p>
+                    <p>磁感强度为 \( B = __B__ \, \text{T} \) 的匀强磁场垂直于 \( xy \) 平面。</p>
+                    <ol>
+                        <li>当 \( aOc \) 以速度 \( v = __v__ \, \text{m/s} \) 沿 \( x \) 轴正向运动时，导线上 \( a, c \) 两点间电势差 \( U_{ac} \)</li>
+                        <li>当 \( aOc \) 以速度 \( v \) 沿 \( y \) 轴正向运动时，判断 \( a, c \) 两点电势高低（a点高填1，c点高填-1）</li>
+                    </ol>
+                    <div class="alert alert-info mt-3">
+                        <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
+                        <p>动生电动势公式：\( \varepsilon = \int (\vec{v} \times \vec{B}) \cdot d\vec{l} \)</p>
+                        <p>考虑不同运动方向时各段的电动势，注意30度角的影响</p>
+                        <p>总电势差为各段电动势的代数和</p>
+                    </div>
                 </div>
-                <p>\( aOc \) 为一折成 \( 30^\circ \) 角的金属导线（\( aO = Oc = L = {{ problem.var_values.L }} \, \text{m} \)），位于 \( xy \) 平面中。</p>
-                <p>其中 \( aO \) 段与 \( x \) 轴夹角为 \( 30^\circ \)，\( Oc \) 段与 \( x \) 轴夹角为 \( 30^\circ \)，两段在 \( O \) 点相接。</p>
-                <p>磁感强度为 \( B = {{ problem.var_values.B }} \, \text{T} \) 的匀强磁场垂直于 \( xy \) 平面。</p>
-                <ol>
-                    <li>当 \( aOc \) 以速度 \( v = {{ problem.var_values.v }} \, \text{m/s} \) 沿 \( x \) 轴正向运动时，导线上 \( a, c \) 两点间电势差 \( U_{ac} \)</li>
-                    <li>当 \( aOc \) 以速度 \( v \) 沿 \( y \) 轴正向运动时，判断 \( a, c \) 两点电势高低（a点高填1，c点高填-1）</li>
-                </ol>
-                <div class="alert alert-info mt-3">
-                    <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
-                    <p>动生电动势公式：\( \varepsilon = \int (\vec{v} \times \vec{B}) \cdot d\vec{l} \)</p>
-                    <p>考虑不同运动方向时各段的电动势，注意30度角的影响</p>
-                    <p>总电势差为各段电动势的代数和</p>
-                </div>
-            </div>
-        """,
+            """,
             'variables': 'L,B,v',
             'formula': "B * v * L /2 , -1",
             'answer_count': 2
@@ -634,7 +589,7 @@ def initialize_database():
             'answer_count': 2
         },
 
-        # 题目7：双圆线圈的感应电流 - 使用直接路径
+        # 题目7：双圆线圈的感应电流
         {
             'name': '双圆线圈的感应电流',
             'text': r"""
@@ -645,9 +600,9 @@ def initialize_database():
                              alt="双圆线圈示意图" class="problem-image img-fluid">
                         <div class="image-caption text-muted">图5：双圆线圈在变化磁场中示意图</div>
                     </div>
-                    <p>电阻为 \( R = {{ problem.var_values.R }} \, \Omega \) 的闭合线圈折成半径分别为 \( a = {{ problem.var_values.a }} \, \text{cm} \) 和 \( 2a \) 的两个圆，</p>
+                    <p>电阻为 \( R = __R__ \, \Omega \) 的闭合线圈折成半径分别为 \( a = __a__ \, \text{cm} \) 和 \( 2a \) 的两个圆，</p>
                     <p>将其置于与两圆平面垂直的匀强磁场内，磁感应强度按 \( B = B_0 \sin(\omega t) \) 的规律变化。</p>
-                    <p>已知 \( B_0 = {{ problem.var_values.B0 }} \, \text{T} \)，\( \omega = {{ problem.var_values.omega }} \, \text{rad/s} \)，求线圈中感应电流的最大值。</p>
+                    <p>已知 \( B_0 = __B0__ \, \text{T} \)，\( \omega = __omega__ \, \text{rad/s} \)，求线圈中感应电流的最大值。</p>
                     <div class="alert alert-info mt-3">
                         <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
                         <p>法拉第电磁感应定律</p>
@@ -665,24 +620,24 @@ def initialize_database():
         {
             'name': '铜制回路的感应电流',
             'text': r"""
-            <div class="math-formula">
-                <h5>题目描述：</h5>
-                <p>有一磁感强度为 \( B \) 的均匀磁场，以恒定的变化率 \( \frac{dB}{dt} = {{ problem.var_values.dBdt }} \, \text{T/s} \) 在变化。</p>
-                <p>把一块质量为 \( m = {{ problem.var_values.m }} \, \text{kg} \) 的铜，拉成截面半径为 \( r = {{ problem.var_values.r }} \, \text{m} \) 的导线，</p>
-                <p>并用它做成一个半径为 \( R = {{ problem.var_values.R }} \, \text{m} \) 的圆形回路。圆形回路的平面与磁感强度 \( B \) 垂直。</p>
-                <p>试求这回路中的感应电流。</p>
-                <p>其中铜的电阻率 \( \rho = 1.7 \times 10^{-7} \, \Omega\cdot\text{m} \)，铜的密度 \( d = {{ problem.var_values.density }} \, \text{kg/m}^3 \)。</p>
+                <div class="math-formula">
+                    <h5>题目描述：</h5>
+                    <p>有一磁感强度为 \( B \) 的均匀磁场，以恒定的变化率 \( \frac{dB}{dt} = __dBdt__ \, \text{T/s} \) 在变化。</p>
+                    <p>把一块质量为 \( m = __m__ \, \text{kg} \) 的铜，拉成截面半径为 \( r = __r__ \, \text{m} \) 的导线，</p>
+                    <p>并用它做成一个半径为 \( R = __R__ \, \text{m} \) 的圆形回路。圆形回路的平面与磁感强度 \( B \) 垂直。</p>
+                    <p>试求这回路中的感应电流。</p>
+                    <p>其中铜的电阻率 \( \rho = 1.7 \times 10^{-7} \, \Omega\cdot\text{m} \)，铜的密度 \( d = __density__ \, \text{kg/m}^3 \)。</p>
 
-                <div class="alert alert-info mt-3">
-                    <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
-                    <p>导线长度与质量关系</p>
-                    <p>回路电阻计算</p>
-                    <p>感应电动势与电流关系</p>
+                    <div class="alert alert-info mt-3">
+                        <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
+                        <p>导线长度与质量关系</p>
+                        <p>回路电阻计算</p>
+                        <p>感应电动势与电流关系</p>
+                    </div>
                 </div>
-            </div>
-        """,
-            'variables': 'dBdt,m,r,R,density',  # 移除了rho，因为现在是固定值
-            'formula': "(m * dBdt) / (4 * pi * 1.7e-7 * density)",  # I = (m dB/dt)/(4πρd)，ρ固定为1.7e-7
+            """,
+            'variables': 'dBdt,m,r,R,density',
+            'formula': "(m * dBdt) / (4 * pi * 1.7e-7 * density)",
             'answer_count': 1
         }
     ]
@@ -1269,6 +1224,9 @@ def debug_history():
         'table_structure': table_structure
     })
 
+
+
+
 @app.route('/all_problems')
 @login_required
 def all_problems():
@@ -1289,45 +1247,16 @@ def all_problems():
             variables = [v.strip() for v in template['variables'].split(',')] if template['variables'] else []
             var_values = {}
 
-            # 生成随机变量值
+            # 生成随机变量值 - 简化版本：0-20范围内的随机数
             for var in variables:
-                if var == 'r' or var == 'a' or var == 'd' or var == 'x' or var == 'AC' or var == 'L':
-                    var_values[var] = random.randint(5, 20)
-                elif var == 'R':
-                    var_values[var] = random.randint(5, 20)
-                elif var == 'i':
-                    var_values[var] = round(random.uniform(0.01, 0.05), 3)
-                elif var == 'N':
-                    var_values[var] = random.randint(50, 200)
-                elif var == 'B' or var == 'B0':
-                    var_values[var] = round(random.uniform(0.1, 0.5), 2)
-                elif var == 'A':
-                    var_values[var] = round(random.uniform(0.01, 0.05), 3)
-                elif var == 'omega':
-                    var_values[var] = random.randint(10, 50)
-                elif var == 'l':
-                    var_values[var] = round(random.uniform(0.1, 0.5), 2)
-                elif var == 'v':
-                    var_values[var] = round(random.uniform(1, 5), 1)
-                elif var == 'dBdt' or var == 'alpha':
-                    var_values[var] = round(random.uniform(0.1, 1.0), 1)
-                elif var == 'I':
-                    var_values[var] = random.randint(1, 5)
-                elif var == 'm':
-                    var_values[var] = round(random.uniform(0.1, 0.5), 2)
-                elif var == 'rho':
-                    var_values[var] = round(random.uniform(1.7e-8, 2.0e-8), 2)
-                elif var == 'density':
-                    var_values[var] = 8960
-                else:
-                    var_values[var] = random.randint(2, 4)
+                var_values[var] = round(random.uniform(0, 20.0), 2)  # 0到20，保留2位小数
 
             # 使用正则表达式格式化模板
             import re
             problem_text = template['problem_text']
 
-            pattern1 = r'\{\{\s*problem\.var_values\.(\w+)\s*\}\}'
-            pattern2 = r'\{\s*(\w+)\s*\}'  # 备用模式
+            # 只匹配双下划线包围的变量：__变量名__
+            pattern = r'__(\w+)__'
 
             def replace_var(match):
                 var_name = match.group(1)
@@ -1336,8 +1265,7 @@ def all_problems():
                 else:
                     return match.group(0)
 
-            problem_content = re.sub(pattern1, replace_var, problem_text)
-            problem_content = re.sub(pattern2, replace_var, problem_content)
+            problem_content = re.sub(pattern, replace_var, problem_text)
 
             # 检查题目是否已完成
             cursor.execute("""
@@ -1387,6 +1315,8 @@ def all_problems():
     finally:
         if conn and conn.is_connected():
             conn.close()
+
+
 
 
 @app.route('/refresh_problem/<int:problem_id>', methods=['POST'])
@@ -2228,6 +2158,45 @@ def admin_delete_image(filename):
         flash('图片不存在', 'danger')
 
     return redirect(url_for('admin_image_manager'))
+
+
+@app.route('/health')
+def health_check():
+    """健康检查端点"""
+    try:
+        # 检查数据库连接
+        conn = get_db_connection()
+        if conn and conn.is_connected():
+            conn.close()
+            return jsonify({'status': 'healthy', 'database': 'connected'})
+        else:
+            return jsonify({'status': 'unhealthy', 'database': 'disconnected'}), 500
+    except Exception as e:
+        return jsonify({'status': 'unhealthy', 'error': str(e)}), 500
+
+@app.route('/api/exam/status')
+@login_required
+def exam_system_status():
+    """考试系统状态监控"""
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    # 获取系统统计
+    cursor.execute("SELECT COUNT(*) as active_users FROM users WHERE completed_all = FALSE")
+    active_users = cursor.fetchone()
+
+    cursor.execute("SELECT COUNT(*) as total_attempts FROM user_responses WHERE DATE(response_time) = CURDATE()")
+    today_attempts = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    return jsonify({
+        'active_users': active_users['active_users'],
+        'today_attempts': today_attempts['total_attempts'],
+        'server_time': datetime.now().isoformat(),
+        'status': 'operational'
+    })
 
 
 if __name__ == '__main__':

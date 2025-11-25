@@ -1,0 +1,16 @@
+# Flask 核心
+Flask==2.3.3
+Werkzeug==2.3.7
+Jinja2==3.1.2
+
+# 数据库
+mysql-connector-python==8.1.0
+
+# 数学计算
+sympy==1.12
+numpy==1.24.3
+
+# 生产服务器
+waitress==2.1.2
+
+

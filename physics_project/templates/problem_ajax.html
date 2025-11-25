@@ -113,12 +113,12 @@
                             <label for="answer" class="form-label">
                                 <strong><i class="bi bi-input-cursor-text me-1"></i>请输入答案：</strong>
                             </label>
-                            <input type="number" step="0.01" class="form-control form-control-lg"
+                            <input type="number" step="any" class="form-control form-control-lg"
                                    id="answer" name="answer" required
-                                   placeholder="输入保留两位小数的数值"
+                                   placeholder="输入数值"
                                    autocomplete="off">
                             <div class="form-text">
-                                <i class="bi bi-info-circle me-1"></i>请输入保留两位小数的数值，系统会自动进行容错判断（±1%）
+                                <i class="bi bi-info-circle me-1"></i>请输入数值（建议保留2-3位小数），系统会自动进行容错判断（±1%）
                             </div>
                         </div>
                         {% else %}
@@ -129,7 +129,7 @@
                                 <label for="answer{{ i+1 }}" class="form-label">
                                     <strong><i class="bi bi-input-cursor-text me-1"></i>答案 {{ i+1 }}：</strong>
                                 </label>
-                                <input type="number" step="0.01" class="form-control form-control-lg"
+                                <input type="number" step="any" class="form-control form-control-lg"
                                        id="answer{{ i+1 }}" name="answer{{ i+1 }}" required
                                        placeholder="输入答案 {{ i+1 }}"
                                        autocomplete="off">
@@ -137,7 +137,7 @@
                             {% endfor %}
                         </div>
                         <div class="form-text mb-3">
-                            <i class="bi bi-info-circle me-1"></i>请输入保留两位小数的数值（注意正负号），系统会自动进行容错判断（±1%）
+                            <i class="bi bi-info-circle me-1"></i>请输入数值（建议保留2-3位小数，注意正负号），系统会自动进行容错判断（±1%）
                         </div>
                         {% endif %}
                     </div>
@@ -337,6 +337,29 @@ function initTimer() {
         document.getElementById('time-counter').textContent = currentTime;
         document.getElementById('current-time').textContent = currentTime + '秒';
     }, 1000);
+}
+
+// 格式化正确答案显示（统一显示2位小数）
+function formatCorrectAnswers(correctAnswers) {
+    if (!correctAnswers || !Array.isArray(correctAnswers)) {
+        return "正确答案: 暂无";
+    }
+
+    const formattedAnswers = correctAnswers.map(answer => {
+        if (typeof answer === 'number') {
+            return answer.toFixed(2);
+        }
+        return answer;
+    });
+
+    if (formattedAnswers.length === 1) {
+        return `正确答案: ${formattedAnswers[0]}`;
+    } else {
+        const parts = formattedAnswers.map((answer, index) =>
+            `答案${index + 1} = ${answer}`
+        );
+        return `正确答案: ${parts.join(', ')}`;
+    }
 }
 
 // 显示消息（不会自动消失）
@@ -759,7 +782,9 @@ document.getElementById('answer-form').addEventListener('submit', async function
                 totalAttempts = data.total_attempts;
                 updateAttemptsDisplay();
 
-                showMessage(data.message, 'error');
+                // 使用格式化后的正确答案显示
+                const correctAnswerMessage = formatCorrectAnswers(data.correct_answers);
+                showMessage(`❌ 答案不正确！${correctAnswerMessage}。已为您生成新题目，请重新作答。`, 'error');
 
                 if (data.new_problem_generated && data.new_var_values) {
                     // 异步刷新题目参数
