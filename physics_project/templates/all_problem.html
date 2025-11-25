@@ -102,7 +102,7 @@
                     {{ 'bg-success text-white' if problem.completed else 'bg-primary text-white' }}">
             <h4 class="mb-0">
                 <i class="bi {{ 'bi-check-circle-fill' if problem.completed else 'bi-question-circle' }} me-2"></i>
-                第{{ problem.id }}题：{{ problem.name }}
+                第{{ problem.display_number }}题：{{ problem.name }}
             </h4>
             <div>
                 {% if problem.completed %}
@@ -160,20 +160,20 @@
 
             <!-- 操作按钮 -->
             <div class="d-flex gap-2 flex-wrap">
-                <a href="{{ url_for('problem_ajax', problem_id=problem.id) }}"
+                <a href="{{ url_for('problem_ajax', problem_id=problem.display_number) }}"
                    class="btn {{ 'btn-outline-success' if problem.completed else 'btn-primary' }}">
                     <i class="bi {{ 'bi-arrow-repeat' if problem.completed else 'bi-play-circle' }}"></i>
                     {{ '重新答题' if problem.completed else '开始答题' }}
                 </a>
 
                 <button class="btn btn-outline-warning btn-sm"
-                        onclick="refreshSingleProblem({{ problem.id }})">
+                        onclick="refreshSingleProblem({{ problem.display_number }})">
                     <i class="bi bi-arrow-clockwise"></i> 刷新题目
                 </button>
 
                 {% if problem.completed %}
                 <button class="btn btn-outline-secondary btn-sm"
-                        onclick="showSolution({{ problem.id }})">
+                        onclick="showSolution({{ problem.display_number }})">
                     <i class="bi bi-journal-text"></i> 查看解析
                 </button>
                 {% endif %}

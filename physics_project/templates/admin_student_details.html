@@ -18,7 +18,7 @@
         <div class="col-md-3">
             <div class="card text-white bg-primary">
                 <div class="card-body text-center">
-                    <h5 class="card-title">{{ student.total_score or 0 }}/8</h5>
+                    <h5 class="card-title">{{ student.total_score or 0 }}/{{ total_problems }}</h5>
                     <p class="card-text">完成题目</p>
                 </div>
             </div>
@@ -67,7 +67,7 @@
                 <table class="table table-hover">
                     <thead class="table-light">
                         <tr>
-                            <th>#</th>
+                            <th>序号</th>
                             <th>题目名称</th>
                             <th>答题次数</th>
                             <th>正确次数</th>
@@ -81,7 +81,7 @@
                     <tbody>
                         {% for stat in problem_stats %}
                         <tr>
-                            <td>{{ stat.template_id }}</td>
+                            <td>{{ get_display_number(stat.template_id) }}</td>
                             <td>{{ stat.template_name }}</td>
                             <td>
                                 <span class="fw-bold">{{ stat.total_attempts or 0 }}</span>

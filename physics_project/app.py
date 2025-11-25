@@ -1987,7 +1987,10 @@ def admin_student_details(user_id):
             flash('学生不存在', 'danger')
             return redirect(url_for('admin_dashboard'))
 
-        # 修复SQL查询 - 简化查询逻辑
+        # 获取题目总数
+        total_problems = get_total_problem_count()
+
+        # 修复SQL查询
         cursor.execute("""
             SELECT 
                 t.id as template_id,
@@ -2021,7 +2024,9 @@ def admin_student_details(user_id):
                                student=student,
                                problem_stats=problem_stats,
                                overall_stats=overall_stats,
-                               username=session['username'])
+                               total_problems=total_problems,
+                               username=session['username'],
+                               get_display_number=get_display_number)  # 传递函数到模板
 
     except Exception as e:
         print(f"获取学生详情失败: {str(e)}")

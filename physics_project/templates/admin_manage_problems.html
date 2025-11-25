@@ -26,7 +26,8 @@
                 <table class="table table-hover">
                     <thead class="table-light">
                         <tr>
-                            <th>ID</th>
+                            <th>序号</th>
+                            <th>实际ID</th>
                             <th>题目名称</th>
                             <th>图片</th>
                             <th>变量</th>
@@ -38,7 +39,8 @@
                     <tbody>
                         {% for template in templates %}
                         <tr>
-                            <td>{{ template.id }}</td>
+                            <td><strong>{{ template.display_number }}</strong></td>
+                            <td><small class="text-muted">{{ template.id }}</small></td>
                             <td>
                                 <strong>{{ template.template_name }}</strong>
                                 <div class="text-muted small mt-1">
