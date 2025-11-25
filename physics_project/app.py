@@ -9,6 +9,7 @@ import re
 from functools import wraps
 from math import pi, log
 from werkzeug.utils import secure_filename
+from datetime import datetime
 
 app = Flask(__name__, template_folder='templates', static_folder='static', static_url_path='/static')
 app.secret_key = 'your_secret_key_here'
@@ -101,8 +102,54 @@ def is_correct(user_answer, correct_answer):
     return result
 
 
+def get_problem_display_info():
+    """获取题目的显示信息（处理删除后的序号不连续问题）"""
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    # 获取所有有效的题目模板，按ID排序
+    cursor.execute("SELECT id, template_name FROM problem_templates ORDER BY id")
+    templates = cursor.fetchall()
+
+    # 创建显示序号映射
+    display_mapping = {}
+    for display_number, template in enumerate(templates, 1):
+        display_mapping[template['id']] = {
+            'display_number': display_number,
+            'template_name': template['template_name'],
+            'actual_id': template['id']
+        }
+
+    cursor.close()
+    conn.close()
+    return display_mapping
+
+
+def get_display_number(actual_id):
+    """根据实际ID获取显示序号"""
+    mapping = get_problem_display_info()
+    if actual_id in mapping:
+        return mapping[actual_id]['display_number']
+    return actual_id  # 回退到实际ID
+
+
+def get_actual_id(display_number):
+    """根据显示序号获取实际ID"""
+    mapping = get_problem_display_info()
+    for actual_id, info in mapping.items():
+        if info['display_number'] == display_number:
+            return actual_id
+    return None  # 找不到对应的实际ID
+
+
+def get_total_problem_count():
+    """动态获取题目总数"""
+    mapping = get_problem_display_info()
+    return len(mapping)
+
+
 def generate_problem_from_template(template_id):
-    """从模板生成具体问题"""
+    """从模板生成具体问题 - 移除硬编码替换"""
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     cursor.execute("SELECT * FROM problem_templates WHERE id = %s", (template_id,))
@@ -117,11 +164,11 @@ def generate_problem_from_template(template_id):
     variables = [v.strip() for v in template['variables'].split(',')] if template['variables'] else []
     var_values = {}
 
-    # 为每个变量生成随机值 - 简化版本：0-20范围内的随机数
+    # 为每个变量生成随机值
     for var in variables:
-        var_values[var] = round(random.uniform(0, 20.0), 2)  # 0到20，保留2位小数
+        var_values[var] = round(random.uniform(0, 20.0), 2)
 
-    # 使用正则表达式格式化模板
+    # 使用正则表达式格式化模板 - 只替换变量，不处理图片URL
     import re
     problem_text = template['problem_text']
 
@@ -133,37 +180,15 @@ def generate_problem_from_template(template_id):
         if var_name in var_values:
             return str(var_values[var_name])
         else:
-            return match.group(0)  # 如果没有找到变量，保持原样
+            return match.group(0)
 
     problem_content = re.sub(pattern, replace_var, problem_text)
-
-    # 第二步：关键修复 - 手动替换所有图片URL
-    problem_content = problem_content.replace(
-        "src=\"{{ url_for('static', filename='images/problem3.png') }}\"",
-        "src=\"/static/images/problem3.png\""
-    )
-    problem_content = problem_content.replace(
-        "src=\"{{ url_for('static', filename='images/problem4.png') }}\"",
-        "src=\"/static/images/problem4.png\""
-    )
-    problem_content = problem_content.replace(
-        "src=\"{{ url_for('static', filename='images/problem5.png') }}\"",
-        "src=\"/static/images/problem5.png\""
-    )
-    problem_content = problem_content.replace(
-        "src=\"{{ url_for('static', filename='images/problem7.png') }}\"",
-        "src=\"/static/images/problem7.png\""
-    )
-    problem_content = problem_content.replace(
-        "src=\"{{ url_for('static', filename='images/problem8.png') }}\"",
-        "src=\"/static/images/problem8.png\""
-    )
 
     # 调试输出
     print(f"=== 问题生成调试 ===")
     print(f"模板ID: {template_id}")
-    print(f"是否包含图片URL: {'/static/images/' in problem_content}")
-    print(f"问题内容片段: {problem_content[:500]}")
+    print(f"图片文件名: {template.get('image_filename')}")
+    print(f"问题内容片段: {problem_content[:200]}")
     print(f"生成的变量值: {var_values}")
 
     # 计算正确答案
@@ -196,10 +221,9 @@ def generate_problem_from_template(template_id):
         'correct_answers': correct_answers,
         'template_id': template_id,
         'answer_count': template.get('answer_count', 1),
-        'template_name': template['template_name']
+        'template_name': template['template_name'],
+        'image_filename': template.get('image_filename')
     }
-
-
 
 
 def save_user_response(user_id, template_id, problem_text, user_answers, correct_answers, is_correct_list,
@@ -360,7 +384,7 @@ def repair_database():
 
 
 def initialize_database():
-    """初始化数据库"""
+    """初始化数据库 - 使用新的图片管理方式"""
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -423,10 +447,9 @@ def initialize_database():
     )
     """)
 
-    # 插入电磁学题目模板 - 使用直接图片路径
-    # 插入电磁学题目模板 - 使用新的变量标记格式
+    # 插入电磁学题目模板 - 使用新的图片管理方式
     templates = [
-        # 题目1：闭合圆形线圈的感应电流
+        # 题目1：闭合圆形线圈的感应电流（无图片）
         {
             'name': '闭合圆形线圈的感应电流',
             'text': r"""
@@ -434,7 +457,6 @@ def initialize_database():
                     <h5>题目描述：</h5>
                     <p>用导线制成一半径为 \( r = __r__ \, \text{cm} \) 的闭合圆形线圈，其电阻 \( R = __R__ \, \Omega \)，均匀磁场垂直于线圈平面。</p>
                     <p>欲使电路中有一稳定的感应电流 \( i = __i__ \, \text{A} \)，求 \( B \) 的变化率 \( \frac{dB}{dt} \)。</p>
-
                     <div class="alert alert-info mt-3">
                         <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
                         <p>法拉第电磁感应定律：\( \varepsilon = -\frac{d\Phi}{dt} \)</p>
@@ -444,11 +466,12 @@ def initialize_database():
                 </div>
             """,
             'variables': 'r,R,i',
-            'formula': "i * R / (pi * (r/100)**2)",  # dB/dt = iR/(πr²)
-            'answer_count': 1
+            'formula': "i * R / (pi * (r/100)**2)",
+            'answer_count': 1,
+            'image_filename': None
         },
 
-        # 题目2：高铁电磁感应问题
+        # 题目2：高铁电磁感应问题（无图片）
         {
             'name': '高铁电磁感应问题',
             'text': r"""
@@ -457,7 +480,6 @@ def initialize_database():
             <p>中国是目前世界上高速铁路运行里程最长的国家，已知"复兴号"高铁长度为 L = __L__ m，车厢高 h = __h__ m，正常行驶速度 v = __v__ km/h。</p>
             <p>假设地面附近地磁场的水平分量约为 B = __B__ μT，将列车视为一整块导体，只考虑地磁场的水平分量。</p>
             <p>则"复兴号"列车在自西向东正常行驶的过程中，求车头与车尾之间的电势差大小（单位：μV）。</p>
-
             <div class="alert alert-info mt-3">
                 <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
                 <p>1. 速度单位换算：km/h → m/s</p>
@@ -468,21 +490,17 @@ def initialize_database():
             </div>
             """,
             'variables': 'L,h,v,B',
-            'formula': "B * L * (v / 3.6)",  # 结果单位改为微伏(μV)
-            'answer_count': 1
+            'formula': "B * L * (v / 3.6)",
+            'answer_count': 1,
+            'image_filename': None
         },
 
-        # 题目3：等边三角形金属框转动电动势
+        # 题目3：等边三角形金属框转动电动势（有图片）
         {
             'name': '等边三角形金属框转动电动势',
             'text': r"""
                 <div class="math-formula">
                     <h5>题目描述：</h5>
-                    <div class="text-center mb-3">
-                        <img src="/static/images/problem3.png" 
-                             alt="等边三角形金属框示意图" class="problem-image img-fluid">
-                        <div class="image-caption text-muted">图2：等边三角形金属框转动示意图</div>
-                    </div>
                     <p>如图所示，等边三角形的金属框，边长为 \( l = __l__ \, \text{m} \)，放在均匀磁场 \( B = __B__ \, \text{T} \) 中。</p>
                     <p>\( ab \) 边平行于磁感强度 \( B \)，当金属框绕 \( ab \) 边以角速度 \( \omega = __omega__ \, \text{rad/s} \) 转动时：</p>
                     <ol>
@@ -499,20 +517,16 @@ def initialize_database():
             """,
             'variables': 'l,B,omega',
             'formula': "(3/8) * B * omega * l**2, -(3/8) * B * omega * l**2,0",
-            'answer_count': 3
+            'answer_count': 3,
+            'image_filename': 'problem3.png'
         },
 
-        # 题目4：动生电动势与感生电动势
+        # 题目4：动生电动势与感生电动势（有图片）
         {
             'name': '动生电动势与感生电动势',
             'text': r"""
                 <div class="math-formula">
                     <h5>题目描述：</h5>
-                    <div class="text-center mb-3">
-                        <img src="/static/images/problem4.png" 
-                             alt="导体AC运动示意图" class="problem-image img-fluid">
-                        <div class="image-caption text-muted">图3：导体AC在变化磁场中运动示意图</div>
-                    </div>
                     <p>导体 \( AC \) 以速度 \( v = __v__ \, \text{m/s} \) 运动。</p>
                     <p>设 \( AC = __AC__ \, \text{cm} \)，均匀磁场随时间的变化率 \( \frac{dB}{dt} = __dBdt__ \, \text{T/s} \)。</p>
                     <p>某一时刻 \( B = __B__ \, \text{T} \)，\( x = __x__ \, \text{cm} \)，求：</p>
@@ -531,20 +545,16 @@ def initialize_database():
             """,
             'variables': 'v,AC,dBdt,B,x',
             'formula': "B * v * (AC/100), (B * v * (AC/100)) + (dBdt * (x/100) * (AC/100)), 1",
-            'answer_count': 3
+            'answer_count': 3,
+            'image_filename': 'problem4.png'
         },
 
-        # 题目5：折形金属导线运动电势差
+        # 题目5：折形金属导线运动电势差（有图片）
         {
             'name': '折形金属导线运动电势差',
             'text': r"""
                 <div class="math-formula">
                     <h5>题目描述：</h5>
-                    <div class="text-center mb-3">
-                        <img src="/static/images/problem5.png" 
-                             alt="折形金属导线示意图" class="problem-image img-fluid">
-                        <div class="image-caption text-muted">图4：折形金属导线在磁场中运动示意图</div>
-                    </div>
                     <p>\( aOc \) 为一折成 \( 30^\circ \) 角的金属导线（\( aO = Oc = L = __L__ \, \text{m} \)），位于 \( xy \) 平面中。</p>
                     <p>其中 \( aO \) 段与 \( x \) 轴夹角为 \( 30^\circ \)，\( Oc \) 段与 \( x \) 轴夹角为 \( 30^\circ \)，两段在 \( O \) 点相接。</p>
                     <p>磁感强度为 \( B = __B__ \, \text{T} \) 的匀强磁场垂直于 \( xy \) 平面。</p>
@@ -562,10 +572,11 @@ def initialize_database():
             """,
             'variables': 'L,B,v',
             'formula': "B * v * L /2 , -1",
-            'answer_count': 2
+            'answer_count': 2,
+            'image_filename': 'problem5.png'
         },
 
-        # 题目6：磁铁插入线圈的感应现象
+        # 题目6：磁铁插入线圈的感应现象（无图片）
         {
             'name': '磁铁插入线圈的感应现象',
             'text': r"""
@@ -576,7 +587,6 @@ def initialize_database():
                         <li>两次插入过程中，线圈中感应电荷量是否相同？（相同填1，不同填0）</li>
                         <li>两次插入过程中，手推磁铁所做的功是否相同？（相同填1，不同填0）</li>
                     </ol>
-
                     <div class="alert alert-info mt-3">
                         <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
                         <p>感应电荷量：\( q = \frac{\Delta\Phi}{R} \)</p>
@@ -585,21 +595,17 @@ def initialize_database():
                 </div>
             """,
             'variables': '',
-            'formula': "1, 0",  # 第一个答案用1表示相同，第二个用0表示不同
-            'answer_count': 2
+            'formula': "1, 0",
+            'answer_count': 2,
+            'image_filename': None
         },
 
-        # 题目7：双圆线圈的感应电流
+        # 题目7：双圆线圈的感应电流（有图片）
         {
             'name': '双圆线圈的感应电流',
             'text': r"""
                 <div class="math-formula">
                     <h5>题目描述：</h5>
-                    <div class="text-center mb-3">
-                        <img src="/static/images/problem7.png" 
-                             alt="双圆线圈示意图" class="problem-image img-fluid">
-                        <div class="image-caption text-muted">图5：双圆线圈在变化磁场中示意图</div>
-                    </div>
                     <p>电阻为 \( R = __R__ \, \Omega \) 的闭合线圈折成半径分别为 \( a = __a__ \, \text{cm} \) 和 \( 2a \) 的两个圆，</p>
                     <p>将其置于与两圆平面垂直的匀强磁场内，磁感应强度按 \( B = B_0 \sin(\omega t) \) 的规律变化。</p>
                     <p>已知 \( B_0 = __B0__ \, \text{T} \)，\( \omega = __omega__ \, \text{rad/s} \)，求线圈中感应电流的最大值。</p>
@@ -613,10 +619,11 @@ def initialize_database():
             """,
             'variables': 'R,a,B0,omega',
             'formula': "(pi * omega * B0 / R) * ((a/100)**2 + (2*a/100)**2)",
-            'answer_count': 1
+            'answer_count': 1,
+            'image_filename': 'problem7.png'
         },
 
-        # 题目8：铜制回路的感应电流
+        # 题目8：铜制回路的感应电流（无图片）
         {
             'name': '铜制回路的感应电流',
             'text': r"""
@@ -627,7 +634,6 @@ def initialize_database():
                     <p>并用它做成一个半径为 \( R = __R__ \, \text{m} \) 的圆形回路。圆形回路的平面与磁感强度 \( B \) 垂直。</p>
                     <p>试求这回路中的感应电流。</p>
                     <p>其中铜的电阻率 \( \rho = 1.7 \times 10^{-7} \, \Omega\cdot\text{m} \)，铜的密度 \( d = __density__ \, \text{kg/m}^3 \)。</p>
-
                     <div class="alert alert-info mt-3">
                         <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
                         <p>导线长度与质量关系</p>
@@ -638,23 +644,38 @@ def initialize_database():
             """,
             'variables': 'dBdt,m,r,R,density',
             'formula': "(m * dBdt) / (4 * pi * 1.7e-7 * density)",
-            'answer_count': 1
+            'answer_count': 1,
+            'image_filename': None
         }
     ]
 
-    # 插入模板到数据库
+    # 插入模板到数据库 - 使用新的方式
     for template in templates:
         cursor.execute("SELECT id FROM problem_templates WHERE template_name = %s", (template['name'],))
         if not cursor.fetchone():
+            # 如果有图片文件名，在problem_text中插入图片HTML
+            problem_text = template['text']
+            if template.get('image_filename'):
+                img_html = f'''
+                <div class="text-center mb-3">
+                    <img src="/static/images/{template['image_filename']}" 
+                         alt="{template['name']}" class="problem-image img-fluid">
+                    <div class="image-caption text-muted">图：{template['name']}</div>
+                </div>
+                '''
+                problem_text = img_html + problem_text
+
             cursor.execute("""
-                   INSERT INTO problem_templates (template_name, problem_text, variables, solution_formula, answer_count)
-                   VALUES (%s, %s, %s, %s, %s)
-               """, (
+                INSERT INTO problem_templates (template_name, problem_text, variables, 
+                                            solution_formula, answer_count, image_filename)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
                 template['name'],
-                template['text'],
+                problem_text,
                 template['variables'],
                 template['formula'],
-                template['answer_count']
+                template['answer_count'],
+                template.get('image_filename')
             ))
 
     conn.commit()
@@ -684,33 +705,65 @@ def create_admin_user():
         conn.close()
 
 
-def update_existing_templates():
-    """更新现有模板的图片URL"""
+def ensure_default_images():
+    """确保默认图片文件存在"""
+    import os
+
+    default_images = {
+        'problem3.png': '等边三角形金属框示意图',
+        'problem4.png': '导体AC运动示意图',
+        'problem5.png': '折形金属导线示意图',
+        'problem7.png': '双圆线圈示意图'
+    }
+
+    images_path = os.path.join(app.root_path, 'static', 'images')
+    os.makedirs(images_path, exist_ok=True)
+
+    # 检查默认图片是否存在
+    for filename, description in default_images.items():
+        file_path = os.path.join(images_path, filename)
+        if not os.path.exists(file_path):
+            print(f"⚠️ 注意: 默认图片缺失: {filename} - {description}")
+            print(f"请将图片文件放置到: {file_path}")
+
+    print("✅ 默认图片检查完成")
+
+
+def verify_image_consistency():
+    """验证图片一致性"""
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(dictionary=True)
 
-    # 更新所有题目的图片URL
-    updates = [
-        (2, "src=\"{{ url_for('static', filename='images/problem2.png') }}\"", 'src="/static/images/problem2.png"'),
-        (3, "src=\"{{ url_for('static', filename='images/problem3.png') }}\"", 'src="/static/images/problem3.png"'),
-        (4, "src=\"{{ url_for('static', filename='images/problem4.png') }}\"", 'src="/static/images/problem4.png"'),
-        (5, "src=\"{{ url_for('static', filename='images/problem5.png') }}\"", 'src="/static/images/problem5.png"'),
-        (7, "src=\"{{ url_for('static', filename='images/problem7.png') }}\"", 'src="/static/images/problem7.png"'),
-        (8, "src=\"{{ url_for('static', filename='images/problem8.png') }}\"", 'src="/static/images/problem8.png"')
-    ]
+    # 检查所有有图片的题目
+    cursor.execute("""
+        SELECT id, template_name, image_filename 
+        FROM problem_templates 
+        WHERE image_filename IS NOT NULL
+    """)
 
-    for problem_id, old_url, new_url in updates:
-        cursor.execute(f"""
-            UPDATE problem_templates 
-            SET problem_text = REPLACE(problem_text, %s, %s)
-            WHERE id = %s
-        """, (old_url, new_url, problem_id))
-        print(f"更新题目 {problem_id} 的图片URL")
+    templates_with_images = cursor.fetchall()
 
-    conn.commit()
+    print("=== 图片一致性检查 ===")
+    missing_images = []
+    for template in templates_with_images:
+        image_path = os.path.join(app.config['UPLOAD_FOLDER'], template['image_filename'])
+        if os.path.exists(image_path):
+            print(f"✅ 题目 '{template['template_name']}' 图片存在: {template['image_filename']}")
+        else:
+            print(f"❌ 题目 '{template['template_name']}' 图片缺失: {template['image_filename']}")
+            missing_images.append({
+                'template_name': template['template_name'],
+                'image_filename': template['image_filename']
+            })
+
+    if missing_images:
+        print(f"\n⚠️ 总计缺失 {len(missing_images)} 个图片文件:")
+        for missing in missing_images:
+            print(f"   - {missing['template_name']}: {missing['image_filename']}")
+
     cursor.close()
     conn.close()
-    print("所有模板图片URL更新完成")
+    return len(missing_images) == 0
 
 
 def update_user_completion_status(user_id):
@@ -962,8 +1015,9 @@ def dashboard():
     cursor = conn.cursor(dictionary=True)
 
     try:
-        # 动态获取题目总数
-        total_problems = get_total_problem_count()
+        # 获取题目显示映射
+        display_mapping = get_problem_display_info()
+        total_problems = len(display_mapping)
 
         # 获取用户完成状态
         cursor.execute("""
@@ -983,17 +1037,18 @@ def dashboard():
         completed_all = user_data['completed_all']
         completed_count = user_data['completed_count'] or 0
 
-        # 动态确定当前应该做的题目
-        current_problem = 1
+        # 动态确定当前应该做的题目（使用显示序号）
+        current_display_number = 1
         if not completed_all:
-            for problem_id in range(1, total_problems + 1):
+            for display_info in display_mapping.values():
+                actual_id = display_info['actual_id']
                 cursor.execute("""
                     SELECT COUNT(*) as count FROM user_responses 
                     WHERE user_id = %s AND template_id = %s AND is_correct = TRUE
-                """, (session['user_id'], problem_id))
+                """, (session['user_id'], actual_id))
                 result = cursor.fetchone()
                 if result['count'] == 0:
-                    current_problem = problem_id
+                    current_display_number = display_info['display_number']
                     break
 
         # 重置尝试次数
@@ -1002,10 +1057,11 @@ def dashboard():
 
         return render_template('dashboard.html',
                                username=session['username'],
-                               current_problem=current_problem,
+                               current_problem=current_display_number,  # 使用显示序号
                                completed_count=completed_count,
                                completed_all=completed_all,
-                               total_problems=total_problems)  # 使用动态总数
+                               total_problems=total_problems,
+                               display_mapping=display_mapping)  # 传递映射到模板
 
     except mysql.connector.Error as err:
         print(f"数据库查询错误: {err}")
@@ -1200,6 +1256,7 @@ def history():
         if conn:
             conn.close()
 
+
 @app.route('/debug/history')
 @login_required
 def debug_history():
@@ -1225,17 +1282,18 @@ def debug_history():
     })
 
 
-
-
 @app.route('/all_problems')
 @login_required
 def all_problems():
-    """展示所有题目列表"""
+    """展示所有题目列表 - 使用显示序号"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        # 获取所有题目模板
+        # 获取题目显示映射
+        display_mapping = get_problem_display_info()
+
+        # 获取所有题目模板按实际ID排序
         cursor.execute(
             "SELECT id, template_name, problem_text, variables, difficulty, image_filename FROM problem_templates ORDER BY id")
         templates = cursor.fetchall()
@@ -1243,19 +1301,19 @@ def all_problems():
         problems = []
 
         for template in templates:
+            # 获取显示序号
+            display_number = get_display_number(template['id'])
+
             # 生成变量值
             variables = [v.strip() for v in template['variables'].split(',')] if template['variables'] else []
             var_values = {}
 
-            # 生成随机变量值 - 简化版本：0-20范围内的随机数
             for var in variables:
-                var_values[var] = round(random.uniform(0, 20.0), 2)  # 0到20，保留2位小数
+                var_values[var] = round(random.uniform(0, 20.0), 2)
 
             # 使用正则表达式格式化模板
             import re
             problem_text = template['problem_text']
-
-            # 只匹配双下划线包围的变量：__变量名__
             pattern = r'__(\w+)__'
 
             def replace_var(match):
@@ -1295,6 +1353,7 @@ def all_problems():
 
             problems.append({
                 'id': template['id'],
+                'display_number': display_number,  # 添加显示序号
                 'name': template['template_name'],
                 'content': problem_content,
                 'var_values': var_values,
@@ -1317,23 +1376,26 @@ def all_problems():
             conn.close()
 
 
-
-
 @app.route('/refresh_problem/<int:problem_id>', methods=['POST'])
 @login_required
 def refresh_problem(problem_id):
     """刷新单个题目"""
     try:
+        # 根据显示序号获取实际ID
+        actual_id = get_actual_id(problem_id)
+        if actual_id is None:
+            return jsonify({'success': False, 'message': '无效的题目编号'})
+
         # 重新生成题目数据
-        problem_data = generate_problem_from_template(problem_id)
+        problem_data = generate_problem_from_template(actual_id)
 
         if not problem_data:
             return jsonify({'success': False, 'message': '题目生成失败'})
 
         # 更新session中的题目数据
-        if 'current_problem' in session and session['current_problem']['id'] == problem_id:
+        if 'current_problem' in session and session['current_problem']['display_number'] == problem_id:
             session['current_problem']['data'] = problem_data
-            session['current_problem']['attempt_count'] = 0
+            session['current_problem']['total_attempts'] = 0
             session['current_problem']['answered_correctly'] = False
             session['current_problem']['start_time'] = time.time()
 
@@ -1354,79 +1416,95 @@ def refresh_all_problems():
         return jsonify({'success': False, 'message': str(e)})
 
 
-@app.route('/problem_ajax/<int:problem_id>')
+@app.route('/problem_ajax/<int:problem_id>')  # 保持参数名为 problem_id
 @login_required
 def problem_ajax(problem_id):
-    """支持Ajax的问题页面 - 使用动态题目总数"""
+    """支持Ajax的问题页面 - 内部将problem_id作为显示序号使用"""
     print(f"\n=== Ajax问题页面开始 ===")
-    print(f"问题ID: {problem_id}")
+    print(f"显示序号: {problem_id}")
 
-    # 动态获取题目总数
-    total_problems = get_total_problem_count()
+    # 根据显示序号获取实际ID
+    actual_id = get_actual_id(problem_id)
+    if actual_id is None:
+        flash('无效的题目编号', 'danger')
+        return redirect(url_for('dashboard'))
 
-    # 1. 验证题目ID
+    # 获取题目显示映射和总数
+    display_mapping = get_problem_display_info()
+    total_problems = len(display_mapping)
+
+    # 1. 验证题目序号
     if problem_id < 1 or problem_id > total_problems:
         flash('无效的题目编号', 'danger')
         return redirect(url_for('dashboard'))
 
-    # 2. 移除前置题目检查，允许直接跳转到任何题目
+    # 2. 初始化或获取题目数据
+    if ('current_problem' not in session or
+            session['current_problem']['display_number'] != problem_id):
 
-    # 3. 初始化或获取题目数据
-    if 'current_problem' not in session or session['current_problem']['id'] != problem_id:
-        print("生成新题目...")
-        problem_data = generate_problem_from_template(problem_id)
+        print(f"生成新题目... 实际ID: {actual_id}")
+        problem_data = generate_problem_from_template(actual_id)
         if not problem_data:
             flash('题目生成失败', 'danger')
             return redirect(url_for('dashboard'))
 
         session['current_problem'] = {
-            'id': problem_id,
+            'display_number': problem_id,  # 存储显示序号
+            'actual_id': actual_id,  # 存储实际ID
             'data': problem_data,
-            'total_attempts': 0,  # 改为累计尝试次数
+            'total_attempts': 0,
             'answered_correctly': False,
             'start_time': time.time()
         }
         print(f"新题目生成成功，答案数量: {problem_data.get('answer_count', 1)}")
 
-    # 4. 检查是否已经完成（但不再强制跳转）
+    # 3. 检查是否已经完成
     if session['current_problem'].get('answered_correctly', False):
-        # 如果已经完成，显示完成状态，但允许继续在当前页面
         print(f"题目 {problem_id} 已完成")
 
-    # 5. 渲染Ajax模板
+    # 4. 渲染Ajax模板
     problem_data = session['current_problem']['data']
     total_attempts = session['current_problem']['total_attempts']
     answer_count = problem_data.get('answer_count', 1)
 
-    print(f"渲染Ajax模板，问题ID: {problem_id}, 答案数量: {answer_count}, 累计尝试: {total_attempts}")
+    print(f"渲染Ajax模板，显示序号: {problem_id}, 实际ID: {actual_id}")
+    print(f"答案数量: {answer_count}, 累计尝试: {total_attempts}")
     print(f"当前题目参数: {problem_data['var_values']}")
     print(f"=== Ajax问题页面结束 ===\n")
 
     return render_template('problem_ajax.html',
                            problem=problem_data,
-                           problem_id=problem_id,
+                           problem_id=problem_id,  # 传递显示序号到模板
                            total_attempts=total_attempts,
                            answer_count=answer_count,
                            username=session['username'],
-                           total_problems=total_problems)  # 传递到模板
+                           total_problems=total_problems,
+                           display_mapping=display_mapping)
 
 
-@app.route('/api/submit/<int:problem_id>', methods=['POST'])
+@app.route('/api/submit/<int:problem_id>', methods=['POST'])  # 保持参数名为 problem_id
 @login_required
 def api_submit(problem_id):
-    """API接口：提交答案 - 使用动态题目总数"""
+    """API接口：提交答案 - 内部将problem_id作为显示序号使用"""
     try:
         data = request.get_json()
-        print(f"[API] 问题 {problem_id} 提交数据: {data}")
+        print(f"[API] 显示序号 {problem_id} 提交数据: {data}")
 
         if not data:
             return jsonify({'success': False, 'message': '无效的请求数据'})
 
-        # 动态获取题目总数
-        total_problems = get_total_problem_count()
+        # 根据显示序号获取实际ID
+        actual_id = get_actual_id(problem_id)
+        if actual_id is None:
+            return jsonify({'success': False, 'message': '无效的题目编号'})
+
+        # 获取题目显示映射和总数
+        display_mapping = get_problem_display_info()
+        total_problems = len(display_mapping)
 
         # 验证会话
-        if 'current_problem' not in session:
+        if ('current_problem' not in session or
+            session['current_problem']['display_number'] != problem_id):
             return jsonify({'success': False, 'message': '会话过期，请重新开始答题'})
 
         problem_data = session['current_problem']['data']
@@ -1446,7 +1524,7 @@ def api_submit(problem_id):
         template_id = problem_data['template_id']
         problem_text = problem_data['problem_text']
 
-        print(f"[API DEBUG] 用户 {user_id} 提交问题 {problem_id}")
+        print(f"[API DEBUG] 用户 {user_id} 提交问题 {problem_id} (实际ID: {actual_id})")
         print(f"模板ID: {template_id}")
         print(f"答案数量: {answer_count}")
         print(f"当前累计尝试次数: {session['current_problem']['total_attempts']}")
@@ -1506,7 +1584,7 @@ def api_submit(problem_id):
             completed_all = update_user_completion_status(user_id)
 
             session['current_problem']['answered_correctly'] = True
-            next_problem = problem_id + 1 if problem_id < total_problems else None  # 使用动态总数
+            next_problem_id = problem_id + 1 if problem_id < total_problems else None
             message = '🎉 回答正确！'
 
             # 如果完成所有题目，生成验证链接
@@ -1515,10 +1593,10 @@ def api_submit(problem_id):
                 session['verification_url'] = verification_url
         else:
             session['current_problem']['answered_correctly'] = False
-            next_problem = problem_id
+            next_problem_id = problem_id
 
             # 答错时生成新题目（不再限制尝试次数）
-            new_problem_data = generate_problem_from_template(problem_id)
+            new_problem_data = generate_problem_from_template(actual_id)
             if new_problem_data:
                 # 更新session中的题目数据和正确答案
                 session['current_problem']['data'] = new_problem_data
@@ -1533,7 +1611,7 @@ def api_submit(problem_id):
             'message': message,
             'correct_answers': correct_answers,
             'total_attempts': total_attempts,
-            'next_problem': next_problem,
+            'next_problem': next_problem_id,  # 返回下一个题目的显示序号
             'save_success': save_success,
             'user_answers': user_answers,
             'answer_count': answer_count
@@ -1584,8 +1662,6 @@ def admin_dashboard():
                            recent_completions=recent_completions,
                            incomplete_students=incomplete_students)
 
-
-# 在 admin_dashboard 路由后添加以下代码
 
 @app.route('/admin/add_problem', methods=['GET', 'POST'])
 @login_required
@@ -1653,10 +1729,17 @@ def admin_manage_problems():
     cursor.execute("SELECT * FROM problem_templates ORDER BY id")
     templates = cursor.fetchall()
 
+    # 获取显示序号映射
+    display_mapping = get_problem_display_info()
+    for template in templates:
+        template['display_number'] = get_display_number(template['id'])
+
     cursor.close()
     conn.close()
 
-    return render_template('admin_manage_problems.html', templates=templates)
+    return render_template('admin_manage_problems.html',
+                           templates=templates,
+                           display_mapping=display_mapping)
 
 
 @app.route('/admin/edit_problem/<int:template_id>', methods=['GET', 'POST'])
@@ -1735,24 +1818,46 @@ def admin_edit_problem(template_id):
 @app.route('/admin/delete_problem/<int:template_id>')
 @login_required
 def admin_delete_problem(template_id):
-    """删除题目"""
+    """删除题目并清理相关图片"""
     if session.get('username') != 'admin':
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(dictionary=True)
 
     try:
-        # 先删除相关的答题记录
+        # 先获取题目的图片信息
+        cursor.execute("SELECT image_filename FROM problem_templates WHERE id = %s", (template_id,))
+        template = cursor.fetchone()
+
+        # 删除相关的答题记录
         cursor.execute("DELETE FROM user_responses WHERE template_id = %s", (template_id,))
         # 删除题目模板
         cursor.execute("DELETE FROM problem_templates WHERE id = %s", (template_id,))
 
         conn.commit()
+
+        # 如果题目有专属图片，检查并删除图片文件
+        if template and template['image_filename']:
+            try:
+                image_path = os.path.join(app.config['UPLOAD_FOLDER'], template['image_filename'])
+                if os.path.exists(image_path):
+                    # 检查是否还有其他题目使用这个图片
+                    cursor.execute("SELECT COUNT(*) as usage_count FROM problem_templates WHERE image_filename = %s",
+                                   (template['image_filename'],))
+                    usage = cursor.fetchone()
+                    if usage['usage_count'] == 0:
+                        os.remove(image_path)
+                        print(f"✅ 已删除未使用的图片: {template['image_filename']}")
+                    else:
+                        print(f"ℹ️ 图片 {template['image_filename']} 仍被其他题目使用，保留文件")
+            except Exception as e:
+                print(f"⚠️ 删除图片文件失败: {e}")
+
         flash('题目删除成功！', 'success')
     except Exception as e:
-        print(f"删除题目失败: {str(e)}")
+        print(f"❌ 删除题目失败: {str(e)}")
         flash(f'删除题目失败: {str(e)}', 'danger')
     finally:
         cursor.close()
@@ -2014,42 +2119,6 @@ def inject_device_status():
     }
 
 
-def get_total_problem_count():
-    """动态获取题目总数"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT COUNT(*) FROM problem_templates")
-        count = cursor.fetchone()[0]
-        return count
-    except Exception as e:
-        print(f"获取题目总数失败: {e}")
-        return 8  # 默认值，防止出错
-    finally:
-        cursor.close()
-        conn.close()
-
-
-def get_completed_problem_count(user_id):
-    """动态获取用户已完成的题目数量"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("""
-            SELECT COUNT(DISTINCT template_id) 
-            FROM user_responses 
-            WHERE user_id = %s AND is_correct = TRUE
-        """, (user_id,))
-        count = cursor.fetchone()[0]
-        return count
-    except Exception as e:
-        print(f"获取已完成题目数量失败: {e}")
-        return 0
-    finally:
-        cursor.close()
-        conn.close()
-
-
 @app.route('/api/user/completion_status')
 @login_required
 def api_user_completion_status():
@@ -2174,6 +2243,7 @@ def health_check():
     except Exception as e:
         return jsonify({'status': 'unhealthy', 'error': str(e)}), 500
 
+
 @app.route('/api/exam/status')
 @login_required
 def exam_system_status():
@@ -2205,14 +2275,24 @@ if __name__ == '__main__':
 
     # 初始化数据库
     initialize_database()
+
+    # 确保默认图片存在
+    ensure_default_images()
+
     # 创建管理员用户
-    create_admin_user()  # 添加这一行
-    # 更新现有模板
-    update_existing_templates()
+    create_admin_user()
+
     # 修复可能存在的表结构问题
     repair_database()
+
     # 运行数据库诊断
     print("运行数据库诊断...")
     diagnose_database_issue()
+
+    # 验证图片一致性
+    print("验证图片一致性...")
+    images_ok = verify_image_consistency()
+    if not images_ok:
+        print("⚠️ 警告: 部分图片文件缺失，请检查以上列表")
 
     app.run(host='0.0.0.0', port=5000, debug=False)
