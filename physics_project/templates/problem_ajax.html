@@ -3,6 +3,9 @@
 {% block title %}第{{ problem_id }}题{% endblock %}
 
 {% block content %}
+<!-- 蒙版层 - 现在只覆盖题目内容区域 -->
+<div id="spotlight-overlay" class="spotlight-overlay"></div>
+
 <div class="row">
     <!-- 题目跳转侧边栏 -->
     <div class="col-lg-3 col-md-4 mb-4">
@@ -99,12 +102,15 @@
                     <small class="text-muted">累计尝试: <span id="total-attempts">{{ total_attempts }}</span> 次</small>
                 </div>
 
-                <!-- 题目内容 -->
-                <div class="math-formula mb-4 p-3 border rounded bg-light" id="problem-content">
-                    {{ problem.problem_text|safe }}
+                <!-- 题目内容区域 - 添加单独的容器 -->
+                <div id="problem-content-container">
+                    <!-- 题目内容 -->
+                    <div class="math-formula mb-4 p-3 border rounded bg-light" id="problem-content">
+                        {{ problem.problem_text|safe }}
+                    </div>
                 </div>
 
-                <!-- 动态答题表单 -->
+                <!-- 动态答题表单 - 这部分不受蒙版影响 -->
                 <form id="answer-form" class="mt-4">
                     <div id="answer-inputs">
                         {% if answer_count == 1 %}
@@ -259,8 +265,8 @@
             </div>
         </div>
 
-        <!-- 答题统计卡片 -->
-        <div class="row mt-4">
+        <!-- 答题统计卡片和解题提示 - 这部分不受蒙版影响 -->
+        <div class="row mt-4" id="hint-and-stats-container">
             <div class="col-md-6">
                 <div class="card bg-light">
                     <div class="card-body text-center">
@@ -313,6 +319,147 @@
 
 {% block scripts %}
 <script>
+// 蒙版系统配置 - 在这里修改参数
+const SPOTLIGHT_CONFIG = {
+    enabled: true,        // 是否启用蒙版
+    size: 120,           // 光圈大小（像素）
+    shape: 'circle',     // 形状：'circle' 或 'rectangle'
+    blurStrength: '8px', // 模糊强度
+    transitionSpeed: 0.1 // 过渡速度（秒）
+};
+
+// 蒙版系统变量
+let spotlightElement = null;
+let problemContentContainer = null;
+
+// 创建题目内容区域蒙版
+function createProblemSpotlight() {
+    if (!SPOTLIGHT_CONFIG.enabled) return;
+
+    // 获取题目内容容器
+    problemContentContainer = document.getElementById('problem-content-container');
+    if (!problemContentContainer) return;
+
+    const containerRect = problemContentContainer.getBoundingClientRect();
+
+    // 创建蒙版元素
+    spotlightElement = document.createElement('div');
+    spotlightElement.id = 'spotlight-overlay-element';
+
+    const size = SPOTLIGHT_CONFIG.size;
+    const isCircle = SPOTLIGHT_CONFIG.shape === 'circle';
+
+    spotlightElement.style.cssText = `
+        position: absolute;
+        top: ${containerRect.top}px;
+        left: ${containerRect.left}px;
+        width: ${containerRect.width}px;
+        height: ${containerRect.height}px;
+        backdrop-filter: blur(${SPOTLIGHT_CONFIG.blurStrength});
+        -webkit-backdrop-filter: blur(${SPOTLIGHT_CONFIG.blurStrength});
+        background: rgba(255, 255, 255, 0.1);
+        pointer-events: none;
+        z-index: 10;
+        mask-image: ${isCircle ?
+            `radial-gradient(circle ${size/2}px at 0px 0px, transparent 0%, transparent 100%, black 100%)` :
+            `radial-gradient(circle ${size/2}px at 0px 0px, transparent 0%, transparent 100%, black 100%)`};
+        -webkit-mask-image: ${isCircle ?
+            `radial-gradient(circle ${size/2}px at 0px 0px, transparent 0%, transparent 100%, black 100%)` :
+            `radial-gradient(circle ${size/2}px at 0px 0px, transparent 0%, transparent 100%, black 100%)`};
+        transition: all ${SPOTLIGHT_CONFIG.transitionSpeed}s ease;
+        border-radius: 8px;
+    `;
+
+    document.body.appendChild(spotlightElement);
+}
+
+// 更新蒙版位置
+function updateSpotlightPosition(x, y) {
+    if (!spotlightElement || !problemContentContainer) return;
+
+    const containerRect = problemContentContainer.getBoundingClientRect();
+
+    // 检查鼠标是否在题目内容区域内
+    const isInsideContentArea =
+        x >= containerRect.left &&
+        x <= containerRect.right &&
+        y >= containerRect.top &&
+        y <= containerRect.bottom;
+
+    const size = SPOTLIGHT_CONFIG.size;
+    const isCircle = SPOTLIGHT_CONFIG.shape === 'circle';
+
+    // 计算相对于题目内容容器的坐标
+    const relativeX = x - containerRect.left;
+    const relativeY = y - containerRect.top;
+
+    if (isInsideContentArea) {
+        // 在题目内容区域内，显示光圈
+        if (isCircle) {
+            spotlightElement.style.maskImage = `radial-gradient(circle ${size/2}px at ${relativeX}px ${relativeY}px, transparent 0%, transparent 100%, black 100%)`;
+            spotlightElement.style.webkitMaskImage = `radial-gradient(circle ${size/2}px at ${relativeX}px ${relativeY}px, transparent 0%, transparent 100%, black 100%)`;
+        } else {
+            // 矩形模式
+            const halfSize = size / 2;
+            spotlightElement.style.maskImage = `radial-gradient(circle ${size/2}px at ${relativeX}px ${relativeY}px, transparent 0%, transparent 100%, black 100%)`;
+            spotlightElement.style.webkitMaskImage = `radial-gradient(circle ${size/2}px at ${relativeX}px ${relativeY}px, transparent 0%, transparent 100%, black 100%)`;
+        }
+    } else {
+        // 不在题目内容区域内，完全遮挡
+        spotlightElement.style.maskImage = 'radial-gradient(circle 0px at -100px -100px, transparent 0%, transparent 100%, black 100%)';
+        spotlightElement.style.webkitMaskImage = 'radial-gradient(circle 0px at -100px -100px, transparent 0%, transparent 100%, black 100%)';
+    }
+}
+
+// 初始化蒙版系统
+function initSpotlightSystem() {
+    if (!SPOTLIGHT_CONFIG.enabled) return;
+
+    // 等待页面完全加载后再创建蒙版
+    setTimeout(() => {
+        createProblemSpotlight();
+
+        // 鼠标移动时更新蒙版位置
+        document.addEventListener('mousemove', function(e) {
+            updateSpotlightPosition(e.clientX, e.clientY);
+        });
+
+        // 触摸设备支持
+        document.addEventListener('touchmove', function(e) {
+            if (e.touches.length > 0) {
+                const touch = e.touches[0];
+                updateSpotlightPosition(touch.clientX, touch.clientY);
+                e.preventDefault();
+            }
+        });
+
+        // 窗口大小变化时重新计算
+        window.addEventListener('resize', function() {
+            // 重新创建蒙版
+            if (spotlightElement) {
+                spotlightElement.remove();
+            }
+            setTimeout(() => {
+                createProblemSpotlight();
+            }, 100);
+        });
+
+        // 添加键盘快捷键切换蒙版
+        document.addEventListener('keydown', function(e) {
+            // 按ESC键临时显示/隐藏全部内容
+            if (e.key === 'Escape') {
+                if (spotlightElement) {
+                    const isVisible = spotlightElement.style.display !== 'none';
+                    spotlightElement.style.display = isVisible ? 'none' : 'block';
+                }
+            }
+        });
+
+        // 初始状态：完全遮挡
+        updateSpotlightPosition(-100, -100);
+    }, 500);
+}
+
 // 全局变量
 let startTime = Date.now();
 let isSubmitting = false;
@@ -901,6 +1048,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // 初始化题目侧边栏
     initProblemSidebar();
 
+    // 初始化蒙版系统
+    initSpotlightSystem();
+
     // 添加快捷键支持
     document.addEventListener('keydown', function(e) {
         // Ctrl + 数字键跳转到对应题目
@@ -933,6 +1083,21 @@ window.addEventListener('beforeunload', function() {
 </script>
 
 <style>
+/* 蒙版系统样式 */
+#spotlight-overlay-element {
+    animation: spotlightAppear 0.3s ease;
+}
+
+@keyframes spotlightAppear {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+/* 数学公式样式 */
 .math-formula {
     font-size: 1.1em;
     line-height: 1.6;
@@ -1305,6 +1470,19 @@ window.addEventListener('beforeunload', function() {
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
     }
+}
+
+/* 蒙版模糊效果增强 */
+#spotlight-overlay-element {
+    backdrop-filter: blur(8px) brightness(0.9);
+    -webkit-backdrop-filter: blur(8px) brightness(0.9);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+/* 确保答题提示和统计区域不被遮挡 */
+#hint-and-stats-container {
+    position: relative;
+    z-index: 20;
 }
 </style>
 {% endblock %}
