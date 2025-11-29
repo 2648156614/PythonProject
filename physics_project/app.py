@@ -457,8 +457,8 @@ def initialize_database():
                     <h5>题目描述：</h5>
                     <p>用导线制成一半径为 \( r = __r__ \, \text{cm} \) 的闭合圆形线圈，其电阻 \( R = __R__ \, \Omega \)，均匀磁场垂直于线圈平面。</p>
                     <p>欲使电路中有一稳定的感应电流 \( i = __i__ \, \text{A} \)，求 \( B \) 的变化率 \( \frac{dB}{dt} \)。</p>
-                    <div class="alert alert-info mt-3">
-                        <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
+                    <div class="problem-hint-static">
+                        <h5>解题提示：</h5>
                         <p>法拉第电磁感应定律：\( \varepsilon = -\frac{d\Phi}{dt} \)</p>
                         <p>磁通量：\( \Phi = B \cdot S = B \cdot \pi r^2 \)</p>
                         <p>感应电流：\( i = \frac{\varepsilon}{R} \)</p>
@@ -480,8 +480,8 @@ def initialize_database():
             <p>中国是目前世界上高速铁路运行里程最长的国家，已知"复兴号"高铁长度为 L = __L__ m，车厢高 h = __h__ m，正常行驶速度 v = __v__ km/h。</p>
             <p>假设地面附近地磁场的水平分量约为 B = __B__ μT，将列车视为一整块导体，只考虑地磁场的水平分量。</p>
             <p>则"复兴号"列车在自西向东正常行驶的过程中，求车头与车尾之间的电势差大小（单位：μV）。</p>
-            <div class="alert alert-info mt-3">
-                <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
+            <div class="problem-hint-static">
+                        <h5>解题提示：</h5>
                 <p>1. 速度单位换算：km/h → m/s</p>
                 <p>2. 磁场单位换算：μT → T</p>
                 <p>3. 导体在磁场中运动产生的感应电动势：ε = BLv</p>
@@ -508,8 +508,8 @@ def initialize_database():
                         <li>求 \( ca \) 边上沿 \( ca \) 的电动势</li>
                         <li>求金属框内的总电动势</li>
                     </ol>
-                    <div class="alert alert-info mt-3">
-                        <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
+                    <div class="problem-hint-static">
+                        <h5>解题提示：</h5>
                         <p>动生电动势：\( \varepsilon = \int (\vec{v} \times \vec{B}) \cdot d\vec{l} \)</p>
                         <p>考虑各边的运动情况和磁场方向</p>
                     </div>
@@ -535,8 +535,8 @@ def initialize_database():
                         <li>总感应电动势的大小</li>
                         <li>动生电动势随 \( AC \) 运动的变化趋势（增大填1，减小填-1）</li>
                     </ol>
-                    <div class="alert alert-info mt-3">
-                        <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
+                    <div class="problem-hint-static">
+                        <h5>解题提示：</h5>
                         <p>动生电动势：导体切割磁感线产生</p>
                         <p>感生电动势：磁场变化产生</p>
                         <p>总电动势为两者之和</p>
@@ -562,8 +562,8 @@ def initialize_database():
                         <li>当 \( aOc \) 以速度 \( v = __v__ \, \text{m/s} \) 沿 \( x \) 轴正向运动时，导线上 \( a, c \) 两点间电势差 \( U_{ac} \)</li>
                         <li>当 \( aOc \) 以速度 \( v \) 沿 \( y \) 轴正向运动时，判断 \( a, c \) 两点电势高低（a点高填1，c点高填-1）</li>
                     </ol>
-                    <div class="alert alert-info mt-3">
-                        <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
+                    <div class="problem-hint-static">
+                        <h5>解题提示：</h5>
                         <p>动生电动势公式：\( \varepsilon = \int (\vec{v} \times \vec{B}) \cdot d\vec{l} \)</p>
                         <p>考虑不同运动方向时各段的电动势，注意30度角的影响</p>
                         <p>总电势差为各段电动势的代数和</p>
@@ -587,8 +587,8 @@ def initialize_database():
                         <li>两次插入过程中，线圈中感应电荷量是否相同？（相同填1，不同填0）</li>
                         <li>两次插入过程中，手推磁铁所做的功是否相同？（相同填1，不同填0）</li>
                     </ol>
-                    <div class="alert alert-info mt-3">
-                        <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
+                    <div class="problem-hint-static">
+                        <h5>解题提示：</h5>
                         <p>感应电荷量：\( q = \frac{\Delta\Phi}{R} \)</p>
                         <p>做功与功率和时间有关</p>
                     </div>
@@ -609,8 +609,8 @@ def initialize_database():
                     <p>电阻为 \( R = __R__ \, \Omega \) 的闭合线圈折成半径分别为 \( a = __a__ \, \text{cm} \) 和 \( 2a \) 的两个圆，</p>
                     <p>将其置于与两圆平面垂直的匀强磁场内，磁感应强度按 \( B = B_0 \sin(\omega t) \) 的规律变化。</p>
                     <p>已知 \( B_0 = __B0__ \, \text{T} \)，\( \omega = __omega__ \, \text{rad/s} \)，求线圈中感应电流的最大值。</p>
-                    <div class="alert alert-info mt-3">
-                        <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
+                    <div class="problem-hint-static">
+                        <h5>解题提示：</h5>
                         <p>法拉第电磁感应定律</p>
                         <p>总电动势为两个线圈电动势之和</p>
                         <p>感应电流最大值</p>
@@ -634,8 +634,8 @@ def initialize_database():
                     <p>并用它做成一个半径为 \( R = __R__ \, \text{m} \) 的圆形回路。圆形回路的平面与磁感强度 \( B \) 垂直。</p>
                     <p>试求这回路中的感应电流。</p>
                     <p>其中铜的电阻率 \( \rho = 1.7 \times 10^{-7} \, \Omega\cdot\text{m} \)，铜的密度 \( d = __density__ \, \text{kg/m}^3 \)。</p>
-                    <div class="alert alert-info mt-3">
-                        <h5><i class="bi bi-lightbulb"></i> 解题提示：</h5>
+                    <div class="problem-hint-static">
+                        <h5>解题提示：</h5>
                         <p>导线长度与质量关系</p>
                         <p>回路电阻计算</p>
                         <p>感应电动势与电流关系</p>
