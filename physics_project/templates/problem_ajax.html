@@ -379,9 +379,24 @@ function createProblemSpotlight() {
 
     // 获取题目内容容器
     problemContentContainer = document.getElementById('problem-content-container');
-    if (!problemContentContainer) return;
+    if (!problemContentContainer) {
+        console.warn('找不到题目内容容器，蒙版创建失败');
+        return;
+    }
 
     const containerRect = problemContentContainer.getBoundingClientRect();
+
+    // 如果容器尺寸为0，等待一段时间再试
+    if (containerRect.width === 0 || containerRect.height === 0) {
+        console.warn('题目内容容器尺寸为0，延迟重试');
+        setTimeout(createProblemSpotlight, 100);
+        return;
+    }
+
+    // 移除已存在的蒙版
+    if (spotlightElement) {
+        spotlightElement.remove();
+    }
 
     // 创建蒙版元素
     spotlightElement = document.createElement('div');
@@ -391,7 +406,7 @@ function createProblemSpotlight() {
     const isCircle = SPOTLIGHT_CONFIG.shape === 'circle';
 
     spotlightElement.style.cssText = `
-        position: absolute;
+        position: fixed;
         top: ${containerRect.top}px;
         left: ${containerRect.left}px;
         width: ${containerRect.width}px;
@@ -412,6 +427,7 @@ function createProblemSpotlight() {
     `;
 
     document.body.appendChild(spotlightElement);
+    console.log('蒙版创建成功，位置:', {top: containerRect.top, left: containerRect.left, width: containerRect.width, height: containerRect.height});
 }
 
 // 更新蒙版位置
@@ -452,6 +468,29 @@ function updateSpotlightPosition(x, y) {
     }
 }
 
+// 更新蒙版位置和大小
+function updateSpotlightLayout() {
+    if (!SPOTLIGHT_CONFIG.enabled) return;
+
+    console.log('更新蒙版布局...');
+
+    // 等待DOM更新
+    setTimeout(() => {
+        if (spotlightElement) {
+            spotlightElement.remove();
+            spotlightElement = null;
+        }
+
+        // 重新创建蒙版
+        createProblemSpotlight();
+
+        // 初始位置设为左上角隐藏
+        if (spotlightElement && problemContentContainer) {
+            updateSpotlightPosition(-100, -100);
+        }
+    }, 100);
+}
+
 // 初始化蒙版系统
 function initSpotlightSystem() {
     if (!SPOTLIGHT_CONFIG.enabled) return;
@@ -459,6 +498,18 @@ function initSpotlightSystem() {
     // 等待页面完全加载后再创建蒙版
     setTimeout(() => {
         createProblemSpotlight();
+
+        // 如果蒙版创建失败，重试一次
+        if (!spotlightElement || !problemContentContainer) {
+            setTimeout(() => {
+                createProblemSpotlight();
+                if (spotlightElement && problemContentContainer) {
+                    updateSpotlightPosition(-100, -100);
+                }
+            }, 1000);
+        } else {
+            updateSpotlightPosition(-100, -100);
+        }
 
         // 鼠标移动时更新蒙版位置
         document.addEventListener('mousemove', function(e) {
@@ -476,13 +527,15 @@ function initSpotlightSystem() {
 
         // 窗口大小变化时重新计算
         window.addEventListener('resize', function() {
+            console.log('窗口大小变化，更新蒙版');
             // 重新创建蒙版
             if (spotlightElement) {
                 spotlightElement.remove();
             }
             setTimeout(() => {
                 createProblemSpotlight();
-            }, 100);
+                updateSpotlightPosition(-100, -100);
+            }, 200);
         });
 
         // 添加键盘快捷键切换蒙版
@@ -498,7 +551,37 @@ function initSpotlightSystem() {
 
         // 初始状态：完全遮挡
         updateSpotlightPosition(-100, -100);
-    }, 500);
+    }, 1000); // 增加延迟到1秒
+}
+
+// 调试函数：检查蒙版状态
+function debugSpotlight() {
+    console.log('=== 蒙版调试信息 ===');
+    console.log('蒙版元素:', spotlightElement);
+    console.log('题目内容容器:', problemContentContainer);
+
+    if (problemContentContainer) {
+        const rect = problemContentContainer.getBoundingClientRect();
+        console.log('题目内容区域:', {
+            top: rect.top,
+            left: rect.left,
+            width: rect.width,
+            height: rect.height,
+            right: rect.right,
+            bottom: rect.bottom
+        });
+    }
+
+    if (spotlightElement) {
+        console.log('蒙版样式:', {
+            top: spotlightElement.style.top,
+            left: spotlightElement.style.left,
+            width: spotlightElement.style.width,
+            height: spotlightElement.style.height,
+            maskImage: spotlightElement.style.maskImage
+        });
+    }
+    console.log('=== 调试结束 ===');
 }
 
 // 全局变量
@@ -774,6 +857,36 @@ async function refreshProblemParams() {
     }
 }
 
+// 更新题目文本
+async function updateProblemText(newProblemText) {
+    const mathFormulaDiv = document.getElementById('problem-content');
+    if (!mathFormulaDiv) return;
+
+    // 使用淡出效果
+    mathFormulaDiv.style.opacity = '0.7';
+    mathFormulaDiv.style.transition = 'opacity 0.3s ease';
+
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    // 更新题目文本
+    mathFormulaDiv.innerHTML = newProblemText;
+
+    // 使用淡入效果
+    mathFormulaDiv.style.opacity = '0';
+    await new Promise(resolve => setTimeout(resolve, 50));
+    mathFormulaDiv.style.opacity = '1';
+
+    // 重新渲染数学公式
+    if (window.MathJax) {
+        MathJax.typesetPromise([mathFormulaDiv]).catch(console.error);
+    }
+
+    // 关键：更新蒙版布局
+    setTimeout(() => {
+        updateSpotlightLayout();
+    }, 500); // 给DOM一些时间完全更新
+}
+
 // 更新题目参数和正确答案
 async function updateProblemParameters(newVarValues, newCorrectAnswers, newProblemText) {
     console.log('更新题目参数:', newVarValues);
@@ -809,34 +922,14 @@ async function updateProblemParameters(newVarValues, newCorrectAnswers, newProbl
     // 更新题目文本
     if (newProblemText) {
         await updateProblemText(newProblemText);
+    } else {
+        // 即使没有新题目文本，也更新蒙版布局
+        setTimeout(() => {
+            updateSpotlightLayout();
+        }, 300);
     }
 
     console.log('题目参数和正确答案更新完成，当前正确答案:', currentCorrectAnswers);
-}
-
-// 更新题目文本
-async function updateProblemText(newProblemText) {
-    const mathFormulaDiv = document.getElementById('problem-content');
-    if (!mathFormulaDiv) return;
-
-    // 使用淡出效果
-    mathFormulaDiv.style.opacity = '0.7';
-    mathFormulaDiv.style.transition = 'opacity 0.3s ease';
-
-    await new Promise(resolve => setTimeout(resolve, 300));
-
-    // 更新题目文本
-    mathFormulaDiv.innerHTML = newProblemText;
-
-    // 使用淡入效果
-    mathFormulaDiv.style.opacity = '0';
-    await new Promise(resolve => setTimeout(resolve, 50));
-    mathFormulaDiv.style.opacity = '1';
-
-    // 重新渲染数学公式
-    if (window.MathJax) {
-        MathJax.typesetPromise([mathFormulaDiv]).catch(console.error);
-    }
 }
 
 // 获取当前输入的答案
@@ -1130,6 +1223,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
         }
+
+        // Ctrl+Shift+D 调试蒙版
+        if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+            e.preventDefault();
+            debugSpotlight();
+        }
     });
 
     // 自动聚焦到第一个输入框
@@ -1145,6 +1244,13 @@ document.addEventListener('DOMContentLoaded', function() {
 // 页面卸载前清理
 window.addEventListener('beforeunload', function() {
     clearInterval(timerInterval);
+
+    // 清理蒙版元素
+    if (spotlightElement) {
+        spotlightElement.remove();
+        spotlightElement = null;
+        problemContentContainer = null;
+    }
 });
 </script>
 

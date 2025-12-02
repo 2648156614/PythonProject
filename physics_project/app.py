@@ -148,8 +148,8 @@ def get_total_problem_count():
     return len(mapping)
 
 
-def generate_problem_from_template(template_id):
-    """从模板生成具体问题 - 移除硬编码替换"""
+def generate_problem_from_template(template_id, max_attempts=50):
+    """从模板生成具体问题 - 完全动态的合理性验证（无学习表）"""
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     cursor.execute("SELECT * FROM problem_templates WHERE id = %s", (template_id,))
@@ -160,47 +160,179 @@ def generate_problem_from_template(template_id):
     if not template:
         return None
 
-    # 解析变量
     variables = [v.strip() for v in template['variables'].split(',')] if template['variables'] else []
-    var_values = {}
 
-    # 为每个变量生成随机值
-    for var in variables:
-        var_values[var] = round(random.uniform(0, 20.0), 2)
-
-    # 使用正则表达式格式化模板 - 只替换变量，不处理图片URL
-    import re
-    problem_text = template['problem_text']
-
-    # 只匹配双下划线包围的变量：__变量名__
-    pattern = r'__(\w+)__'
-
-    def replace_var(match):
-        var_name = match.group(1)
-        if var_name in var_values:
-            return str(var_values[var_name])
-        else:
-            return match.group(0)
-
-    problem_content = re.sub(pattern, replace_var, problem_text)
-
-    # 调试输出
-    print(f"=== 问题生成调试 ===")
-    print(f"模板ID: {template_id}")
-    print(f"图片文件名: {template.get('image_filename')}")
-    print(f"问题内容片段: {problem_content[:200]}")
-    print(f"生成的变量值: {var_values}")
-
-    # 计算正确答案
+    # 符号定义
     x, t, h = sp.symbols('x t h')
     local_vars = {
         'x': x, 't': t, 'h': h, 'sp': sp, 'sqrt': sp.sqrt, 'exp': sp.exp,
         'integrate': sp.integrate, 'pi': pi, 'log': log, 'sin': sp.sin, 'cos': sp.cos
     }
-    local_vars.update(var_values)
+
+    # 内存中的自适应范围（不持久化）
+    reasonable_ranges = {}
+    for var in variables:
+        reasonable_ranges[var] = get_adaptive_default_range(var)
+
+    for attempt in range(max_attempts):
+        var_values = {}
+
+        # 使用自适应范围生成变量
+        for var in variables:
+            min_val, max_val = reasonable_ranges[var]
+            # 随着尝试次数增加，逐渐扩大搜索范围
+            range_expansion = 1.0 + (attempt * 0.1)  # 每次尝试扩大10%
+            expanded_min = max(0.01, min_val / range_expansion)
+            expanded_max = max_val * range_expansion
+
+            var_values[var] = round(random.uniform(expanded_min, expanded_max), 2)
+
+        # 格式化问题文本
+        problem_content = format_problem_text(template['problem_text'], var_values)
+
+        # 计算答案
+        try:
+            current_vars = local_vars.copy()
+            current_vars.update(var_values)
+
+            correct_answer = eval(template['solution_formula'], {}, current_vars)
+
+            if isinstance(correct_answer, tuple):
+                correct_answers = [float(a.evalf()) if hasattr(a, 'evalf') else float(a) for a in correct_answer]
+            else:
+                correct_answers = [
+                    float(correct_answer.evalf()) if hasattr(correct_answer, 'evalf') else float(correct_answer)]
+
+            answer_count = template.get('answer_count', 1)
+            if len(correct_answers) != answer_count:
+                correct_answers = [correct_answers[0]] * answer_count
+
+            # 动态合理性验证（标准随尝试次数放宽）
+            if is_answer_reasonable_dynamic(correct_answers, var_values, attempt):
+                # 在内存中更新合理范围（仅本次运行有效）
+                for var, value in var_values.items():
+                    current_min, current_max = reasonable_ranges[var]
+                    reasonable_ranges[var] = (
+                        min(current_min, value * 0.8),  # 稍微扩大下限
+                        max(current_max, value * 1.2)  # 稍微扩大上限
+                    )
+
+                return {
+                    'problem_text': problem_content,
+                    'var_values': var_values,
+                    'correct_answers': correct_answers,
+                    'template_id': template_id,
+                    'answer_count': template.get('answer_count', 1),
+                    'template_name': template['template_name'],
+                    'image_filename': template.get('image_filename')
+                }
+
+        except Exception as e:
+            # 计算失败，继续尝试
+            continue
+
+    # 最终回退：使用保守但保证成功的方法
+    return generate_fallback_problem(template, variables, local_vars)
+
+
+def get_adaptive_default_range(var_name):
+    """根据变量名特征自适应设置默认范围"""
+    var_lower = var_name.lower()
+
+    # 基于命名模式的智能猜测
+    if any(char in var_lower for char in ['r', 'a', 'l', 'd', 'x', 'h']):  # 几何尺寸类
+        return (0.1, 10.0)
+    elif any(char in var_lower for char in ['v', 'u', 'w', 'speed', 'velocity']):  # 速度类
+        return (1.0, 50.0)
+    elif any(char in var_lower for char in ['b', 'e', 'f', 'field']):  # 场强类
+        return (0.1, 5.0)
+    elif any(char in var_lower for char in ['i', 'current']):  # 电流类
+        return (0.1, 10.0)
+    elif any(char in var_lower for char in ['r', 'resistance']):  # 电阻类
+        return (1.0, 100.0)
+    elif any(char in var_lower for char in ['m', 'mass']):  # 质量类
+        return (0.01, 5.0)
+    elif any(char in var_lower for char in ['omega', 'ω', 'angular']):  # 角速度
+        return (1.0, 20.0)
+    elif any(char in var_lower for char in ['dbdt', 'alpha', 'rate']):  # 变化率
+        return (0.1, 10.0)
+    elif any(char in var_lower for char in ['density']):  # 密度
+        return (1000.0, 10000.0)
+    else:
+        # 通用范围
+        return (0.5, 20.0)
+
+
+def is_answer_reasonable_dynamic(correct_answers, var_values, attempt_num):
+    """完全动态的合理性验证"""
+    if not correct_answers:
+        return False
+
+    for answer in correct_answers:
+        # 基础检查：必须是有限实数
+        if not isinstance(answer, (int, float)) or not np.isfinite(answer):
+            return False
+
+        abs_answer = abs(answer)
+
+        # 动态阈值：随着尝试次数增加，逐渐放宽标准
+        max_threshold = 1e6 * (1 + attempt_num * 0.2)  # 逐渐放宽上限
+        min_threshold = 1e-8 / (1 + attempt_num * 0.2)  # 逐渐放宽下限
+
+        if abs_answer > max_threshold or (0 < abs_answer < min_threshold):
+            return False
+
+        # 检查与输入变量的协调性（标准也动态放宽）
+        if not check_dynamic_consistency(answer, var_values, attempt_num):
+            return False
+
+    return True
+
+
+def check_dynamic_consistency(answer, var_values, attempt_num):
+    """动态检查答案与变量的协调性"""
+    if not var_values:
+        return True
+
+    abs_answer = abs(answer)
+    var_values_list = [abs(v) for v in var_values.values() if isinstance(v, (int, float))]
+
+    if not var_values_list:
+        return True
+
+    avg_var = sum(var_values_list) / len(var_values_list)
+
+    # 动态比率阈值：随着尝试次数放宽
+    base_max_ratio = 1000
+    base_min_ratio = 0.001
+    relaxation_factor = 1 + (attempt_num * 0.3)  # 每次尝试放宽30%
+
+    max_ratio = base_max_ratio * relaxation_factor
+    min_ratio = base_min_ratio / relaxation_factor
+
+    ratio_to_avg = abs_answer / avg_var if avg_var > 0 else abs_answer
+
+    # 检查是否在合理比率范围内
+    if ratio_to_avg > max_ratio or ratio_to_avg < min_ratio:
+        return False
+
+    return True
+
+
+def generate_fallback_problem(template, variables, local_vars):
+    """最终回退方案：使用保守范围生成题目"""
+    var_values = {}
+    for var in variables:
+        # 使用非常保守但保证合理的小范围
+        var_values[var] = round(random.uniform(1.0, 3.0), 2)
+
+    problem_content = format_problem_text(template['problem_text'], var_values)
 
     try:
-        correct_answer = eval(template['solution_formula'], {}, local_vars)
+        current_vars = local_vars.copy()
+        current_vars.update(var_values)
+        correct_answer = eval(template['solution_formula'], {}, current_vars)
+
         if isinstance(correct_answer, tuple):
             correct_answers = [float(a.evalf()) if hasattr(a, 'evalf') else float(a) for a in correct_answer]
         else:
@@ -210,20 +342,30 @@ def generate_problem_from_template(template_id):
         answer_count = template.get('answer_count', 1)
         if len(correct_answers) != answer_count:
             correct_answers = [correct_answers[0]] * answer_count
-    except Exception as e:
-        print(f"计算答案失败: {e}")
-        answer_count = template.get('answer_count', 1)
-        correct_answers = [0.0] * answer_count
+    except:
+        correct_answers = [0.0] * template.get('answer_count', 1)
 
     return {
         'problem_text': problem_content,
         'var_values': var_values,
         'correct_answers': correct_answers,
-        'template_id': template_id,
+        'template_id': template['id'],
         'answer_count': template.get('answer_count', 1),
         'template_name': template['template_name'],
         'image_filename': template.get('image_filename')
     }
+
+
+def format_problem_text(problem_text, var_values):
+    """格式化问题文本"""
+    import re
+    pattern = r'__(\w+)__'
+
+    def replace_var(match):
+        var_name = match.group(1)
+        return str(var_values.get(var_name, match.group(0)))
+
+    return re.sub(pattern, replace_var, problem_text)
 
 
 def save_user_response(user_id, template_id, problem_text, user_answers, correct_answers, is_correct_list,
