@@ -1646,7 +1646,7 @@ def api_submit(problem_id):
 
         # 验证会话
         if ('current_problem' not in session or
-            session['current_problem']['display_number'] != problem_id):
+                session['current_problem']['display_number'] != problem_id):
             return jsonify({'success': False, 'message': '会话过期，请重新开始答题'})
 
         problem_data = session['current_problem']['data']
@@ -1672,6 +1672,20 @@ def api_submit(problem_id):
         print(f"当前累计尝试次数: {session['current_problem']['total_attempts']}")
         print(f"答题用时: {time_taken}秒")
         print(f"正确答案: {correct_answers}")
+
+        # 验证答题时间的合理性
+        if time_taken < 0:
+            print(f"[API WARNING] 无效的答题时间: {time_taken}秒，重置为0")
+            time_taken = 0
+        elif time_taken > 86400:  # 超过24小时
+            print(f"[API WARNING] 答题时间异常长: {time_taken}秒，限制为3600秒")
+            time_taken = 3600
+        elif time_taken < 1:  # 少于1秒（可能有问题）
+            print(f"[API WARNING] 答题时间过短: {time_taken}秒，可能计时器有问题")
+        elif time_taken > 3600:  # 超过1小时
+            print(f"[API INFO] 答题时间较长: {time_taken}秒")
+
+        print(f"[API] 最终记录用时: {time_taken:.2f}秒")
 
         # 获取用户答案
         user_answers = []
@@ -1708,6 +1722,11 @@ def api_submit(problem_id):
             correct_answers, is_correct_list, total_attempts, time_taken
         )
 
+        if not save_success:
+            print(f"[API ERROR] 保存答题记录失败")
+            # 即使保存失败，也继续处理，但记录警告
+            session['current_problem']['save_failed'] = True
+
         # 生成正确答案消息
         correct_answer_message = "正确答案: "
         if answer_count == 1:
@@ -1720,6 +1739,7 @@ def api_submit(problem_id):
 
         # 更新会话状态
         new_problem_data = None
+        response_data = {}
 
         if all_correct:
             # 回答正确后更新用户完成状态
@@ -1727,12 +1747,25 @@ def api_submit(problem_id):
 
             session['current_problem']['answered_correctly'] = True
             next_problem_id = problem_id + 1 if problem_id < total_problems else None
-            message = '🎉 回答正确！'
+
+            # 构建成功消息
+            message = f'🎉 回答正确！用时 {time_taken:.1f}秒，尝试 {total_attempts} 次。'
+
+            response_data.update({
+                'correct': True,
+                'message': message,
+                'time_taken': time_taken,
+                'total_attempts': total_attempts,
+                'next_problem': next_problem_id,
+                'completed_all': completed_all if problem_id >= total_problems else False
+            })
 
             # 如果完成所有题目，生成验证链接
             if completed_all and problem_id >= total_problems:
                 verification_url = f"/api/user/{user_id}/completion"
                 session['verification_url'] = verification_url
+                response_data['verification_url'] = verification_url
+                response_data['completion_message'] = '恭喜您完成了所有题目！'
         else:
             session['current_problem']['answered_correctly'] = False
             next_problem_id = problem_id
@@ -1743,30 +1776,48 @@ def api_submit(problem_id):
                 # 更新session中的题目数据和正确答案
                 session['current_problem']['data'] = new_problem_data
                 session['current_problem']['start_time'] = time.time()
-                message = f'❌ 答案不正确！{correct_answer_message}。已为您生成新题目，请重新作答。'
-            else:
-                message = f'❌ 答案不正确！{correct_answer_message}。题目刷新失败，请重试。'
 
-        response_data = {
+                # 构建错误消息
+                message = f'❌ 答案不正确！用时 {time_taken:.1f}秒。{correct_answer_message}。已为您生成新题目，请重新作答。'
+
+                response_data.update({
+                    'correct': False,
+                    'message': message,
+                    'correct_answers': correct_answers,
+                    'total_attempts': total_attempts,
+                    'next_problem': next_problem_id,
+                    'new_problem_generated': True,
+                    'new_var_values': new_problem_data['var_values'],
+                    'new_correct_answers': new_problem_data['correct_answers'],
+                    'new_problem_text': new_problem_data['problem_text']
+                })
+
+                print(f"[API] 生成新题目参数: {new_problem_data['var_values']}")
+                print(f"[API] 生成新正确答案: {new_problem_data['correct_answers']}")
+            else:
+                # 题目生成失败
+                message = f'❌ 答案不正确！{correct_answer_message}。题目刷新失败，请重试。'
+                response_data.update({
+                    'correct': False,
+                    'message': message,
+                    'correct_answers': correct_answers,
+                    'total_attempts': total_attempts,
+                    'next_problem': next_problem_id,
+                    'new_problem_generated': False
+                })
+
+        # 确保session被修改
+        session.modified = True
+
+        # 基础响应数据
+        response_data.update({
             'success': True,
-            'correct': all_correct,
-            'message': message,
-            'correct_answers': correct_answers,
-            'total_attempts': total_attempts,
-            'next_problem': next_problem_id,  # 返回下一个题目的显示序号
             'save_success': save_success,
             'user_answers': user_answers,
-            'answer_count': answer_count
-        }
-
-        # 如果生成了新题目，返回新题目的参数
-        if new_problem_data:
-            response_data['new_problem_generated'] = True
-            response_data['new_var_values'] = new_problem_data['var_values']
-            response_data['new_correct_answers'] = new_problem_data['correct_answers']
-            response_data['new_problem_text'] = new_problem_data['problem_text']
-        else:
-            response_data['new_problem_generated'] = False
+            'answer_count': answer_count,
+            'problem_id': problem_id,
+            'actual_id': actual_id
+        })
 
         print(f"[API RESPONSE] 返回数据: {response_data}")
         return jsonify(response_data)
@@ -1774,6 +1825,9 @@ def api_submit(problem_id):
     except ValueError as e:
         print(f"[API ERROR] 数值转换错误: {str(e)}")
         return jsonify({'success': False, 'message': '请输入有效的数字格式'})
+    except KeyError as e:
+        print(f"[API ERROR] 缺少必要字段: {str(e)}")
+        return jsonify({'success': False, 'message': f'缺少必要字段: {str(e)}'})
     except Exception as e:
         print(f"[API ERROR] 服务器错误: {str(e)}")
         import traceback

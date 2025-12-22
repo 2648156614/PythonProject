@@ -398,19 +398,20 @@ function createProblemSpotlight() {
         spotlightElement.remove();
     }
 
-    // 创建蒙版元素
+    // 创建蒙版元素 - 使用绝对定位
     spotlightElement = document.createElement('div');
     spotlightElement.id = 'spotlight-overlay-element';
 
     const size = SPOTLIGHT_CONFIG.size;
     const isCircle = SPOTLIGHT_CONFIG.shape === 'circle';
 
+    // 关键修改：使用绝对定位相对于题目容器
     spotlightElement.style.cssText = `
-        position: fixed;
-        top: ${containerRect.top}px;
-        left: ${containerRect.left}px;
-        width: ${containerRect.width}px;
-        height: ${containerRect.height}px;
+        position: absolute; /* 改为绝对定位 */
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
         backdrop-filter: blur(${SPOTLIGHT_CONFIG.blurStrength});
         -webkit-backdrop-filter: blur(${SPOTLIGHT_CONFIG.blurStrength});
         background: rgba(255, 255, 255, 0.1);
@@ -424,10 +425,14 @@ function createProblemSpotlight() {
             `radial-gradient(circle ${size/2}px at 0px 0px, transparent 0%, transparent 100%, black 100%)`};
         transition: all ${SPOTLIGHT_CONFIG.transitionSpeed}s ease;
         border-radius: 8px;
+        display: block;
     `;
 
-    document.body.appendChild(spotlightElement);
-    console.log('蒙版创建成功，位置:', {top: containerRect.top, left: containerRect.left, width: containerRect.width, height: containerRect.height});
+    // 将蒙版添加到题目容器内部
+    problemContentContainer.style.position = 'relative'; // 确保容器是相对定位
+    problemContentContainer.appendChild(spotlightElement);
+
+    console.log('蒙版创建成功，使用绝对定位');
 }
 
 // 更新蒙版位置
@@ -444,23 +449,15 @@ function updateSpotlightPosition(x, y) {
         y <= containerRect.bottom;
 
     const size = SPOTLIGHT_CONFIG.size;
-    const isCircle = SPOTLIGHT_CONFIG.shape === 'circle';
-
-    // 计算相对于题目内容容器的坐标
-    const relativeX = x - containerRect.left;
-    const relativeY = y - containerRect.top;
 
     if (isInsideContentArea) {
-        // 在题目内容区域内，显示光圈
-        if (isCircle) {
-            spotlightElement.style.maskImage = `radial-gradient(circle ${size/2}px at ${relativeX}px ${relativeY}px, transparent 0%, transparent 100%, black 100%)`;
-            spotlightElement.style.webkitMaskImage = `radial-gradient(circle ${size/2}px at ${relativeX}px ${relativeY}px, transparent 0%, transparent 100%, black 100%)`;
-        } else {
-            // 矩形模式
-            const halfSize = size / 2;
-            spotlightElement.style.maskImage = `radial-gradient(circle ${size/2}px at ${relativeX}px ${relativeY}px, transparent 0%, transparent 100%, black 100%)`;
-            spotlightElement.style.webkitMaskImage = `radial-gradient(circle ${size/2}px at ${relativeX}px ${relativeY}px, transparent 0%, transparent 100%, black 100%)`;
-        }
+        // 在题目内容区域内，计算相对于容器的坐标
+        const relativeX = x - containerRect.left;
+        const relativeY = y - containerRect.top;
+
+        // 圆形光圈
+        spotlightElement.style.maskImage = `radial-gradient(circle ${size/2}px at ${relativeX}px ${relativeY}px, transparent 0%, transparent 100%, black 100%)`;
+        spotlightElement.style.webkitMaskImage = `radial-gradient(circle ${size/2}px at ${relativeX}px ${relativeY}px, transparent 0%, transparent 100%, black 100%)`;
     } else {
         // 不在题目内容区域内，完全遮挡
         spotlightElement.style.maskImage = 'radial-gradient(circle 0px at -100px -100px, transparent 0%, transparent 100%, black 100%)';
@@ -489,6 +486,48 @@ function updateSpotlightLayout() {
             updateSpotlightPosition(-100, -100);
         }
     }, 100);
+}
+
+// 检测键盘弹出/收起
+function detectKeyboardChanges() {
+    let originalViewportHeight = window.innerHeight;
+
+    // 监听窗口大小变化（键盘弹出会改变视口高度）
+    window.addEventListener('resize', function() {
+        const newViewportHeight = window.innerHeight;
+
+        // 如果高度变化超过150像素（可能是键盘弹出）
+        if (Math.abs(newViewportHeight - originalViewportHeight) > 150) {
+            console.log('检测到键盘变化，重新定位蒙版');
+
+            // 给DOM一些时间调整
+            setTimeout(() => {
+                if (spotlightElement) {
+                    spotlightElement.remove();
+                    spotlightElement = null;
+                }
+                createProblemSpotlight();
+                updateSpotlightPosition(-100, -100);
+            }, 300);
+        }
+
+        originalViewportHeight = newViewportHeight;
+    });
+
+    // 监听输入框聚焦事件
+    document.addEventListener('focusin', function(e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+            console.log('输入框获取焦点，重新定位蒙版');
+            setTimeout(updateSpotlightLayout, 500);
+        }
+    });
+
+    // 监听输入框失焦事件
+    document.addEventListener('focusout', function(e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+            setTimeout(updateSpotlightLayout, 500);
+        }
+    });
 }
 
 // 初始化蒙版系统
@@ -527,16 +566,12 @@ function initSpotlightSystem() {
 
         // 窗口大小变化时重新计算
         window.addEventListener('resize', function() {
-            console.log('窗口大小变化，更新蒙版');
-            // 重新创建蒙版
-            if (spotlightElement) {
-                spotlightElement.remove();
-            }
-            setTimeout(() => {
-                createProblemSpotlight();
-                updateSpotlightPosition(-100, -100);
-            }, 200);
+            console.log('窗口大小变化，延迟更新蒙版');
+            setTimeout(updateSpotlightLayout, 200);
         });
+
+        // 添加键盘变化检测
+        detectKeyboardChanges();
 
         // 添加键盘快捷键切换蒙版
         document.addEventListener('keydown', function(e) {
@@ -584,30 +619,46 @@ function debugSpotlight() {
     console.log('=== 调试结束 ===');
 }
 
+// ======================== 计时器和答题逻辑 ========================
+
 // 全局变量
-let startTime = Date.now();
+let startTime = Date.now();  // 页面加载时立即记录开始时间
 let isSubmitting = false;
 let timerInterval = null;
 const problemId = {{ problem_id }};
 const answerCount = {{ answer_count }};
 const totalProblems = {{ total_problems }};
 let totalAttempts = {{ total_attempts }};
+let timerInitialized = false;  // 添加标志防止重复初始化
 
 // 初始化全局正确答案变量
 let currentCorrectAnswers = {{ problem.correct_answers | tojson }};
 console.log('Ajax问题页面初始化 - 问题ID:', problemId, '答案数量:', answerCount, '累计尝试:', totalAttempts, '总题目数:', totalProblems);
 console.log('初始正确答案:', currentCorrectAnswers);
+console.log('页面加载时间:', new Date().toLocaleTimeString());
 
-// 初始化计时器
+// 初始化计时器 - 从页面加载开始计时
 function initTimer() {
+    // 如果已经初始化过，不再重复初始化
+    if (timerInitialized) {
+        console.log('计时器已初始化，跳过');
+        return;
+    }
+
     clearInterval(timerInterval);
-    startTime = Date.now();
+
+    // 使用页面加载时间作为开始时间
+    // startTime 已经在页面加载时设置为 Date.now()
+
+    console.log('计时器初始化，开始时间:', new Date(startTime).toLocaleTimeString());
 
     timerInterval = setInterval(() => {
         const currentTime = Math.floor((Date.now() - startTime) / 1000);
         document.getElementById('time-counter').textContent = currentTime;
         document.getElementById('current-time').textContent = currentTime + '秒';
     }, 1000);
+
+    timerInitialized = true;
 }
 
 // 格式化正确答案显示（统一显示2位小数）
@@ -695,31 +746,6 @@ function showTempMessage(message, type = 'info', duration = 3000) {
     }, duration);
 }
 
-// 显示静态提示消息（不会自动消失，无Bootstrap alert样式）
-function showStaticHint(message, type = 'info') {
-    const messageArea = document.getElementById('message-area');
-    const typeClass = type === 'error' ? 'hint-error' :
-                     type === 'success' ? 'hint-success' :
-                     type === 'warning' ? 'hint-warning' : 'hint-info';
-
-    const messageId = 'static-hint-' + Date.now();
-    const hintMessage = document.createElement('div');
-    hintMessage.id = messageId;
-    hintMessage.className = `static-hint ${typeClass}`;
-    hintMessage.innerHTML = `
-        <div class="hint-content">
-            <i class="bi ${type === 'success' ? 'bi-check-circle-fill' :
-                          type === 'error' ? 'bi-exclamation-triangle-fill' :
-                          type === 'warning' ? 'bi-exclamation-circle-fill' : 'bi-info-circle-fill'}
-                me-2"></i>
-            <span>${message}</span>
-        </div>
-    `;
-
-    messageArea.appendChild(hintMessage);
-    messageArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-
 // 更新尝试次数显示
 function updateAttemptsDisplay() {
     document.getElementById('total-attempts').textContent = totalAttempts;
@@ -738,9 +764,14 @@ function resetSubmitButton() {
 // 获取答案数据 - 关键修改：包含正确答案
 function getAnswerData() {
     const answerData = {
-        time_taken: (Date.now() - startTime) / 1000,
+        time_taken: (Date.now() - startTime) / 1000,  // 从页面加载到提交的总时间
         correct_answers: currentCorrectAnswers  // 关键：传递当前正确答案
     };
+
+    console.log('答题时间计算:');
+    console.log('开始时间:', new Date(startTime).toLocaleTimeString());
+    console.log('结束时间:', new Date(Date.now()).toLocaleTimeString());
+    console.log('总用时:', answerData.time_taken, '秒');
 
     if (answerCount === 1) {
         const answerValue = document.getElementById('answer').value;
@@ -827,7 +858,12 @@ async function refreshProblemParams() {
     console.log('开始异步刷新题目参数...');
 
     try {
-        showMessage('正在刷新题目参数...', 'info');
+        const submitBtn = document.getElementById('submit-btn');
+        const originalText = submitBtn.innerHTML;
+
+        showMessage('正在刷新题目...', 'info');
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>刷新中...';
 
         const response = await fetch(`/refresh_problem/${problemId}`, {
             method: 'POST',
@@ -844,16 +880,34 @@ async function refreshProblemParams() {
         console.log('刷新API响应:', data);
 
         if (data.success) {
+            // 刷新成功后重置计时器（重新从当前时间开始计时）
+            startTime = Date.now();
+            timerInitialized = false;
+            initTimer();
+
+            showMessage('题目已刷新，计时器已重置！', 'success');
+
             // 重新加载页面以获取新题目
-            window.location.reload();
+            setTimeout(() => {
+                window.location.reload();
+            }, 1000);
         } else {
             throw new Error(data.message);
         }
+
+        return true;
 
     } catch (error) {
         console.error('刷新题目参数失败:', error);
         showMessage('刷新失败: ' + error.message, 'error');
         return false;
+    } finally {
+        // 恢复按钮状态
+        const submitBtn = document.getElementById('submit-btn');
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="bi bi-send-fill me-1"></i> 提交答案';
+        }
     }
 }
 
@@ -1012,6 +1066,35 @@ function initProblemSidebar() {
     });
 }
 
+// 设置输入框监听器 - 移除焦点重置计时器的逻辑
+function setupInputListeners() {
+    if (answerCount === 1) {
+        const answerInput = document.getElementById('answer');
+
+        // 回车键提交
+        answerInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                document.getElementById('answer-form').dispatchEvent(new Event('submit'));
+            }
+        });
+    } else {
+        for (let i = 1; i <= answerCount; i++) {
+            const answerInput = document.getElementById(`answer${i}`);
+
+            // 最后一个输入框回车键提交
+            if (i === answerCount) {
+                answerInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        document.getElementById('answer-form').dispatchEvent(new Event('submit'));
+                    }
+                });
+            }
+        }
+    }
+}
+
 // 处理表单提交
 document.getElementById('answer-form').addEventListener('submit', async function(e) {
     e.preventDefault();
@@ -1060,7 +1143,7 @@ document.getElementById('answer-form').addEventListener('submit', async function
                 document.getElementById('next-btn').style.display = 'inline-block';
                 submitBtn.style.display = 'none';
                 disableInputs();
-                clearInterval(timerInterval);
+                clearInterval(timerInterval);  // 停止计时器
 
                 // 更新完成状态显示
                 updateProblemSidebar();
@@ -1099,6 +1182,11 @@ document.getElementById('answer-form').addEventListener('submit', async function
                     // 异步更新页面参数和正确答案
                     updateProblemParameters(data.new_var_values, data.new_correct_answers, data.new_problem_text)
                         .then(() => {
+                            // 重置计时器，重新开始计时
+                            startTime = Date.now();
+                            timerInitialized = false;
+                            initTimer();
+
                             showMessage('新题目已生成！请重新作答。', 'success');
                             resetFormState();
                         })
@@ -1158,46 +1246,11 @@ document.getElementById('sidebar-refresh-btn').addEventListener('click', functio
     }
 });
 
-// 输入框获取焦点时重置计时器
-function setupInputListeners() {
-    if (answerCount === 1) {
-        const answerInput = document.getElementById('answer');
-        answerInput.addEventListener('focus', () => {
-            console.log('输入框获取焦点，重置计时器');
-            startTime = Date.now();
-        });
-
-        // 回车键提交
-        answerInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                document.getElementById('answer-form').dispatchEvent(new Event('submit'));
-            }
-        });
-    } else {
-        for (let i = 1; i <= answerCount; i++) {
-            const answerInput = document.getElementById(`answer${i}`);
-            answerInput.addEventListener('focus', () => {
-                console.log(`答案${i}输入框获取焦点，重置计时器`);
-                startTime = Date.now();
-            });
-
-            // 最后一个输入框回车键提交
-            if (i === answerCount) {
-                answerInput.addEventListener('keypress', (e) => {
-                    if (e.key === 'Enter') {
-                        e.preventDefault();
-                        document.getElementById('answer-form').dispatchEvent(new Event('submit'));
-                    }
-                });
-            }
-        }
-    }
-}
-
 // 页面初始化
 document.addEventListener('DOMContentLoaded', function() {
     console.log('动态问题页面加载完成');
+    console.log('页面加载时间:', new Date().toLocaleTimeString());
+    console.log('开始计时时间:', new Date(startTime).toLocaleTimeString());
 
     // 初始化功能
     initTimer();
@@ -1209,6 +1262,22 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 初始化蒙版系统
     initSpotlightSystem();
+
+    // 移动端特殊处理：监听输入框变化
+    if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+        // 监听所有输入框
+        const inputs = document.querySelectorAll('input[type="number"]');
+        inputs.forEach(input => {
+            input.addEventListener('focus', function() {
+                console.log('移动端输入框聚焦，延迟重定位');
+                setTimeout(updateSpotlightLayout, 300);
+            });
+
+            input.addEventListener('blur', function() {
+                setTimeout(updateSpotlightLayout, 300);
+            });
+        });
+    }
 
     // 添加快捷键支持
     document.addEventListener('keydown', function(e) {
@@ -1228,6 +1297,12 @@ document.addEventListener('DOMContentLoaded', function() {
         if (e.ctrlKey && e.shiftKey && e.key === 'D') {
             e.preventDefault();
             debugSpotlight();
+        }
+
+        // Ctrl+Shift+T 调试计时器
+        if (e.ctrlKey && e.shiftKey && e.key === 'T') {
+            e.preventDefault();
+            debugTimer();
         }
     });
 
@@ -1252,6 +1327,43 @@ window.addEventListener('beforeunload', function() {
         problemContentContainer = null;
     }
 });
+
+// ======================== 调试功能 ========================
+
+// 添加调试功能
+window.debugTimer = function() {
+    console.log('=== 计时器调试信息 ===');
+    console.log('开始时间:', new Date(startTime).toLocaleTimeString());
+    console.log('当前时间:', new Date().toLocaleTimeString());
+    console.log('已用时:', Math.floor((Date.now() - startTime) / 1000), '秒');
+    console.log('计时器是否初始化:', timerInitialized);
+    console.log('计时器间隔ID:', timerInterval);
+
+    // 检查页面元素
+    const timeCounter = document.getElementById('time-counter');
+    const currentTime = document.getElementById('current-time');
+    console.log('time-counter元素:', timeCounter);
+    console.log('time-counter内容:', timeCounter ? timeCounter.textContent : '未找到');
+    console.log('current-time元素:', currentTime);
+    console.log('current-time内容:', currentTime ? currentTime.textContent : '未找到');
+};
+
+// 手动重置计时器（仅用于测试）
+window.resetTimerForTest = function() {
+    console.log('手动重置计时器...');
+    startTime = Date.now();
+    timerInitialized = false;
+    initTimer();
+    console.log('计时器已重置，新开始时间:', new Date(startTime).toLocaleTimeString());
+};
+
+// 测试答题时间计算
+window.testTimeCalculation = function() {
+    console.log('=== 测试答题时间计算 ===');
+    const testAnswerData = getAnswerData();
+    console.log('测试计算结果:', testAnswerData.time_taken, '秒');
+    return testAnswerData.time_taken;
+};
 </script>
 
 <style>
@@ -1558,6 +1670,16 @@ window.addEventListener('beforeunload', function() {
         height: auto;
         max-height: 200px;
     }
+
+    /* 蒙版系统样式 - 移动端优化 */
+    #problem-content-container {
+        min-height: 200px; /* 确保容器有足够高度 */
+        position: relative !important; /* 强制相对定位 */
+    }
+
+    #spotlight-overlay-element {
+        border-radius: 0; /* 移除圆角，避免定位问题 */
+    }
 }
 
 /* 超小屏幕适配 */
@@ -1608,6 +1730,11 @@ window.addEventListener('beforeunload', function() {
     .card {
         margin-bottom: 0.5rem;
     }
+
+    /* 确保蒙版不会被键盘覆盖 */
+    #problem-content-container {
+        transform: none !important;
+    }
 }
 
 /* 数学公式在移动端的响应式处理 */
@@ -1655,6 +1782,16 @@ window.addEventListener('beforeunload', function() {
 #hint-and-stats-container {
     position: relative;
     z-index: 20;
+}
+
+/* 防止输入时页面滚动 */
+html {
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+body {
+    -webkit-overflow-scrolling: touch;
 }
 </style>
 {% endblock %}
