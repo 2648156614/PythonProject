@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+
+{% block title %}添加题目 - 管理员{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0">添加新题目</h2>
+        <div>
+            <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> 返回管理后台
+            </a>
+            <a href="{{ url_for('admin_manage_problems') }}" class="btn btn-outline-info">
+                <i class="bi bi-list-check"></i> 管理题目
+            </a>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-plus-circle me-2"></i> 题目信息</h5>
+                </div>
+                <div class="card-body">
+                    <form method="POST" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <label for="template_name" class="form-label">题目名称</label>
+                            <input type="text" class="form-control" id="template_name" name="template_name" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="problem_text" class="form-label">题目内容 (支持HTML和LaTeX)</label>
+                            <textarea class="form-control" id="problem_text" name="problem_text" rows="8" required></textarea>
+                            <div class="form-text">
+                                提示：使用 <code>&#123;&#123; problem.var_values.变量名 &#125;&#125;</code> 插入变量，使用 <code>\( LaTeX公式 \)</code> 插入数学公式
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="problem_image" class="form-label">题目图片 (可选)</label>
+                            <input type="file" class="form-control" id="problem_image" name="problem_image"
+                                   accept=".png,.jpg,.jpeg,.gif,.svg">
+                            <div class="form-text">
+                                支持格式：PNG, JPG, GIF, SVG。最大16MB。
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="variables" class="form-label">变量列表 (用逗号分隔)</label>
+                            <input type="text" class="form-control" id="variables" name="variables"
+                                   placeholder="例如: r,R,i,B">
+                            <div class="form-text">定义题目中使用的变量名</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="solution_formula" class="form-label">解答公式 (Python表达式)</label>
+                            <textarea class="form-control" id="solution_formula" name="solution_formula" rows="4" required></textarea>
+                            <div class="form-text">
+                                使用Python数学表达式，多答案用逗号分隔。例如：<code>i * R / (pi * (r/100)**2)</code>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="answer_count" class="form-label">答案数量</label>
+                                    <select class="form-select" id="answer_count" name="answer_count">
+                                        <option value="1">1个答案</option>
+                                        <option value="2">2个答案</option>
+                                        <option value="3">3个答案</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="difficulty" class="form-label">难度</label>
+                                    <select class="form-select" id="difficulty" name="difficulty">
+                                        <option value="easy">简单</option>
+                                        <option value="medium" selected>中等</option>
+                                        <option value="hard">困难</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-check-lg me-2"></i> 添加题目
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i> 添加说明</h5>
+                </div>
+                <div class="card-body">
+                    <h6>变量命名规范：</h6>
+                    <ul class="small">
+                        <li>半径：r, a</li>
+                        <li>电阻：R</li>
+                        <li>电流：i, I</li>
+                        <li>磁场：B, B0</li>
+                        <li>速度：v</li>
+                        <li>长度：l, L</li>
+                        <li>质量：m</li>
+                        <li>角速度：omega</li>
+                    </ul>
+
+                    <h6>公式编写提示：</h6>
+                    <ul class="small">
+                        <li>使用标准数学函数：pi, sin, cos, sqrt</li>
+                        <li>注意单位转换（cm → m）</li>
+                        <li>多答案用逗号分隔</li>
+                        <li>可以使用 sympy 符号计算</li>
+                    </ul>
+
+                    <h6>题目内容格式：</h6>
+                    <ul class="small">
+                        <li>HTML标签支持</li>
+                        <li>LaTeX数学公式</li>
+                        <li>图片路径：<code>/static/images/图片名.png</code></li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-image me-2"></i> 图片使用说明</h5>
+                </div>
+                <div class="card-body">
+                    <h6>图片规范：</h6>
+                    <ul class="small">
+                        <li>建议尺寸：400×300 像素</li>
+                        <li>格式：PNG（推荐）、JPG、GIF、SVG</li>
+                        <li>文件命名：使用英文和数字，避免中文</li>
+                        <li>图片将自动插入到题目内容开头</li>
+                    </ul>
+
+                    <h6>现有图片：</h6>
+                    <a href="{{ url_for('admin_image_manager') }}" class="btn btn-sm btn-outline-info">
+                        <i class="bi bi-images"></i> 管理图片库
+                    </a>
+                </div>
+            </div>
+
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-lightbulb me-2"></i> 示例</h5>
+                </div>
+                <div class="card-body">
+                    <h6>单答案题目：</h6>
+                    <pre class="small bg-light p-2 rounded">
+变量：r,R,i
+公式：i * R / (pi * (r/100)**2)</pre>
+
+                    <h6>多答案题目：</h6>
+                    <pre class="small bg-light p-2 rounded">
+变量：l,B,omega
+公式："(3/8) * B * omega * l**2, -(3/8) * B * omega * l**2, 0"</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

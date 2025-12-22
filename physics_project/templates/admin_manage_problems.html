@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block title %}管理题目 - 管理员{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0">题目管理</h2>
+        <div>
+            <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> 返回管理后台
+            </a>
+            <a href="{{ url_for('admin_add_problem') }}" class="btn btn-primary">
+                <i class="bi bi-plus-circle"></i> 添加题目
+            </a>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-list-check me-2"></i> 题目列表</h5>
+        </div>
+        <div class="card-body">
+            {% if templates %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>序号</th>
+                            <th>实际ID</th>
+                            <th>题目名称</th>
+                            <th>图片</th>
+                            <th>变量</th>
+                            <th>答案数量</th>
+                            <th>难度</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for template in templates %}
+                        <tr>
+                            <td><strong>{{ template.display_number }}</strong></td>
+                            <td><small class="text-muted">{{ template.id }}</small></td>
+                            <td>
+                                <strong>{{ template.template_name }}</strong>
+                                <div class="text-muted small mt-1">
+                                    {{ template.problem_text|striptags|truncate(100) }}
+                                </div>
+                            </td>
+                            <td>
+                                {% if template.image_filename %}
+                                <span class="badge bg-success" title="{{ template.image_filename }}">
+                                    <i class="bi bi-image"></i> 有图片
+                                </span>
+                                {% else %}
+                                <span class="badge bg-secondary">无图片</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge bg-info">{{ template.variables or '无' }}</span>
+                            </td>
+                            <td>
+                                <span class="badge bg-primary">{{ template.answer_count }}</span>
+                            </td>
+                            <td>
+                                {% if template.difficulty == 'easy' %}
+                                <span class="badge bg-success">简单</span>
+                                {% elif template.difficulty == 'hard' %}
+                                <span class="badge bg-danger">困难</span>
+                                {% else %}
+                                <span class="badge bg-warning">中等</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <a href="{{ url_for('admin_edit_problem', template_id=template.id) }}"
+                                       class="btn btn-outline-primary">
+                                        <i class="bi bi-pencil"></i> 编辑
+                                    </a>
+                                    <button type="button" class="btn btn-outline-danger"
+                                            onclick="confirmDelete({{ template.id }}, '{{ template.template_name }}')">
+                                        <i class="bi bi-trash"></i> 删除
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-inbox display-1 text-muted"></i>
+                <h4 class="text-muted">暂无题目</h4>
+                <p class="text-muted">还没有添加任何题目</p>
+                <a href="{{ url_for('admin_add_problem') }}" class="btn btn-primary">
+                    <i class="bi bi-plus-circle me-2"></i> 添加第一个题目
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+function confirmDelete(templateId, templateName) {
+    if (confirm(`确定要删除题目 "${templateName}" 吗？\n\n注意：这将同时删除所有相关的答题记录！`)) {
+        window.location.href = `/admin/delete_problem/${templateId}`;
+    }
+}
+</script>
+{% endblock %}

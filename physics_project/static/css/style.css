@@ -1,0 +1,330 @@
+:root {
+    --primary-color: #2c3e50;
+    --secondary-color: #3498db;
+    --accent-color: #1abc9c;
+    --light-bg: #f8f9fa;
+    --card-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+body {
+    background-color: #f5f7fa;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    line-height: 1.6;
+}
+
+.navbar {
+    background-color: var(--primary-color) !important;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.navbar-brand {
+    font-weight: 600;
+}
+
+.card {
+    border: none;
+    border-radius: 10px;
+    box-shadow: var(--card-shadow);
+    transition: transform 0.2s, box-shadow 0.2s;
+    margin-bottom: 20px;
+}
+
+.card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+}
+
+.card-header {
+    border-radius: 10px 10px 0 0 !important;
+    font-weight: 600;
+    border-bottom: 1px solid rgba(0,0,0,0.05);
+}
+
+.math-formula {
+    background-color: var(--light-bg);
+    padding: 20px;
+    border-radius: 8px;
+    margin: 20px 0;
+    font-size: 1.1em;
+    border-left: 4px solid var(--secondary-color);
+    line-height: 1.8;
+}
+
+.math-formula h5 {
+    color: var(--primary-color);
+    margin-bottom: 15px;
+}
+
+.variable-table {
+    width: 100%;
+    margin: 20px 0;
+    border-collapse: collapse;
+}
+
+.variable-table th {
+    background-color: #e9ecef;
+    padding: 12px;
+    text-align: left;
+}
+
+.variable-table td {
+    padding: 12px;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.progress {
+    height: 20px;
+    border-radius: 10px;
+    background-color: #e9ecef;
+}
+
+.progress-bar {
+    border-radius: 10px;
+    transition: width 0.3s ease;
+}
+
+.problem-card {
+    transition: transform 0.2s, box-shadow 0.2s;
+    border: 1px solid rgba(0,0,0,0.05);
+}
+
+.problem-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.hero-section {
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    color: white;
+    padding: 80px 0;
+    border-radius: 0 0 20px 20px;
+    margin-bottom: 40px;
+    text-align: center;
+}
+
+.hero-section h1 {
+    font-weight: 700;
+    margin-bottom: 20px;
+}
+
+.hero-section .lead {
+    font-size: 1.3rem;
+    margin-bottom: 30px;
+    opacity: 0.9;
+}
+
+.feature-icon {
+    font-size: 2.5rem;
+    color: var(--secondary-color);
+    margin-bottom: 15px;
+}
+
+.stats-card {
+    text-align: center;
+    padding: 25px 15px;
+    border: none;
+}
+
+.stats-number {
+    font-size: 2.5rem;
+    font-weight: bold;
+    color: var(--secondary-color);
+    margin-bottom: 10px;
+}
+
+.btn-primary {
+    background-color: var(--secondary-color);
+    border-color: var(--secondary-color);
+    padding: 10px 25px;
+    border-radius: 8px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.btn-primary:hover {
+    background-color: #2980b9;
+    border-color: #2980b9;
+    transform: translateY(-2px);
+}
+
+.btn-success {
+    background-color: var(--accent-color);
+    border-color: var(--accent-color);
+    border-radius: 8px;
+    font-weight: 500;
+}
+
+.btn-success:hover {
+    background-color: #16a085;
+    border-color: #16a085;
+}
+
+.sidebar {
+    background-color: white;
+    border-radius: 10px;
+    padding: 25px;
+    box-shadow: var(--card-shadow);
+    position: sticky;
+    top: 20px;
+}
+
+.sidebar h5 {
+    color: var(--primary-color);
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid var(--light-bg);
+}
+
+.sidebar-menu {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.sidebar-menu li {
+    margin-bottom: 8px;
+}
+
+.sidebar-menu a {
+    display: block;
+    padding: 12px 15px;
+    border-radius: 8px;
+    color: var(--primary-color);
+    text-decoration: none;
+    transition: all 0.2s;
+    font-weight: 500;
+}
+
+.sidebar-menu a:hover, .sidebar-menu a.active {
+    background-color: var(--light-bg);
+    color: var(--secondary-color);
+    transform: translateX(5px);
+}
+
+.sidebar-menu i {
+    margin-right: 10px;
+    width: 20px;
+    text-align: center;
+}
+
+.content-area {
+    background-color: white;
+    border-radius: 10px;
+    padding: 30px;
+    box-shadow: var(--card-shadow);
+}
+
+.page-title {
+    color: var(--primary-color);
+    margin-bottom: 25px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid var(--light-bg);
+    font-weight: 600;
+}
+
+.alert {
+    border-radius: 8px;
+    border: none;
+    padding: 15px 20px;
+}
+
+.badge {
+    font-size: 0.75em;
+    padding: 6px 12px;
+    border-radius: 20px;
+}
+
+.table th {
+    background-color: var(--light-bg);
+    color: var(--primary-color);
+    font-weight: 600;
+    border-bottom: 2px solid #dee2e6;
+}
+
+.login-container {
+    max-width: 400px;
+    margin: 80px auto;
+    padding: 40px;
+    background-color: white;
+    border-radius: 15px;
+    box-shadow: var(--card-shadow);
+}
+
+.login-container h2 {
+    color: var(--primary-color);
+    text-align: center;
+    margin-bottom: 30px;
+    font-weight: 600;
+}
+
+.form-control {
+    border-radius: 8px;
+    padding: 12px 15px;
+    border: 2px solid #e9ecef;
+    transition: all 0.3s ease;
+}
+
+.form-control:focus {
+    border-color: var(--secondary-color);
+    box-shadow: 0 0 0 0.2rem rgba(52, 152, 219, 0.25);
+}
+
+.form-label {
+    font-weight: 500;
+    color: var(--primary-color);
+    margin-bottom: 8px;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .hero-section {
+        padding: 60px 0;
+        border-radius: 0 0 15px 15px;
+    }
+
+    .hero-section h1 {
+        font-size: 2rem;
+    }
+
+    .content-area {
+        padding: 20px;
+    }
+
+    .sidebar {
+        margin-bottom: 20px;
+        position: static;
+    }
+
+    .stats-card {
+        margin-bottom: 15px;
+    }
+}
+
+/* 动画效果 */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+    animation: fadeIn 0.5s ease-out;
+}
+
+/* 题目难度标签 */
+.difficulty-easy {
+    background-color: #28a745;
+}
+
+.difficulty-medium {
+    background-color: #ffc107;
+    color: #212529;
+}
+
+.difficulty-hard {
+    background-color: #dc3545;
+}
+
+/* 表格行悬停效果 */
+.table-hover tbody tr:hover {
+    background-color: rgba(52, 152, 219, 0.05);
+}
