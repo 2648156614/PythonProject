@@ -91,105 +91,342 @@
         </div>
     </div>
 
-    <!-- 题目列表 -->
-    {% for problem in problems %}
-    <div class="card mb-4 problem-card"
-         data-id="{{ problem.id }}"
-         data-name="{{ problem.name }}"
-         data-status="{{ 'completed' if problem.completed else 'incomplete' }}"
-         data-difficulty="{{ problem.difficulty|default('medium') }}">
-        <div class="card-header d-flex justify-content-between align-items-center
-                    {{ 'bg-success text-white' if problem.completed else 'bg-primary text-white' }}">
-            <h4 class="mb-0">
-                <i class="bi {{ 'bi-check-circle-fill' if problem.completed else 'bi-question-circle' }} me-2"></i>
-                第{{ problem.display_number }}题：{{ problem.name }}
-            </h4>
-            <div>
-                {% if problem.completed %}
-                <span class="badge bg-light text-success me-2">
-                    <i class="bi bi-check-lg"></i> 已完成
-                </span>
-                {% endif %}
-                <span class="badge bg-warning text-dark">
-                    {% if problem.difficulty == 'easy' %}
-                    <i class="bi bi-arrow-down"></i> 简单
-                    {% elif problem.difficulty == 'hard' %}
-                    <i class="bi bi-arrow-up"></i> 困难
-                    {% else %}
-                    <i class="bi bi-dash"></i> 中等
+    <!-- 题目列表容器 - 添加蒙版容器 -->
+    <div id="problem-list-container" style="position: relative;">
+        {% for problem in problems %}
+        <div class="card mb-4 problem-card"
+             data-id="{{ problem.id }}"
+             data-name="{{ problem.name }}"
+             data-status="{{ 'completed' if problem.completed else 'incomplete' }}"
+             data-difficulty="{{ problem.difficulty|default('medium') }}">
+            <div class="card-header d-flex justify-content-between align-items-center
+                        {{ 'bg-success text-white' if problem.completed else 'bg-primary text-white' }}">
+                <h4 class="mb-0">
+                    <i class="bi {{ 'bi-check-circle-fill' if problem.completed else 'bi-question-circle' }} me-2"></i>
+                    第{{ problem.display_number }}题：{{ problem.name }}
+                </h4>
+                <div>
+                    {% if problem.completed %}
+                    <span class="badge bg-light text-success me-2">
+                        <i class="bi bi-check-lg"></i> 已完成
+                    </span>
                     {% endif %}
-                </span>
-            </div>
-        </div>
-        <div class="card-body">
-            <!-- 题目内容 -->
-            <div class="math-formula mb-3">
-                {{ problem.content|safe }}
-            </div>
-
-            <!-- 题目参数摘要 -->
-            {% if problem.var_values %}
-            <div class="card bg-light mb-3">
-                <div class="card-header">
-                    <h6 class="mb-0"><i class="bi bi-list-check"></i> 题目参数</h6>
+                    <span class="badge bg-warning text-dark">
+                        {% if problem.difficulty == 'easy' %}
+                        <i class="bi bi-arrow-down"></i> 简单
+                        {% elif problem.difficulty == 'hard' %}
+                        <i class="bi bi-arrow-up"></i> 困难
+                        {% else %}
+                        <i class="bi bi-dash"></i> 中等
+                        {% endif %}
+                    </span>
                 </div>
-                <div class="card-body py-2">
-                    <div class="row">
-                        {% for key, value in problem.var_values.items() %}
-                        <div class="col-md-3 col-6 mb-1">
-                            <small class="text-muted">{{ key }}:</small>
-                            <strong>{{ value }}</strong>
+            </div>
+            <div class="card-body">
+                <!-- 题目内容 -->
+                <div class="math-formula mb-3">
+                    {{ problem.content|safe }}
+                </div>
+
+                <!-- 题目参数摘要 -->
+                {% if problem.var_values %}
+                <div class="card bg-light mb-3">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-list-check"></i> 题目参数</h6>
+                    </div>
+                    <div class="card-body py-2">
+                        <div class="row">
+                            {% for key, value in problem.var_values.items() %}
+                            <div class="col-md-3 col-6 mb-1">
+                                <small class="text-muted">{{ key }}:</small>
+                                <strong>{{ value }}</strong>
+                            </div>
+                            {% endfor %}
                         </div>
-                        {% endfor %}
                     </div>
                 </div>
-            </div>
-            {% endif %}
-
-            <!-- 答题统计（如果已完成） -->
-            {% if problem.completed and problem.stats %}
-            <div class="alert alert-success py-2">
-                <small>
-                    <i class="bi bi-graph-up"></i>
-                    上次答题: 用时 {{ problem.stats.time_taken }}秒 |
-                    尝试 {{ problem.stats.attempt_count }}次 |
-                    得分: {{ problem.stats.score }}/100
-                </small>
-            </div>
-            {% endif %}
-
-            <!-- 操作按钮 -->
-            <div class="d-flex gap-2 flex-wrap">
-                <a href="{{ url_for('problem_ajax', problem_id=problem.display_number) }}"
-                   class="btn {{ 'btn-outline-success' if problem.completed else 'btn-primary' }}">
-                    <i class="bi {{ 'bi-arrow-repeat' if problem.completed else 'bi-play-circle' }}"></i>
-                    {{ '重新答题' if problem.completed else '开始答题' }}
-                </a>
-
-                <button class="btn btn-outline-warning btn-sm"
-                        onclick="refreshSingleProblem({{ problem.display_number }})">
-                    <i class="bi bi-arrow-clockwise"></i> 刷新题目
-                </button>
-
-                {% if problem.completed %}
-                <button class="btn btn-outline-secondary btn-sm"
-                        onclick="showSolution({{ problem.display_number }})">
-                    <i class="bi bi-journal-text"></i> 查看解析
-                </button>
                 {% endif %}
+
+                <!-- 答题统计（如果已完成） -->
+                {% if problem.completed and problem.stats %}
+                <div class="alert alert-success py-2">
+                    <small>
+                        <i class="bi bi-graph-up"></i>
+                        上次答题: 用时 {{ problem.stats.time_taken }}秒 |
+                        尝试 {{ problem.stats.attempt_count }}次 |
+                        得分: {{ problem.stats.score }}/100
+                    </small>
+                </div>
+                {% endif %}
+
+                <!-- 操作按钮 -->
+                <div class="d-flex gap-2 flex-wrap">
+                    <a href="{{ url_for('problem_ajax', problem_id=problem.display_number) }}"
+                       class="btn {{ 'btn-outline-success' if problem.completed else 'btn-primary' }}">
+                        <i class="bi {{ 'bi-arrow-repeat' if problem.completed else 'bi-play-circle' }}"></i>
+                        {{ '重新答题' if problem.completed else '开始答题' }}
+                    </a>
+
+                    <button class="btn btn-outline-warning btn-sm"
+                            onclick="refreshSingleProblem({{ problem.display_number }})">
+                        <i class="bi bi-arrow-clockwise"></i> 刷新题目
+                    </button>
+
+                    {% if problem.completed %}
+                    <button class="btn btn-outline-secondary btn-sm"
+                            onclick="showSolution({{ problem.display_number }})">
+                        <i class="bi bi-journal-text"></i> 查看解析
+                    </button>
+                    {% endif %}
+                </div>
             </div>
         </div>
+        {% else %}
+        <div class="text-center py-5">
+            <i class="bi bi-inbox display-1 text-muted"></i>
+            <h4 class="text-muted">暂无题目</h4>
+            <p class="text-muted">当前没有可用的题目</p>
+        </div>
+        {% endfor %}
     </div>
-    {% else %}
-    <div class="text-center py-5">
-        <i class="bi bi-inbox display-1 text-muted"></i>
-        <h4 class="text-muted">暂无题目</h4>
-        <p class="text-muted">当前没有可用的题目</p>
-    </div>
-    {% endfor %}
 </div>
 
 <script>
+// 蒙版系统配置
+const ALL_PROBLEMS_SPOTLIGHT_CONFIG = {
+    enabled: true,        // 是否启用蒙版
+    size: 300,           // 光圈大小（像素）- 稍小一些，适合题目列表
+    shape: 'circle',     // 形状：'circle' 或 'rectangle'
+    blurStrength: '8px', // 模糊强度
+    transitionSpeed: 0.1, // 过渡速度（秒）
+    permanent: true      // 蒙版一直存在，不会消失
+};
+
+// 蒙版系统变量
+let allProblemsSpotlightElement = null;
+let problemListContainer = null;
+
+// 创建题目列表蒙版
+function createAllProblemsSpotlight() {
+    if (!ALL_PROBLEMS_SPOTLIGHT_CONFIG.enabled) return;
+
+    // 获取题目列表容器
+    problemListContainer = document.getElementById('problem-list-container');
+    if (!problemListContainer) {
+        console.warn('找不到题目列表容器，蒙版创建失败');
+        return;
+    }
+
+    const containerRect = problemListContainer.getBoundingClientRect();
+
+    // 如果容器尺寸为0，等待一段时间再试
+    if (containerRect.width === 0 || containerRect.height === 0) {
+        console.warn('题目列表容器尺寸为0，延迟重试');
+        setTimeout(createAllProblemsSpotlight, 100);
+        return;
+    }
+
+    // 移除已存在的蒙版
+    if (allProblemsSpotlightElement) {
+        allProblemsSpotlightElement.remove();
+    }
+
+    // 创建蒙版元素 - 使用绝对定位
+    allProblemsSpotlightElement = document.createElement('div');
+    allProblemsSpotlightElement.id = 'all-problems-spotlight';
+
+    const size = ALL_PROBLEMS_SPOTLIGHT_CONFIG.size;
+    const isCircle = ALL_PROBLEMS_SPOTLIGHT_CONFIG.shape === 'circle';
+
+    // 关键修改：使用绝对定位相对于题目列表容器
+    allProblemsSpotlightElement.style.cssText = `
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        backdrop-filter: blur(${ALL_PROBLEMS_SPOTLIGHT_CONFIG.blurStrength});
+        -webkit-backdrop-filter: blur(${ALL_PROBLEMS_SPOTLIGHT_CONFIG.blurStrength});
+        background: rgba(255, 255, 255, 0.1);
+        pointer-events: none;
+        z-index: 10;
+        mask-image: ${isCircle ?
+            `radial-gradient(circle ${size/2}px at 0px 0px, transparent 0%, transparent 100%, black 100%)` :
+            `radial-gradient(circle ${size/2}px at 0px 0px, transparent 0%, transparent 100%, black 100%)`};
+        -webkit-mask-image: ${isCircle ?
+            `radial-gradient(circle ${size/2}px at 0px 0px, transparent 0%, transparent 100%, black 100%)` :
+            `radial-gradient(circle ${size/2}px at 0px 0px, transparent 0%, transparent 100%, black 100%)`};
+        transition: all ${ALL_PROBLEMS_SPOTLIGHT_CONFIG.transitionSpeed}s ease;
+        border-radius: 8px;
+        display: block;
+    `;
+
+    // 将蒙版添加到题目列表容器内部
+    problemListContainer.style.position = 'relative'; // 确保容器是相对定位
+    problemListContainer.appendChild(allProblemsSpotlightElement);
+
+    console.log('所有题目页面蒙版创建成功');
+}
+
+// 更新蒙版位置
+function updateAllProblemsSpotlightPosition(x, y) {
+    if (!allProblemsSpotlightElement || !problemListContainer) return;
+
+    const containerRect = problemListContainer.getBoundingClientRect();
+
+    // 检查鼠标是否在题目列表区域内
+    const isInsideContainerArea =
+        x >= containerRect.left &&
+        x <= containerRect.right &&
+        y >= containerRect.top &&
+        y <= containerRect.bottom;
+
+    const size = ALL_PROBLEMS_SPOTLIGHT_CONFIG.size;
+
+    if (isInsideContainerArea) {
+        // 在题目列表区域内，计算相对于容器的坐标
+        const relativeX = x - containerRect.left;
+        const relativeY = y - containerRect.top;
+
+        // 圆形光圈
+        allProblemsSpotlightElement.style.maskImage = `radial-gradient(circle ${size/2}px at ${relativeX}px ${relativeY}px, transparent 0%, transparent 100%, black 100%)`;
+        allProblemsSpotlightElement.style.webkitMaskImage = `radial-gradient(circle ${size/2}px at ${relativeX}px ${relativeY}px, transparent 0%, transparent 100%, black 100%)`;
+    } else {
+        // 不在区域内，完全遮挡（永远可见状态）
+        // 为了蒙版一直存在，即使鼠标离开也保持最后的位置
+        // 或者可以将光圈移动到远离可见区域的位置
+        allProblemsSpotlightElement.style.maskImage = 'radial-gradient(circle 0px at -100px -100px, transparent 0%, transparent 100%, black 100%)';
+        allProblemsSpotlightElement.style.webkitMaskImage = 'radial-gradient(circle 0px at -100px -100px, transparent 0%, transparent 100%, black 100%)';
+    }
+}
+
+// 更新蒙版布局
+function updateAllProblemsSpotlightLayout() {
+    if (!ALL_PROBLEMS_SPOTLIGHT_CONFIG.enabled) return;
+
+    console.log('更新所有题目蒙版布局...');
+
+    // 等待DOM更新
+    setTimeout(() => {
+        if (allProblemsSpotlightElement) {
+            allProblemsSpotlightElement.remove();
+            allProblemsSpotlightElement = null;
+        }
+
+        // 重新创建蒙版
+        createAllProblemsSpotlight();
+
+        // 初始位置设为左上角隐藏
+        if (allProblemsSpotlightElement && problemListContainer) {
+            updateAllProblemsSpotlightPosition(-100, -100);
+        }
+    }, 100);
+}
+
+// 初始化所有题目页面蒙版系统
+function initAllProblemsSpotlightSystem() {
+    if (!ALL_PROBLEMS_SPOTLIGHT_CONFIG.enabled) return;
+
+    // 等待页面完全加载后再创建蒙版
+    setTimeout(() => {
+        createAllProblemsSpotlight();
+
+        // 如果蒙版创建失败，重试一次
+        if (!allProblemsSpotlightElement || !problemListContainer) {
+            setTimeout(() => {
+                createAllProblemsSpotlight();
+                if (allProblemsSpotlightElement && problemListContainer) {
+                    updateAllProblemsSpotlightPosition(-100, -100);
+                }
+            }, 1000);
+        } else {
+            updateAllProblemsSpotlightPosition(-100, -100);
+        }
+
+        // 鼠标移动时更新蒙版位置
+        document.addEventListener('mousemove', function(e) {
+            updateAllProblemsSpotlightPosition(e.clientX, e.clientY);
+        });
+
+        // 触摸设备支持 - 永远保持蒙版存在
+        document.addEventListener('touchmove', function(e) {
+            if (e.touches.length > 0 && ALL_PROBLEMS_SPOTLIGHT_CONFIG.permanent) {
+                const touch = e.touches[0];
+                updateAllProblemsSpotlightPosition(touch.clientX, touch.clientY);
+                e.preventDefault();
+            }
+        });
+
+        // 触摸开始时更新位置
+        document.addEventListener('touchstart', function(e) {
+            if (e.touches.length > 0 && ALL_PROBLEMS_SPOTLIGHT_CONFIG.permanent) {
+                const touch = e.touches[0];
+                updateAllProblemsSpotlightPosition(touch.clientX, touch.clientY);
+            }
+        });
+
+        // 窗口大小变化时重新计算
+        window.addEventListener('resize', function() {
+            console.log('窗口大小变化，延迟更新蒙版');
+            setTimeout(updateAllProblemsSpotlightLayout, 200);
+        });
+
+        // 滚动时更新蒙版位置（确保蒙版跟随滚动）
+        window.addEventListener('scroll', function() {
+            // 延迟更新，让浏览器有时间为滚动事件
+            setTimeout(() => {
+                if (allProblemsSpotlightElement && problemListContainer) {
+                    // 保持当前鼠标位置的蒙版
+                    const lastX = window.lastMouseX || -100;
+                    const lastY = window.lastMouseY || -100;
+                    updateAllProblemsSpotlightPosition(lastX, lastY);
+                }
+            }, 50);
+        });
+
+        // 记录最后的鼠标位置
+        document.addEventListener('mousemove', function(e) {
+            window.lastMouseX = e.clientX;
+            window.lastMouseY = e.clientY;
+        });
+
+        // 手机特殊处理：确保蒙版一直存在
+        if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+            console.log('移动设备检测到，启用永久蒙版模式');
+
+            // 设置一个定期更新蒙版位置的定时器，确保蒙版一直存在
+            setInterval(() => {
+                if (allProblemsSpotlightElement && problemListContainer) {
+                    // 如果没有鼠标/触摸事件，保持蒙版在中心位置
+                    if (!window.lastMouseX || !window.lastMouseY) {
+                        const rect = problemListContainer.getBoundingClientRect();
+                        const centerX = rect.left + rect.width / 2;
+                        const centerY = rect.top + rect.height / 2;
+                        updateAllProblemsSpotlightPosition(centerX, centerY);
+                    }
+                }
+            }, 1000); // 每秒更新一次
+        }
+
+        // 添加键盘快捷键切换蒙版（ESC键）
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                if (allProblemsSpotlightElement) {
+                    const isVisible = allProblemsSpotlightElement.style.display !== 'none';
+                    allProblemsSpotlightElement.style.display = isVisible ? 'none' : 'block';
+                    if (!isVisible) {
+                        // 重新显示时更新位置
+                        updateAllProblemsSpotlightLayout();
+                    }
+                }
+            }
+        });
+
+        // 初始状态：完全遮挡但准备显示
+        updateAllProblemsSpotlightPosition(-100, -100);
+    }, 1000); // 增加延迟到1秒
+}
+
 // 搜索和筛选功能
 function setupFilters() {
     const searchInput = document.getElementById('searchInput');
@@ -218,6 +455,9 @@ function setupFilters() {
                 card.style.display = 'none';
             }
         });
+
+        // 筛选后更新蒙版布局
+        setTimeout(updateAllProblemsSpotlightLayout, 300);
     }
 
     searchInput.addEventListener('input', filterProblems);
@@ -275,19 +515,67 @@ function showSolution(problemId) {
 document.addEventListener('DOMContentLoaded', function() {
     setupFilters();
 
+    // 初始化所有题目页面蒙版系统
+    initAllProblemsSpotlightSystem();
+
     // 添加键盘快捷键
     document.addEventListener('keydown', function(e) {
         if (e.ctrlKey && e.key === 'r') {
             e.preventDefault();
             refreshAllProblems();
         }
+        // 按F2键调试蒙版
+        if (e.key === 'F2') {
+            e.preventDefault();
+            console.log('=== 所有题目页面蒙版调试信息 ===');
+            console.log('蒙版元素:', allProblemsSpotlightElement);
+            console.log('容器元素:', problemListContainer);
+            if (problemListContainer) {
+                const rect = problemListContainer.getBoundingClientRect();
+                console.log('容器位置和尺寸:', {
+                    top: rect.top,
+                    left: rect.left,
+                    width: rect.width,
+                    height: rect.height
+                });
+            }
+        }
+    });
+
+    // 页面加载完成后重新计算蒙版位置
+    window.addEventListener('load', function() {
+        setTimeout(updateAllProblemsSpotlightLayout, 500);
+    });
+
+    // 监听所有动态操作（如点击按钮）后重新计算蒙版
+    document.addEventListener('click', function() {
+        setTimeout(updateAllProblemsSpotlightLayout, 100);
     });
 });
+
 </script>
 
 <style>
+/* 所有题目页面蒙版样式 */
+#all-problems-spotlight {
+    animation: spotlightAppear 0.3s ease;
+    pointer-events: none !important; /* 确保蒙版不会拦截点击事件 */
+}
+
+@keyframes spotlightAppear {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+/* 其他原有样式 */
 .problem-card {
     transition: transform 0.2s, box-shadow 0.2s;
+    position: relative; /* 确保蒙版能正常工作 */
+    z-index: 1; /* 确保内容在蒙版上方 */
 }
 .problem-card:hover {
     transform: translateY(-2px);
@@ -299,6 +587,35 @@ document.addEventListener('DOMContentLoaded', function() {
 }
 .badge {
     font-size: 0.75em;
+}
+
+/* 蒙版相关样式增强 */
+#problem-list-container {
+    min-height: 300px; /* 确保容器有最小高度 */
+}
+
+/* 确保题目卡片内容在蒙版上方 */
+.problem-card > * {
+    position: relative;
+    z-index: 2;
+}
+
+/* 移动端优化 */
+@media (max-width: 768px) {
+    #all-problems-spotlight {
+        backdrop-filter: blur(6px) brightness(0.95);
+        -webkit-backdrop-filter: blur(6px) brightness(0.95);
+    }
+
+    #problem-list-container {
+        min-height: 200px;
+    }
+}
+
+/* 确保按钮等可交互元素不被蒙版遮挡 */
+.btn, a, button, input, select {
+    position: relative;
+    z-index: 3 !important;
 }
 </style>
 {% endblock %}

@@ -366,12 +366,16 @@ const SPOTLIGHT_CONFIG = {
     size: 200,           // 光圈大小（像素）
     shape: 'rectangle',     // 形状：'circle' 或 'rectangle'
     blurStrength: '8px', // 模糊强度
-    transitionSpeed: 0.1 // 过渡速度（秒）
+    transitionSpeed: 0.1, // 过渡速度（秒）
+    permanent: true       // 新增：蒙版一直存在，不会消失
 };
 
 // 蒙版系统变量
 let spotlightElement = null;
 let problemContentContainer = null;
+let lastMousePosition = { x: -100, y: -100 }; // 新增：记录最后鼠标位置
+let spotlightTimer = null; // 新增：保持蒙版定时器
+let isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent); // 新增：检测移动设备
 
 // 创建题目内容区域蒙版
 function createProblemSpotlight() {
@@ -455,9 +459,31 @@ function updateSpotlightPosition(x, y) {
         const relativeX = x - containerRect.left;
         const relativeY = y - containerRect.top;
 
+        // 记录最后鼠标位置
+        lastMousePosition = { x, y };
+
         // 圆形光圈
         spotlightElement.style.maskImage = `radial-gradient(circle ${size/2}px at ${relativeX}px ${relativeY}px, transparent 0%, transparent 100%, black 100%)`;
         spotlightElement.style.webkitMaskImage = `radial-gradient(circle ${size/2}px at ${relativeX}px ${relativeY}px, transparent 0%, transparent 100%, black 100%)`;
+    } else if (SPOTLIGHT_CONFIG.permanent) {
+        // 永久模式：即使不在区域内，也保持蒙版在最后位置
+        if (lastMousePosition.x > 0 && lastMousePosition.y > 0) {
+            const relativeX = lastMousePosition.x - containerRect.left;
+            const relativeY = lastMousePosition.y - containerRect.top;
+
+            // 确保位置在容器边界内
+            const clampedX = Math.max(0, Math.min(containerRect.width, relativeX));
+            const clampedY = Math.max(0, Math.min(containerRect.height, relativeY));
+
+            spotlightElement.style.maskImage = `radial-gradient(circle ${size/2}px at ${clampedX}px ${clampedY}px, transparent 0%, transparent 100%, black 100%)`;
+            spotlightElement.style.webkitMaskImage = `radial-gradient(circle ${size/2}px at ${clampedX}px ${clampedY}px, transparent 0%, transparent 100%, black 100%)`;
+        } else {
+            // 如果没有最后位置，使用中心位置
+            const centerX = containerRect.width / 2;
+            const centerY = containerRect.height / 2;
+            spotlightElement.style.maskImage = `radial-gradient(circle ${size/2}px at ${centerX}px ${centerY}px, transparent 0%, transparent 100%, black 100%)`;
+            spotlightElement.style.webkitMaskImage = `radial-gradient(circle ${size/2}px at ${centerX}px ${centerY}px, transparent 0%, transparent 100%, black 100%)`;
+        }
     } else {
         // 不在题目内容区域内，完全遮挡
         spotlightElement.style.maskImage = 'radial-gradient(circle 0px at -100px -100px, transparent 0%, transparent 100%, black 100%)';
@@ -481,11 +507,86 @@ function updateSpotlightLayout() {
         // 重新创建蒙版
         createProblemSpotlight();
 
-        // 初始位置设为左上角隐藏
+        // 初始位置设为最后记录的鼠标位置或中心位置
         if (spotlightElement && problemContentContainer) {
-            updateSpotlightPosition(-100, -100);
+            if (lastMousePosition.x > 0 && lastMousePosition.y > 0) {
+                updateSpotlightPosition(lastMousePosition.x, lastMousePosition.y);
+            } else {
+                const rect = problemContentContainer.getBoundingClientRect();
+                const centerX = rect.left + rect.width / 2;
+                const centerY = rect.top + rect.height / 2;
+                updateSpotlightPosition(centerX, centerY);
+            }
         }
     }, 100);
+}
+
+// 保持蒙版一直存在的定时器
+function maintainSpotlightPermanent() {
+    if (!SPOTLIGHT_CONFIG.permanent) return;
+
+    // 清除现有的定时器
+    if (spotlightTimer) {
+        clearInterval(spotlightTimer);
+    }
+
+    // 设置定时器定期检查蒙版状态
+    spotlightTimer = setInterval(() => {
+        if (spotlightElement && problemContentContainer) {
+            // 确保蒙版可见
+            if (spotlightElement.style.display === 'none') {
+                spotlightElement.style.display = 'block';
+            }
+
+            // 移动设备：定期更新位置到中心
+            if (isMobileDevice) {
+                const rect = problemContentContainer.getBoundingClientRect();
+                const centerX = rect.left + rect.width / 2;
+                const centerY = rect.top + rect.height / 2;
+                updateSpotlightPosition(centerX, centerY);
+            }
+        }
+    }, 2000); // 每2秒检查一次
+}
+
+// 移动端特殊处理
+function setupMobileSpotlightSupport() {
+    if (!isMobileDevice) return;
+
+    console.log('移动设备检测到，启用特殊蒙版处理');
+
+    // 移动端触摸时更新蒙版位置
+    document.addEventListener('touchstart', function(e) {
+        if (e.touches.length > 0) {
+            const touch = e.touches[0];
+            updateSpotlightPosition(touch.clientX, touch.clientY);
+        }
+    });
+
+    // 移动端触摸移动时更新蒙版
+    document.addEventListener('touchmove', function(e) {
+        if (e.touches.length > 0) {
+            const touch = e.touches[0];
+            updateSpotlightPosition(touch.clientX, touch.clientY);
+        }
+    });
+
+    // 监听页面可见性变化（防止切换到其他应用后蒙版消失）
+    document.addEventListener('visibilitychange', function() {
+        if (!document.hidden) {
+            // 页面重新可见时，强制更新蒙版
+            setTimeout(updateSpotlightLayout, 500);
+        }
+    });
+
+    // 移动端滚动时更新蒙版位置
+    window.addEventListener('scroll', function() {
+        setTimeout(() => {
+            if (spotlightElement && problemContentContainer && lastMousePosition.x > 0) {
+                updateSpotlightPosition(lastMousePosition.x, lastMousePosition.y);
+            }
+        }, 50);
+    });
 }
 
 // 检测键盘弹出/收起
@@ -507,7 +608,7 @@ function detectKeyboardChanges() {
                     spotlightElement = null;
                 }
                 createProblemSpotlight();
-                updateSpotlightPosition(-100, -100);
+                updateSpotlightPosition(lastMousePosition.x, lastMousePosition.y);
             }, 300);
         }
 
@@ -543,11 +644,21 @@ function initSpotlightSystem() {
             setTimeout(() => {
                 createProblemSpotlight();
                 if (spotlightElement && problemContentContainer) {
-                    updateSpotlightPosition(-100, -100);
+                    // 初始位置设为容器中心
+                    const rect = problemContentContainer.getBoundingClientRect();
+                    const centerX = rect.left + rect.width / 2;
+                    const centerY = rect.top + rect.height / 2;
+                    lastMousePosition = { x: centerX, y: centerY };
+                    updateSpotlightPosition(centerX, centerY);
                 }
             }, 1000);
         } else {
-            updateSpotlightPosition(-100, -100);
+            // 初始位置设为容器中心
+            const rect = problemContentContainer.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            lastMousePosition = { x: centerX, y: centerY };
+            updateSpotlightPosition(centerX, centerY);
         }
 
         // 鼠标移动时更新蒙版位置
@@ -573,6 +684,12 @@ function initSpotlightSystem() {
         // 添加键盘变化检测
         detectKeyboardChanges();
 
+        // 设置移动端支持
+        setupMobileSpotlightSupport();
+
+        // 启动永久蒙版维持定时器
+        maintainSpotlightPermanent();
+
         // 添加键盘快捷键切换蒙版
         document.addEventListener('keydown', function(e) {
             // 按ESC键临时显示/隐藏全部内容
@@ -584,8 +701,13 @@ function initSpotlightSystem() {
             }
         });
 
-        // 初始状态：完全遮挡
-        updateSpotlightPosition(-100, -100);
+        // 初始状态：使用中心位置
+        if (spotlightElement && problemContentContainer) {
+            const rect = problemContentContainer.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            updateSpotlightPosition(centerX, centerY);
+        }
     }, 1000); // 增加延迟到1秒
 }
 
@@ -594,6 +716,9 @@ function debugSpotlight() {
     console.log('=== 蒙版调试信息 ===');
     console.log('蒙版元素:', spotlightElement);
     console.log('题目内容容器:', problemContentContainer);
+    console.log('最后鼠标位置:', lastMousePosition);
+    console.log('移动设备:', isMobileDevice);
+    console.log('永久模式:', SPOTLIGHT_CONFIG.permanent);
 
     if (problemContentContainer) {
         const rect = problemContentContainer.getBoundingClientRect();
@@ -1320,6 +1445,12 @@ document.addEventListener('DOMContentLoaded', function() {
 window.addEventListener('beforeunload', function() {
     clearInterval(timerInterval);
 
+    // 清理蒙版定时器
+    if (spotlightTimer) {
+        clearInterval(spotlightTimer);
+        spotlightTimer = null;
+    }
+
     // 清理蒙版元素
     if (spotlightElement) {
         spotlightElement.remove();
@@ -1479,7 +1610,7 @@ window.testTimeCalculation = function() {
 
 .problem-number {
     display: inline-flex;
-    align-items: center;
+    align-items-center;
     justify-content: center;
     width: 24px;
     height: 24px;
