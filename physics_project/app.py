@@ -1,3 +1,5 @@
+import math
+import numpy as np
 import traceback
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
 import mysql.connector
@@ -78,28 +80,128 @@ def login_required(f):
 
 
 def is_correct(user_answer, correct_answer):
-    """判断答案是否正确（允许1%误差）"""
+    """判断答案是否正确（允许1%误差，支持科学计数法范围）"""
     print(f"[DEBUG is_correct] 用户答案: {user_answer}, 正确答案: {correct_answer}")
+    print(f"[DEBUG is_correct] 类型 - 用户答案: {type(user_answer)}, 正确答案: {type(correct_answer)}")
 
     # 处理None值
     if user_answer is None or correct_answer is None:
         print(f"[DEBUG is_correct] 答案为空，返回False")
         return False
 
-    if correct_answer == 0:
-        result = user_answer == 0
-        print(f"[DEBUG is_correct] 正确答案为0，比较结果: {result}")
+    # 转换为浮点数
+    try:
+        user_float = float(user_answer)
+        correct_float = float(correct_answer)
+    except (ValueError, TypeError) as e:
+        print(f"[DEBUG is_correct] 数值转换失败: {e}")
+        return False
+
+    print(f"[DEBUG is_correct] 转换后 - 用户答案: {user_float}, 正确答案: {correct_float}")
+
+    # 处理特殊情况：两个都是0
+    if user_float == 0 and correct_float == 0:
+        print(f"[DEBUG is_correct] 两者均为0，返回True")
+        return True
+
+    # 处理特殊情况：其中一个为0，另一个不为0
+    if user_float == 0 or correct_float == 0:
+        # 如果其中一个为0，则要求完全相等（因为0的1%还是0）
+        result = user_float == correct_float
+        print(f"[DEBUG is_correct] 有0值，直接比较结果: {result}")
         return result
 
-    tolerance = abs(correct_answer) * 0.01  # 1%容错
-    difference = abs(user_answer - correct_answer)
-    result = difference <= tolerance
+    # 计算相对误差（百分比）
+    relative_error = abs((user_float - correct_float) / correct_float) * 100
 
-    print(f"[DEBUG is_correct] 容错范围: ±{tolerance:.6f}")
-    print(f"[DEBUG is_correct] 实际差异: {difference:.6f}")
+    # 动态误差阈值（根据数量级调整）
+    base_tolerance = 1.0  # 基础1%误差
+
+    # 对于非常大或非常小的数，稍微放宽误差限制
+    magnitude = math.log10(abs(correct_float))
+    if magnitude > 10:  # 大于10^10
+        adjusted_tolerance = min(base_tolerance * 1.5, 2.0)
+    elif magnitude < -10:  # 小于10^-10
+        adjusted_tolerance = min(base_tolerance * 1.5, 2.0)
+    else:
+        adjusted_tolerance = base_tolerance
+
+    # 检查相对误差
+    result = relative_error <= adjusted_tolerance
+
+    print(f"[DEBUG is_correct] 相对误差: {relative_error:.6f}%")
+    print(f"[DEBUG is_correct] 允许误差: {adjusted_tolerance}%")
     print(f"[DEBUG is_correct] 是否在容错范围内: {result}")
 
+    # 调试信息：显示科学计数法格式
+    print(f"[DEBUG is_correct] 科学计数法 - 用户答案: {user_float:.2e}, 正确答案: {correct_float:.2e}")
+
     return result
+
+
+# 新增辅助函数：科学计数法格式化
+def format_scientific(value, precision=2):
+    """将数值格式化为科学计数法字符串"""
+    if value == 0:
+        return "0.00 × 10⁰"
+
+    is_negative = value < 0
+    abs_value = abs(value)
+
+    # 计算指数
+    exponent = math.floor(math.log10(abs_value))
+    mantissa = abs_value / (10 ** exponent)
+
+    # 调整到标准形式 (1 ≤ mantissa < 10)
+    if mantissa >= 10:
+        mantissa /= 10
+        exponent += 1
+    elif mantissa < 1:
+        mantissa *= 10
+        exponent -= 1
+
+    # 格式化
+    sign = '-' if is_negative else ''
+    mantissa_str = f"{mantissa:.{precision}f}"
+
+    # 获取上标数字
+    superscript_digits = {
+        '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+        '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹'
+    }
+
+    exp_str = str(exponent)
+    sup_exp = ''
+    if exp_str[0] == '-':
+        sup_exp += '⁻'
+        exp_str = exp_str[1:]
+    for digit in exp_str:
+        sup_exp += superscript_digits.get(digit, digit)
+
+    return f"{sign}{mantissa_str} × 10{sup_exp}"
+
+
+# 新增函数：用于生成正确答案的科学计数法提示
+def get_scientific_hint(correct_answers):
+    """生成科学计数法格式的正确答案提示"""
+    if not correct_answers or not isinstance(correct_answers, list):
+        return "正确答案: 暂无"
+
+    formatted_answers = []
+    for answer in correct_answers:
+        try:
+            formatted = format_scientific(float(answer))
+            formatted_answers.append(formatted)
+        except:
+            formatted_answers.append(str(answer))
+
+    if len(formatted_answers) == 1:
+        return f"正确答案: {formatted_answers[0]}"
+    else:
+        parts = []
+        for i, answer in enumerate(formatted_answers):
+            parts.append(f"答案{i + 1} = {answer}")
+        return f"正确答案: {', '.join(parts)}"
 
 
 def get_problem_display_info():

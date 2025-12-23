@@ -110,42 +110,202 @@
                     </div>
                 </div>
 
-                <!-- 动态答题表单 - 这部分不受蒙版影响 -->
+                <!-- 动态答题表单 - 双模式切换方案 -->
                 <form id="answer-form" class="mt-4">
+                    <!-- 输入模式切换按钮 -->
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <label class="form-label">
+                                <strong><i class="bi bi-input-cursor-text me-1"></i>请输入答案：</strong>
+                            </label>
+                            <div class="btn-group btn-group-sm" role="group" aria-label="输入模式切换">
+                                <button type="button" class="btn btn-outline-primary active" id="normal-mode-btn">
+                                    <i class="bi bi-123 me-1"></i> 普通模式
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary" id="scientific-mode-btn">
+                                    <i class="bi bi-calculator me-1"></i> 科学计数法
+                                </button>
+                            </div>
+                        </div>
+                        <small class="text-muted">
+                            <i class="bi bi-info-circle me-1"></i>科学计数法模式适合输入极大或极小的数值
+                        </small>
+                    </div>
+
                     <div id="answer-inputs">
                         {% if answer_count == 1 %}
                         <!-- 单答案题目 -->
-                        <div class="mb-3">
-                            <label for="answer" class="form-label">
-                                <strong><i class="bi bi-input-cursor-text me-1"></i>请输入答案：</strong>
-                            </label>
-                            <input type="number" step="any" class="form-control form-control-lg"
-                                   id="answer" name="answer" required
-                                   placeholder="输入数值"
-                                   autocomplete="off">
-                            <div class="form-text">
-                                <i class="bi bi-info-circle me-1"></i>请输入数值（建议保留2-3位小数），系统会自动进行容错判断（±1%）
+                        <div class="normal-input-container">
+                            <!-- 普通模式输入框 -->
+                            <div class="mb-3 normal-mode">
+                                <div class="input-group input-group-lg">
+                                    <input type="number" step="any" class="form-control"
+                                           id="answer-normal" name="answer-normal"
+                                           placeholder="输入数值（如：1.5, -0.003, 2500）"
+                                           autocomplete="off">
+                                </div>
+                                <div class="form-text">
+                                    <i class="bi bi-lightbulb me-1"></i>也可以输入科学计数法格式，如：1.6e-19 表示 1.6×10⁻¹⁹
+                                </div>
                             </div>
+
+                            <!-- 科学计数法模式输入框（默认隐藏） -->
+                            <div class="mb-3 scientific-mode" style="display: none;">
+                                <div class="scientific-notation-input">
+                                    <!-- 符号选择 -->
+                                    <div class="btn-group btn-group-sm me-2" role="group" aria-label="符号选择">
+                                        <input type="radio" class="btn-check" name="sign1"
+                                               id="sign-positive1" value="+" autocomplete="off" checked>
+                                        <label class="btn btn-outline-primary" for="sign-positive1">
+                                            <i class="bi bi-plus-lg"></i> 正
+                                        </label>
+
+                                        <input type="radio" class="btn-check" name="sign1"
+                                               id="sign-negative1" value="-" autocomplete="off">
+                                        <label class="btn btn-outline-primary" for="sign-negative1">
+                                            <i class="bi bi-dash-lg"></i> 负
+                                        </label>
+                                    </div>
+
+                                    <!-- 有效数字输入 -->
+                                    <div class="input-group input-group-sm me-2" style="width: 150px;">
+                                        <input type="number" step="any" class="form-control mantissa-input"
+                                               id="mantissa1"
+                                               placeholder="有效数字"
+                                               value="1.00"
+                                               min="1" max="9.999" step="0.001">
+                                    </div>
+
+                                    <!-- 乘号和指数 -->
+                                    <div class="input-group input-group-sm" style="width: 140px;">
+                                        <span class="input-group-text bg-light">×10</span>
+                                        <input type="number" class="form-control exponent-input"
+                                               id="exponent1"
+                                               placeholder="指数"
+                                               value="0"
+                                               min="-50" max="50" step="1">
+                                    </div>
+                                </div>
+
+                                <!-- 实时计算结果和示例 -->
+                                <div class="mt-2">
+                                    <small id="calc-result1" class="text-primary">
+                                        当前值: 1.00 × 10⁰ = 1.00
+                                    </small>
+                                </div>
+
+                                <!-- 科学计数法示例 -->
+                                <div class="scientific-example mt-2">
+                                    <small>
+                                        <strong><i class="bi bi-lightbulb me-1"></i>示例：</strong>
+                                        电子电量：<kbd>+</kbd> <kbd>1.60</kbd> <kbd>×10</kbd> <kbd>-19</kbd> 表示 1.60×10⁻¹⁹<br>
+                                        光速：<kbd>+</kbd> <kbd>3.00</kbd> <kbd>×10</kbd> <kbd>8</kbd> 表示 3.00×10⁸
+                                    </small>
+                                </div>
+                            </div>
+
+                            <!-- 隐藏的真实输入框 -->
+                            <input type="hidden" class="form-control form-control-lg"
+                                   id="answer1" name="answer1"
+                                   placeholder="最终数值"
+                                   autocomplete="off">
                         </div>
                         {% else %}
                         <!-- 多答案题目 -->
                         <div class="row">
                             {% for i in range(answer_count) %}
-                            <div class="col-md-6 mb-3">
-                                <label for="answer{{ i+1 }}" class="form-label">
+                            <div class="col-md-6 mb-4">
+                                <label class="form-label">
                                     <strong><i class="bi bi-input-cursor-text me-1"></i>答案 {{ i+1 }}：</strong>
                                 </label>
-                                <input type="number" step="any" class="form-control form-control-lg"
-                                       id="answer{{ i+1 }}" name="answer{{ i+1 }}" required
-                                       placeholder="输入答案 {{ i+1 }}"
-                                       autocomplete="off">
+
+                                <div class="normal-input-container">
+                                    <!-- 普通模式输入框 -->
+                                    <div class="normal-mode">
+                                        <div class="input-group input-group-sm">
+                                            <input type="number" step="any" class="form-control"
+                                                   id="answer-normal{{ i+1 }}" name="answer-normal{{ i+1 }}"
+                                                   placeholder="答案 {{ i+1 }}"
+                                                   autocomplete="off">
+                                        </div>
+                                    </div>
+
+                                    <!-- 科学计数法模式输入框（默认隐藏） -->
+                                    <div class="scientific-mode" style="display: none;">
+                                        <div class="scientific-notation-input">
+                                            <!-- 符号选择 -->
+                                            <div class="btn-group btn-group-sm me-2" role="group" aria-label="符号选择">
+                                                <input type="radio" class="btn-check" name="sign{{ i+1 }}"
+                                                       id="sign-positive{{ i+1 }}" value="+" autocomplete="off" checked>
+                                                <label class="btn btn-outline-primary" for="sign-positive{{ i+1 }}">
+                                                    <i class="bi bi-plus-lg"></i>
+                                                </label>
+
+                                                <input type="radio" class="btn-check" name="sign{{ i+1 }}"
+                                                       id="sign-negative{{ i+1 }}" value="-" autocomplete="off">
+                                                <label class="btn btn-outline-primary" for="sign-negative{{ i+1 }}">
+                                                    <i class="bi bi-dash-lg"></i>
+                                                </label>
+                                            </div>
+
+                                            <!-- 有效数字输入 -->
+                                            <div class="input-group input-group-sm me-2" style="width: 120px;">
+                                                <input type="number" step="any" class="form-control mantissa-input"
+                                                       id="mantissa{{ i+1 }}"
+                                                       placeholder="有效数字"
+                                                       value="1.00"
+                                                       min="1" max="9.999" step="0.001">
+                                            </div>
+
+                                            <!-- 乘号和指数 -->
+                                            <div class="input-group input-group-sm" style="width: 110px;">
+                                                <span class="input-group-text bg-light">×10</span>
+                                                <input type="number" class="form-control exponent-input"
+                                                       id="exponent{{ i+1 }}"
+                                                       placeholder="指数"
+                                                       value="0"
+                                                       min="-50" max="50" step="1">
+                                            </div>
+                                        </div>
+
+                                        <!-- 实时计算结果 -->
+                                        <div class="mt-1">
+                                            <small id="calc-result{{ i+1 }}" class="text-primary">
+                                                当前值: 1.00 × 10⁰ = 1.00
+                                            </small>
+                                        </div>
+                                    </div>
+
+                                    <!-- 隐藏的真实输入框 -->
+                                    <input type="hidden" class="form-control"
+                                           id="answer{{ i+1 }}" name="answer{{ i+1 }}"
+                                           autocomplete="off">
+                                </div>
                             </div>
                             {% endfor %}
                         </div>
-                        <div class="form-text mb-3">
-                            <i class="bi bi-info-circle me-1"></i>请输入数值（建议保留2-3位小数，注意正负号），系统会自动进行容错判断（±1%）
+
+                        <!-- 多答案题目提示 -->
+                        <div class="alert alert-info mt-2">
+                            <small>
+                                <i class="bi bi-info-circle me-1"></i>
+                                <strong>多答案填写提示：</strong>
+                                每个答案可以使用不同输入模式，系统会自动进行容错判断（±1%）
+                            </small>
                         </div>
                         {% endif %}
+                    </div>
+
+                    <!-- 统一提示 -->
+                    <div class="alert alert-light mt-3">
+                        <small class="text-muted">
+                            <i class="bi bi-shield-check me-1"></i>
+                            <strong>容错说明：</strong>系统会自动进行容错判断（±1%），您可以直接输入最终数值，无需精确匹配。
+                            <span class="d-block mt-1">
+                                <i class="bi bi-arrow-repeat me-1"></i>
+                                <strong>模式切换：</strong>点击上方的按钮可以在普通模式和科学计数法模式之间切换。
+                            </span>
+                        </small>
                     </div>
 
                     <div class="d-grid gap-2 d-md-flex justify-content-md-start mt-4">
@@ -355,6 +515,94 @@
         border-color: #f5c6cb;
         color: #721c24;
     }
+
+    /* 双模式切换按钮样式 */
+    #normal-mode-btn.active,
+    #scientific-mode-btn.active {
+        background-color: #0d6efd;
+        color: white;
+        border-color: #0d6efd;
+    }
+
+    /* 输入模式切换过渡效果 */
+    .normal-mode,
+    .scientific-mode {
+        transition: all 0.3s ease;
+    }
+
+    /* 科学计数法输入组件样式 */
+    .scientific-notation-input {
+        display: flex;
+        align-items: center;
+        flex-wrap: nowrap;
+        gap: 8px;
+        margin-bottom: 10px;
+    }
+
+    .scientific-notation-input .input-group {
+        flex-shrink: 0;
+    }
+
+    .scientific-notation-input .mantissa-input {
+        text-align: center;
+        font-family: 'Courier New', monospace;
+    }
+
+    .scientific-notation-input .exponent-input {
+        width: 70px;
+        text-align: center;
+        font-family: 'Courier New', monospace;
+    }
+
+    .scientific-notation-input .input-group-text {
+        font-size: 0.85em;
+        padding: 0.25rem 0.5rem;
+        background-color: #f8f9fa;
+    }
+
+    /* 符号按钮样式 */
+    .scientific-notation-input .btn-group .btn {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.8rem;
+        min-width: 40px;
+    }
+
+    /* 实时结果显示 */
+    .calc-result {
+        font-family: 'Courier New', monospace;
+        font-weight: bold;
+        font-size: 0.85em;
+    }
+
+    /* 科学计数法示例样式 */
+    .scientific-example {
+        background-color: #f8f9fa;
+        border-left: 3px solid #6c757d;
+        padding: 8px;
+        border-radius: 4px;
+        margin-top: 8px;
+        font-size: 0.85em;
+    }
+
+    .scientific-example kbd {
+        background-color: #6c757d;
+        color: white;
+        font-family: 'Courier New', monospace;
+        padding: 1px 4px;
+        border-radius: 3px;
+        font-size: 0.8em;
+    }
+
+    /* 普通输入框提示 */
+    .normal-mode .form-text {
+        font-size: 0.85em;
+        margin-top: 5px;
+    }
+
+    /* 隐藏输入框容器 */
+    .normal-input-container {
+        position: relative;
+    }
 </style>
 {% endblock %}
 
@@ -376,6 +624,497 @@ let problemContentContainer = null;
 let lastMousePosition = { x: -100, y: -100 }; // 新增：记录最后鼠标位置
 let spotlightTimer = null; // 新增：保持蒙版定时器
 let isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent); // 新增：检测移动设备
+
+// 双模式切换状态
+let currentInputMode = 'normal'; // 'normal' 或 'scientific'
+
+// ======================== 双模式切换功能 ========================
+
+// 初始化双模式切换
+function initDualModeInput() {
+    console.log('初始化双模式输入系统');
+
+    // 获取按钮元素
+    const normalModeBtn = document.getElementById('normal-mode-btn');
+    const scientificModeBtn = document.getElementById('scientific-mode-btn');
+
+    if (!normalModeBtn || !scientificModeBtn) {
+        console.error('找不到模式切换按钮');
+        return;
+    }
+
+    // 切换为普通模式
+    normalModeBtn.addEventListener('click', function() {
+        if (currentInputMode === 'normal') return;
+
+        currentInputMode = 'normal';
+        updateModeButtons();
+        showNormalInputs();
+
+        console.log('切换到普通模式');
+    });
+
+    // 切换为科学计数法模式
+    scientificModeBtn.addEventListener('click', function() {
+        if (currentInputMode === 'scientific') return;
+
+        currentInputMode = 'scientific';
+        updateModeButtons();
+        showScientificInputs();
+
+        console.log('切换到科学计数法模式');
+    });
+
+    // 初始化科学计数法组件
+    initScientificNotationComponents();
+
+    console.log('双模式输入系统初始化完成，当前模式:', currentInputMode);
+}
+
+// 更新模式按钮状态
+function updateModeButtons() {
+    const normalModeBtn = document.getElementById('normal-mode-btn');
+    const scientificModeBtn = document.getElementById('scientific-mode-btn');
+
+    if (currentInputMode === 'normal') {
+        normalModeBtn.classList.remove('btn-outline-primary');
+        normalModeBtn.classList.add('btn-primary', 'active');
+        scientificModeBtn.classList.remove('btn-primary', 'active');
+        scientificModeBtn.classList.add('btn-outline-secondary');
+    } else {
+        scientificModeBtn.classList.remove('btn-outline-secondary');
+        scientificModeBtn.classList.add('btn-primary', 'active');
+        normalModeBtn.classList.remove('btn-primary', 'active');
+        normalModeBtn.classList.add('btn-outline-primary');
+    }
+}
+
+// 显示普通输入框
+function showNormalInputs() {
+    const answerCount = {{ answer_count }};
+
+    // 在切换前同步当前数据
+    for (let i = 1; i <= answerCount; i++) {
+        // 如果当前是科学计数法模式，将其数据同步到普通模式
+        if (currentInputMode === 'scientific') {
+            ScientificNotationUtils.syncInputModes(i);
+        }
+    }
+
+    // 切换显示
+    for (let i = 1; i <= answerCount; i++) {
+        if (answerCount === 1) {
+            const normalModeDiv = document.querySelector('.normal-mode');
+            const scientificModeDiv = document.querySelector('.scientific-mode');
+
+            if (normalModeDiv) normalModeDiv.style.display = 'block';
+            if (scientificModeDiv) scientificModeDiv.style.display = 'none';
+        } else {
+            const normalModeDivs = document.querySelectorAll(`#answer-normal${i}`).closest('.normal-mode');
+            const scientificModeDivs = document.querySelectorAll(`.scientific-mode`)[i-1];
+
+            normalModeDivs.forEach(div => div.style.display = 'block');
+            if (scientificModeDivs) scientificModeDivs.style.display = 'none';
+        }
+    }
+
+    // 焦点设置
+    if (answerCount === 1) {
+        setTimeout(() => {
+            const normalInput = document.getElementById('answer-normal');
+            if (normalInput) normalInput.focus();
+        }, 100);
+    } else {
+        setTimeout(() => {
+            const firstNormalInput = document.getElementById('answer-normal1');
+            if (firstNormalInput) firstNormalInput.focus();
+        }, 100);
+    }
+}
+
+// 显示科学计数法输入框
+function showScientificInputs() {
+    const answerCount = {{ answer_count }};
+
+    // 在切换前同步当前数据
+    for (let i = 1; i <= answerCount; i++) {
+        // 如果当前是普通模式，将其数据同步到科学计数法模式
+        if (currentInputMode === 'normal') {
+            ScientificNotationUtils.syncInputModes(i);
+        }
+    }
+
+    // 切换显示
+    for (let i = 1; i <= answerCount; i++) {
+        if (answerCount === 1) {
+            const normalModeDiv = document.querySelector('.normal-mode');
+            const scientificModeDiv = document.querySelector('.scientific-mode');
+
+            if (normalModeDiv) normalModeDiv.style.display = 'none';
+            if (scientificModeDiv) scientificModeDiv.style.display = 'block';
+        } else {
+            const normalModeDivs = document.querySelectorAll(`#answer-normal${i}`).closest('.normal-mode');
+            const scientificModeDivs = document.querySelectorAll(`.scientific-mode`)[i-1];
+
+            normalModeDivs.forEach(div => div.style.display = 'none');
+            if (scientificModeDivs) scientificModeDivs.style.display = 'block';
+        }
+    }
+
+    // 焦点设置
+    if (answerCount === 1) {
+        setTimeout(() => {
+            const mantissaInput = document.getElementById('mantissa1');
+            if (mantissaInput) mantissaInput.focus();
+        }, 100);
+    } else {
+        setTimeout(() => {
+            const firstMantissaInput = document.getElementById('mantissa1');
+            if (firstMantissaInput) firstMantissaInput.focus();
+        }, 100);
+    }
+}
+
+// ======================== 双模式转换工具函数 ========================
+
+// 增强的科学计数法工具函数，支持双向转换
+const ScientificNotationUtils = {
+    // 获取上标数字字符
+    getSuperscriptNumber: function(num) {
+        const superscripts = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+        const negativeSign = '⁻';
+
+        if (num === 0) return superscripts[0];
+
+        const isNegative = num < 0;
+        const absNum = Math.abs(num);
+        const digits = absNum.toString().split('');
+
+        let result = isNegative ? negativeSign : '';
+        for (const digit of digits) {
+            const digitInt = parseInt(digit);
+            if (!isNaN(digitInt) && digitInt >= 0 && digitInt <= 9) {
+                result += superscripts[digitInt];
+            }
+        }
+
+        return result;
+    },
+
+    // 将科学计数法组件值转换为浮点数
+    convertToFloat: function(sign, mantissa, exponent) {
+        // 验证输入
+        if (mantissa === '' || isNaN(parseFloat(mantissa))) {
+            console.warn('有效数字无效:', mantissa);
+            return 0;
+        }
+
+        if (exponent === '' || isNaN(parseInt(exponent))) {
+            console.warn('指数无效:', exponent);
+            exponent = 0;
+        }
+
+        const signMultiplier = (sign === '-') ? -1 : 1;
+        const base = parseFloat(mantissa);
+        const exp = parseInt(exponent);
+
+        // 计算：sign * mantissa * 10^exponent
+        const result = signMultiplier * base * Math.pow(10, exp);
+
+        console.log(`科学计数法转换: ${sign}${base} × 10^${exp} = ${result}`);
+        return result;
+    },
+
+    // 将浮点数转换为科学计数法组件格式
+    convertFromFloat: function(floatValue) {
+        if (floatValue === 0) {
+            return {
+                sign: '+',
+                mantissa: '1.00',
+                exponent: '0'
+            };
+        }
+
+        const isNegative = floatValue < 0;
+        const absValue = Math.abs(floatValue);
+
+        // 计算科学计数法
+        const exponent = Math.floor(Math.log10(absValue));
+        let mantissa = absValue / Math.pow(10, exponent);
+
+        // 标准化到 1 ≤ mantissa < 10
+        if (mantissa >= 10) {
+            mantissa /= 10;
+            exponent += 1;
+        } else if (mantissa < 1 && mantissa !== 0) {
+            mantissa *= 10;
+            exponent -= 1;
+        }
+
+        // 保留2位小数
+        const mantissaStr = mantissa.toFixed(2);
+
+        return {
+            sign: isNegative ? '-' : '+',
+            mantissa: mantissaStr,
+            exponent: exponent.toString()
+        };
+    },
+
+    // 从普通输入解析科学计数法格式（如 1.6e-19）或普通数字
+    parseInputToScientific: function(inputValue) {
+        if (!inputValue) {
+            return {
+                sign: '+',
+                mantissa: '1.00',
+                exponent: '0'
+            };
+        }
+
+        const str = inputValue.toString().trim().toLowerCase();
+
+        // 尝试解析科学计数法格式：数字 + e/E + 指数
+        const scientificRegex = /^([+-]?\d*\.?\d+)(?:[eE]([+-]?\d+))?$/;
+        const match = str.match(scientificRegex);
+
+        if (match) {
+            let base = parseFloat(match[1]);
+            const exponent = match[2] ? parseInt(match[2]) : 0;
+
+            // 计算标准科学计数法格式
+            const absBase = Math.abs(base);
+            let calcExponent = exponent;
+            let calcMantissa = absBase;
+
+            if (absBase !== 0) {
+                // 如果基数不在1-10范围内，调整它
+                if (absBase >= 10 || absBase < 1) {
+                    const baseExponent = Math.floor(Math.log10(absBase));
+                    calcMantissa = absBase / Math.pow(10, baseExponent);
+                    calcExponent += baseExponent;
+                }
+
+                // 确保尾数在1-10之间
+                if (calcMantissa >= 10) {
+                    calcMantissa /= 10;
+                    calcExponent += 1;
+                } else if (calcMantissa < 1) {
+                    calcMantissa *= 10;
+                    calcExponent -= 1;
+                }
+            }
+
+            return {
+                sign: base < 0 ? '-' : '+',
+                mantissa: calcMantissa.toFixed(2),
+                exponent: calcExponent.toString()
+            };
+        }
+
+        // 如果无法解析，返回默认值
+        return {
+            sign: '+',
+            mantissa: '1.00',
+            exponent: '0'
+        };
+    },
+
+    // 从科学计数法组件值生成普通数值字符串
+    convertToNormalString: function(sign, mantissa, exponent) {
+        const floatValue = this.convertToFloat(sign, mantissa, exponent);
+
+        // 根据数值大小选择合适的格式
+        const absValue = Math.abs(floatValue);
+
+        if (absValue === 0) return "0";
+
+        // 如果数值在0.001到10000之间，使用常规表示法
+        if (absValue >= 0.001 && absValue <= 10000) {
+            // 根据精度决定小数位数
+            if (absValue >= 100) {
+                return floatValue.toFixed(0);
+            } else if (absValue >= 1) {
+                return floatValue.toFixed(2);
+            } else if (absValue >= 0.01) {
+                return floatValue.toFixed(4);
+            } else {
+                return floatValue.toFixed(6);
+            }
+        } else {
+            // 大数或小数使用科学计数法格式
+            return floatValue.toExponential(2);
+        }
+    },
+
+    // 同步普通模式和科学计数法模式的数据
+    syncInputModes: function(answerIndex) {
+        console.log(`同步模式数据 - 答案 ${answerIndex}, 当前模式: ${currentInputMode}`);
+
+        if (currentInputMode === 'scientific') {
+            // 从科学计数法组件获取值
+            const sign = document.querySelector(`input[name="sign${answerIndex}"]:checked`)?.value || '+';
+            const mantissa = document.getElementById(`mantissa${answerIndex}`).value || '1.00';
+            const exponent = document.getElementById(`exponent${answerIndex}`).value || '0';
+
+            // 计算浮点值
+            const floatValue = this.convertToFloat(sign, mantissa, exponent);
+
+            // 更新普通模式输入框
+            const normalInputId = answerCount === 1 ? 'answer-normal' : `answer-normal${answerIndex}`;
+            const normalInput = document.getElementById(normalInputId);
+            if (normalInput) {
+                normalInput.value = this.convertToNormalString(sign, mantissa, exponent);
+                console.log(`科学计数法 -> 普通模式: ${normalInput.value}`);
+            }
+
+            // 更新隐藏输入框
+            const hiddenInput = document.getElementById(`answer${answerIndex}`);
+            if (hiddenInput) {
+                hiddenInput.value = floatValue;
+            }
+
+            // 更新显示
+            const displayElement = document.getElementById(`calc-result${answerIndex}`);
+            if (displayElement) {
+                const supExponent = this.getSuperscriptNumber(parseInt(exponent));
+                displayElement.textContent =
+                    `当前值: ${sign === '-' ? '-' : ''}${mantissa} × 10${supExponent} = ${floatValue.toExponential(2)}`;
+            }
+
+            return floatValue;
+
+        } else {
+            // 从普通模式输入框获取值
+            const normalInputId = answerCount === 1 ? 'answer-normal' : `answer-normal${answerIndex}`;
+            const normalInput = document.getElementById(normalInputId);
+
+            if (!normalInput) return 0;
+
+            const inputValue = normalInput.value;
+            let floatValue = 0;
+
+            if (inputValue && !isNaN(parseFloat(inputValue))) {
+                floatValue = parseFloat(inputValue);
+
+                // 转换为科学计数法组件值
+                const components = this.convertFromFloat(floatValue);
+
+                // 更新科学计数法组件
+                const signPositive = document.getElementById(`sign-positive${answerIndex}`);
+                const signNegative = document.getElementById(`sign-negative${answerIndex}`);
+                const mantissaInput = document.getElementById(`mantissa${answerIndex}`);
+                const exponentInput = document.getElementById(`exponent${answerIndex}`);
+
+                if (signPositive && signNegative) {
+                    if (components.sign === '+') {
+                        signPositive.checked = true;
+                    } else {
+                        signNegative.checked = true;
+                    }
+                }
+
+                if (mantissaInput) mantissaInput.value = components.mantissa;
+                if (exponentInput) exponentInput.value = components.exponent;
+
+                console.log(`普通模式 -> 科学计数法: ${components.mantissa} × 10^${components.exponent}`);
+
+                // 更新显示
+                const displayElement = document.getElementById(`calc-result${answerIndex}`);
+                if (displayElement) {
+                    const supExponent = this.getSuperscriptNumber(parseInt(components.exponent));
+                    displayElement.textContent =
+                        `当前值: ${components.sign === '-' ? '-' : ''}${components.mantissa} × 10${supExponent} = ${floatValue.toExponential(2)}`;
+                }
+            }
+
+            // 更新隐藏输入框
+            const hiddenInput = document.getElementById(`answer${answerIndex}`);
+            if (hiddenInput) {
+                hiddenInput.value = floatValue;
+            }
+
+            return floatValue;
+        }
+    },
+
+    // 更新科学计数法显示
+    updateScientificDisplay: function(answerIndex) {
+        if (currentInputMode !== 'scientific') return;
+        return this.syncInputModes(answerIndex);
+    },
+
+    // 更新普通模式显示
+    updateNormalDisplay: function(answerIndex) {
+        if (currentInputMode !== 'normal') return;
+        return this.syncInputModes(answerIndex);
+    }
+};
+
+// 初始化科学计数法组件
+function initScientificNotationComponents() {
+    const answerCount = {{ answer_count }};
+
+    for (let i = 1; i <= answerCount; i++) {
+        // 科学计数法组件的监听器
+        const mantissaInput = document.getElementById(`mantissa${i}`);
+        const exponentInput = document.getElementById(`exponent${i}`);
+        const signRadios = document.querySelectorAll(`input[name="sign${i}"]`);
+
+        if (mantissaInput) {
+            mantissaInput.addEventListener('input', () => {
+                if (currentInputMode === 'scientific') {
+                    ScientificNotationUtils.updateScientificDisplay(i);
+                }
+            });
+
+            mantissaInput.value = '1.00';
+        }
+
+        if (exponentInput) {
+            exponentInput.addEventListener('input', () => {
+                if (currentInputMode === 'scientific') {
+                    ScientificNotationUtils.updateScientificDisplay(i);
+                }
+            });
+
+            exponentInput.value = '0';
+        }
+
+        if (signRadios.length > 0) {
+            signRadios.forEach(radio => {
+                radio.addEventListener('change', () => {
+                    if (currentInputMode === 'scientific') {
+                        ScientificNotationUtils.updateScientificDisplay(i);
+                    }
+                });
+            });
+        }
+
+        // 普通输入框的监听器
+        const normalInputId = answerCount === 1 ? 'answer-normal' : `answer-normal${i}`;
+        const normalInput = document.getElementById(normalInputId);
+        if (normalInput) {
+            normalInput.addEventListener('input', () => {
+                if (currentInputMode === 'normal') {
+                    ScientificNotationUtils.updateNormalDisplay(i);
+                }
+            });
+        }
+    }
+
+    // 初始更新显示
+    setTimeout(() => {
+        for (let i = 1; i <= answerCount; i++) {
+            if (currentInputMode === 'scientific') {
+                ScientificNotationUtils.updateScientificDisplay(i);
+            } else {
+                ScientificNotationUtils.updateNormalDisplay(i);
+            }
+        }
+    }, 100);
+}
+
+// ======================== 蒙版系统函数 ========================
 
 // 创建题目内容区域蒙版
 function createProblemSpotlight() {
@@ -699,6 +1438,16 @@ function initSpotlightSystem() {
                     spotlightElement.style.display = isVisible ? 'none' : 'block';
                 }
             }
+
+            // 按M键切换输入模式
+            if (e.altKey && e.key === 'm') {
+                e.preventDefault();
+                if (currentInputMode === 'normal') {
+                    document.getElementById('scientific-mode-btn').click();
+                } else {
+                    document.getElementById('normal-mode-btn').click();
+                }
+            }
         });
 
         // 初始状态：使用中心位置
@@ -761,6 +1510,7 @@ let currentCorrectAnswers = {{ problem.correct_answers | tojson }};
 console.log('Ajax问题页面初始化 - 问题ID:', problemId, '答案数量:', answerCount, '累计尝试:', totalAttempts, '总题目数:', totalProblems);
 console.log('初始正确答案:', currentCorrectAnswers);
 console.log('页面加载时间:', new Date().toLocaleTimeString());
+console.log('当前输入模式:', currentInputMode);
 
 // 初始化计时器 - 从页面加载开始计时
 function initTimer() {
@@ -786,7 +1536,7 @@ function initTimer() {
     timerInitialized = true;
 }
 
-// 格式化正确答案显示（统一显示2位小数）
+// 格式化正确答案显示（使用科学计数法）
 function formatCorrectAnswers(correctAnswers) {
     if (!correctAnswers || !Array.isArray(correctAnswers)) {
         return "正确答案: 暂无";
@@ -794,7 +1544,29 @@ function formatCorrectAnswers(correctAnswers) {
 
     const formattedAnswers = correctAnswers.map(answer => {
         if (typeof answer === 'number') {
-            return answer.toFixed(2);
+            // 转换为科学计数法显示
+            if (answer === 0) return "0";
+
+            const isNegative = answer < 0;
+            const absAnswer = Math.abs(answer);
+            const exponent = Math.floor(Math.log10(absAnswer));
+            const mantissa = absAnswer / Math.pow(10, exponent);
+
+            // 调整到标准形式
+            let finalMantissa = mantissa;
+            let finalExponent = exponent;
+            if (mantissa >= 10) {
+                finalMantissa = mantissa / 10;
+                finalExponent = exponent + 1;
+            } else if (mantissa < 1) {
+                finalMantissa = mantissa * 10;
+                finalExponent = exponent - 1;
+            }
+
+            // 格式化
+            const sign = isNegative ? '-' : '';
+            const superscript = getSuperscript(finalExponent);
+            return `${sign}${finalMantissa.toFixed(2)} × 10${superscript}`;
         }
         return answer;
     });
@@ -807,6 +1579,27 @@ function formatCorrectAnswers(correctAnswers) {
         );
         return `正确答案: ${parts.join(', ')}`;
     }
+}
+
+// 生成上标字符
+function getSuperscript(number) {
+    const superscripts = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+    const negative = '⁻';
+
+    if (number === 0) return superscripts[0];
+
+    const isNegative = number < 0;
+    const absNum = Math.abs(number).toString();
+    let result = isNegative ? negative : '';
+
+    for (const char of absNum) {
+        const digit = parseInt(char);
+        if (digit >= 0 && digit <= 9) {
+            result += superscripts[digit];
+        }
+    }
+
+    return result;
 }
 
 // 显示消息（不会自动消失）
@@ -886,28 +1679,35 @@ function resetSubmitButton() {
     isSubmitting = false;
 }
 
-// 获取答案数据 - 关键修改：包含正确答案
+// 获取答案数据 - 双向转换兼容版本
 function getAnswerData() {
     const answerData = {
         time_taken: (Date.now() - startTime) / 1000,  // 从页面加载到提交的总时间
         correct_answers: currentCorrectAnswers  // 关键：传递当前正确答案
     };
 
-    console.log('答题时间计算:');
-    console.log('开始时间:', new Date(startTime).toLocaleTimeString());
-    console.log('结束时间:', new Date(Date.now()).toLocaleTimeString());
-    console.log('总用时:', answerData.time_taken, '秒');
+    console.log('答题时间计算:', answerData.time_taken, '秒');
+    console.log('当前输入模式:', currentInputMode);
+
+    // 强制同步所有输入框数据
+    for (let i = 1; i <= answerCount; i++) {
+        ScientificNotationUtils.syncInputModes(i);
+    }
 
     if (answerCount === 1) {
-        const answerValue = document.getElementById('answer').value;
+        // 单答案题目
+        const answerValue = document.getElementById('answer1').value;
         if (answerValue) {
             answerData.answer = parseFloat(answerValue);
+            console.log('最终答案:', answerData.answer);
         }
     } else {
+        // 多答案题目
         for (let i = 1; i <= answerCount; i++) {
             const answerValue = document.getElementById(`answer${i}`).value;
             if (answerValue) {
                 answerData[`answer${i}`] = parseFloat(answerValue);
+                console.log(`答案${i}:`, answerData[`answer${i}`]);
             }
         }
     }
@@ -917,60 +1717,144 @@ function getAnswerData() {
     return answerData;
 }
 
-// 验证输入
+// 验证输入（双向转换兼容版本）
 function validateInputs() {
-    if (answerCount === 1) {
-        const answer = document.getElementById('answer').value;
-        if (!answer || isNaN(parseFloat(answer))) {
-            showMessage('请输入有效的数字', 'error');
-            return false;
-        }
-    } else {
-        for (let i = 1; i <= answerCount; i++) {
-            const answer = document.getElementById(`answer${i}`).value;
-            if (!answer || isNaN(parseFloat(answer))) {
-                showMessage(`请输入有效的答案${i}`, 'error');
-                return false;
-            }
+    const answerCount = {{ answer_count }};
+    let hasValidInput = false;
+
+    // 强制同步数据以确保所有输入框都有值
+    for (let i = 1; i <= answerCount; i++) {
+        ScientificNotationUtils.syncInputModes(i);
+    }
+
+    // 检查隐藏的答案输入框（存储最终数值的地方）
+    for (let i = 1; i <= answerCount; i++) {
+        const hiddenInput = document.getElementById(`answer${i}`);
+        if (hiddenInput && hiddenInput.value && !isNaN(parseFloat(hiddenInput.value))) {
+            hasValidInput = true;
         }
     }
+
+    if (!hasValidInput) {
+        showMessage('请输入有效的数字答案', 'error');
+        return false;
+    }
+
     return true;
 }
 
-// 清空输入框
+// 清空输入框（双向转换兼容版本）
 function clearInputs() {
-    if (answerCount === 1) {
-        document.getElementById('answer').value = '';
-    } else {
+    const answerCount = {{ answer_count }};
+
+    if (currentInputMode === 'scientific') {
+        // 清空科学计数法输入组件
         for (let i = 1; i <= answerCount; i++) {
-            document.getElementById(`answer${i}`).value = '';
+            const mantissaInput = document.getElementById(`mantissa${i}`);
+            const exponentInput = document.getElementById(`exponent${i}`);
+            const signPositive = document.getElementById(`sign-positive${i}`);
+
+            if (mantissaInput) mantissaInput.value = '1.00';
+            if (exponentInput) exponentInput.value = '0';
+            if (signPositive) {
+                signPositive.checked = true;
+                signPositive.dispatchEvent(new Event('change'));
+            }
+
+            // 更新显示和同步数据
+            ScientificNotationUtils.updateScientificDisplay(i);
+        }
+    } else {
+        // 清空普通输入框
+        if (answerCount === 1) {
+            const normalInput = document.getElementById('answer-normal');
+            if (normalInput) {
+                normalInput.value = '';
+                ScientificNotationUtils.updateNormalDisplay(1);
+            }
+        } else {
+            for (let i = 1; i <= answerCount; i++) {
+                const normalInput = document.getElementById(`answer-normal${i}`);
+                if (normalInput) {
+                    normalInput.value = '';
+                    ScientificNotationUtils.updateNormalDisplay(i);
+                }
+            }
         }
     }
 }
 
-// 禁用输入框
+// 禁用输入框（双向转换兼容版本）
 function disableInputs() {
-    if (answerCount === 1) {
-        document.getElementById('answer').disabled = true;
-    } else {
+    const answerCount = {{ answer_count }};
+
+    if (currentInputMode === 'scientific') {
+        // 禁用科学计数法输入组件
         for (let i = 1; i <= answerCount; i++) {
-            document.getElementById(`answer${i}`).disabled = true;
+            const mantissaInput = document.getElementById(`mantissa${i}`);
+            const exponentInput = document.getElementById(`exponent${i}`);
+            const signRadios = document.querySelectorAll(`input[name="sign${i}"]`);
+
+            if (mantissaInput) mantissaInput.disabled = true;
+            if (exponentInput) exponentInput.disabled = true;
+            if (signRadios) {
+                signRadios.forEach(radio => radio.disabled = true);
+            }
+        }
+    } else {
+        // 禁用普通输入框
+        if (answerCount === 1) {
+            const normalInput = document.getElementById('answer-normal');
+            if (normalInput) normalInput.disabled = true;
+        } else {
+            for (let i = 1; i <= answerCount; i++) {
+                const normalInput = document.getElementById(`answer-normal${i}`);
+                if (normalInput) normalInput.disabled = true;
+            }
         }
     }
+
+    // 禁用模式切换按钮
+    document.getElementById('normal-mode-btn').disabled = true;
+    document.getElementById('scientific-mode-btn').disabled = true;
 }
 
-// 启用输入框
+// 启用输入框（双向转换兼容版本）
 function enableInputs() {
-    if (answerCount === 1) {
-        document.getElementById('answer').disabled = false;
-    } else {
+    const answerCount = {{ answer_count }};
+
+    if (currentInputMode === 'scientific') {
+        // 启用科学计数法输入组件
         for (let i = 1; i <= answerCount; i++) {
-            document.getElementById(`answer${i}`).disabled = false;
+            const mantissaInput = document.getElementById(`mantissa${i}`);
+            const exponentInput = document.getElementById(`exponent${i}`);
+            const signRadios = document.querySelectorAll(`input[name="sign${i}"]`);
+
+            if (mantissaInput) mantissaInput.disabled = false;
+            if (exponentInput) exponentInput.disabled = false;
+            if (signRadios) {
+                signRadios.forEach(radio => radio.disabled = false);
+            }
+        }
+    } else {
+        // 启用普通输入框
+        if (answerCount === 1) {
+            const normalInput = document.getElementById('answer-normal');
+            if (normalInput) normalInput.disabled = false;
+        } else {
+            for (let i = 1; i <= answerCount; i++) {
+                const normalInput = document.getElementById(`answer-normal${i}`);
+                if (normalInput) normalInput.disabled = false;
+            }
         }
     }
+
+    // 启用模式切换按钮
+    document.getElementById('normal-mode-btn').disabled = false;
+    document.getElementById('scientific-mode-btn').disabled = false;
 }
 
-// 重置表单状态
+// 重置表单状态（双向转换兼容版本）
 function resetFormState() {
     clearInputs();
     enableInputs();
@@ -1113,18 +1997,18 @@ async function updateProblemParameters(newVarValues, newCorrectAnswers, newProbl
 
 // 获取当前输入的答案
 function getCurrentAnswer() {
-    if (answerCount === 1) {
-        return document.getElementById('answer').value;
-    } else {
-        let hasAnswer = false;
-        for (let i = 1; i <= answerCount; i++) {
-            if (document.getElementById(`answer${i}`).value) {
-                hasAnswer = true;
-                break;
-            }
+    const answerCount = {{ answer_count }};
+
+    for (let i = 1; i <= answerCount; i++) {
+        // 同步数据以确保获取最新值
+        ScientificNotationUtils.syncInputModes(i);
+
+        const answerValue = document.getElementById(`answer${i}`).value;
+        if (answerValue && parseFloat(answerValue) !== 0) {
+            return true;
         }
-        return hasAnswer;
     }
+    return false;
 }
 
 // 获取题目完成状态
@@ -1191,31 +2075,53 @@ function initProblemSidebar() {
     });
 }
 
-// 设置输入框监听器 - 移除焦点重置计时器的逻辑
+// 设置输入框监听器 - 支持双模式
 function setupInputListeners() {
+    const answerCount = {{ answer_count }};
+
     if (answerCount === 1) {
-        const answerInput = document.getElementById('answer');
+        // 单答案：普通模式输入框回车提交
+        const normalInput = document.getElementById('answer-normal');
+        if (normalInput) {
+            normalInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    document.getElementById('answer-form').dispatchEvent(new Event('submit'));
+                }
+            });
+        }
 
-        // 回车键提交
-        answerInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                document.getElementById('answer-form').dispatchEvent(new Event('submit'));
-            }
-        });
+        // 单答案：科学计数法模式，指数输入框回车提交
+        const exponentInput = document.getElementById('exponent1');
+        if (exponentInput) {
+            exponentInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    document.getElementById('answer-form').dispatchEvent(new Event('submit'));
+                }
+            });
+        }
     } else {
-        for (let i = 1; i <= answerCount; i++) {
-            const answerInput = document.getElementById(`answer${i}`);
+        // 多答案：最后一个普通模式输入框回车提交
+        const lastNormalInput = document.getElementById(`answer-normal${answerCount}`);
+        if (lastNormalInput) {
+            lastNormalInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    document.getElementById('answer-form').dispatchEvent(new Event('submit'));
+                }
+            });
+        }
 
-            // 最后一个输入框回车键提交
-            if (i === answerCount) {
-                answerInput.addEventListener('keypress', (e) => {
-                    if (e.key === 'Enter') {
-                        e.preventDefault();
-                        document.getElementById('answer-form').dispatchEvent(new Event('submit'));
-                    }
-                });
-            }
+        // 多答案：最后一个科学计数法模式指数输入框回车提交
+        const lastExponentInput = document.getElementById(`exponent${answerCount}`);
+        if (lastExponentInput) {
+            lastExponentInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    document.getElementById('answer-form').dispatchEvent(new Event('submit'));
+                }
+            });
         }
     }
 }
@@ -1243,6 +2149,7 @@ document.getElementById('answer-form').addEventListener('submit', async function
     submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span> 提交中...';
 
     console.log('开始提交答案...');
+    console.log('当前输入模式:', currentInputMode);
     console.log('当前正确答案:', currentCorrectAnswers);
 
     try {
@@ -1296,7 +2203,7 @@ document.getElementById('answer-form').addEventListener('submit', async function
                 totalAttempts = data.total_attempts;
                 updateAttemptsDisplay();
 
-                // 使用格式化后的正确答案显示
+                // 使用科学计数法格式的正确答案显示
                 const correctAnswerMessage = formatCorrectAnswers(data.correct_answers);
                 showMessage(`❌ 答案不正确！${correctAnswerMessage}。已为您生成新题目，请重新作答。`, 'error');
 
@@ -1388,10 +2295,13 @@ document.addEventListener('DOMContentLoaded', function() {
     // 初始化蒙版系统
     initSpotlightSystem();
 
+    // 初始化双模式输入系统
+    initDualModeInput();
+
     // 移动端特殊处理：监听输入框变化
     if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
         // 监听所有输入框
-        const inputs = document.querySelectorAll('input[type="number"]');
+        const inputs = document.querySelectorAll('input[type="number"], input[type="text"]');
         inputs.forEach(input => {
             input.addEventListener('focus', function() {
                 console.log('移动端输入框聚焦，延迟重定位');
@@ -1429,14 +2339,45 @@ document.addEventListener('DOMContentLoaded', function() {
             e.preventDefault();
             debugTimer();
         }
+
+        // Alt+M 切换输入模式
+        if (e.altKey && e.key === 'm') {
+            e.preventDefault();
+            if (currentInputMode === 'normal') {
+                document.getElementById('scientific-mode-btn').click();
+            } else {
+                document.getElementById('normal-mode-btn').click();
+            }
+        }
+
+        // Ctrl+Shift+C 测试模式转换
+        if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+            e.preventDefault();
+            window.testModeConversion();
+        }
     });
 
     // 自动聚焦到第一个输入框
     setTimeout(() => {
         if (answerCount === 1) {
-            document.getElementById('answer').focus();
+            if (currentInputMode === 'normal') {
+                document.getElementById('answer-normal').focus();
+            } else {
+                document.getElementById('mantissa1').focus();
+            }
         } else if (answerCount > 1) {
-            document.getElementById('answer1').focus();
+            if (currentInputMode === 'normal') {
+                document.getElementById('answer-normal1').focus();
+            } else {
+                document.getElementById('mantissa1').focus();
+            }
+        }
+    }, 500);
+
+    // 初始化时强制同步一次数据
+    setTimeout(() => {
+        for (let i = 1; i <= answerCount; i++) {
+            ScientificNotationUtils.syncInputModes(i);
         }
     }, 500);
 });
@@ -1495,6 +2436,93 @@ window.testTimeCalculation = function() {
     console.log('测试计算结果:', testAnswerData.time_taken, '秒');
     return testAnswerData.time_taken;
 };
+
+// 测试双模式转换
+window.testModeConversion = function() {
+    console.log('=== 测试双模式转换 ===');
+
+    // 测试1: 科学计数法 -> 普通模式
+    console.log('测试1: 科学计数法 -> 普通模式');
+    document.getElementById('mantissa1').value = '1.60';
+    document.getElementById('exponent1').value = '-19';
+    document.getElementById('sign-positive1').checked = true;
+
+    // 切换到科学计数法模式以确保同步
+    if (currentInputMode !== 'scientific') {
+        document.getElementById('scientific-mode-btn').click();
+    }
+    ScientificNotationUtils.syncInputModes(1);
+
+    // 切换到普通模式查看结果
+    document.getElementById('normal-mode-btn').click();
+    const normalValue = document.getElementById('answer-normal').value;
+    console.log('转换结果:', normalValue);
+    console.log('预期结果: 1.6e-19');
+
+    // 测试2: 普通模式 -> 科学计数法
+    console.log('\n测试2: 普通模式 -> 科学计数法');
+    document.getElementById('answer-normal').value = '3.00e8';
+    ScientificNotationUtils.syncInputModes(1);
+
+    // 切换到科学计数法模式查看结果
+    document.getElementById('scientific-mode-btn').click();
+    const mantissa = document.getElementById('mantissa1').value;
+    const exponent = document.getElementById('exponent1').value;
+    console.log('转换结果:', mantissa, '× 10^', exponent);
+    console.log('预期结果: 3.00 × 10^8');
+
+    // 测试3: 双向一致性检查
+    console.log('\n测试3: 双向一致性检查');
+    const testValues = [0.001, 1000, 1.5e-5, 6.02e23, -3.14];
+
+    for (const testValue of testValues) {
+        // 设置普通模式值
+        document.getElementById('answer-normal').value = testValue;
+        document.getElementById('normal-mode-btn').click();
+        ScientificNotationUtils.syncInputModes(1);
+
+        // 切换到科学计数法模式
+        document.getElementById('scientific-mode-btn').click();
+        const components = {
+            mantissa: document.getElementById('mantissa1').value,
+            exponent: document.getElementById('exponent1').value,
+            sign: document.querySelector('input[name="sign1"]:checked').value
+        };
+
+        // 再切换回普通模式
+        document.getElementById('normal-mode-btn').click();
+        const convertedBack = document.getElementById('answer-normal').value;
+
+        console.log(`原值: ${testValue}`);
+        console.log(`科学计数法: ${components.sign}${components.mantissa} × 10^${components.exponent}`);
+        console.log(`转换回普通: ${convertedBack}`);
+
+        // 计算误差
+        const originalFloat = parseFloat(testValue);
+        const convertedFloat = parseFloat(convertedBack);
+        const error = Math.abs(originalFloat - convertedFloat) / originalFloat * 100;
+        console.log(`相对误差: ${error.toFixed(6)}%`);
+        console.log('---');
+    }
+
+    return '测试完成';
+};
+
+// 获取当前模式状态
+window.getCurrentMode = function() {
+    return currentInputMode;
+};
+
+// 切换模式（测试用）
+window.toggleInputMode = function() {
+    if (currentInputMode === 'normal') {
+        document.getElementById('scientific-mode-btn').click();
+    } else {
+        document.getElementById('normal-mode-btn').click();
+    }
+    return currentInputMode;
+};
+
 </script>
 
 <style>
@@ -1610,7 +2638,7 @@ window.testTimeCalculation = function() {
 
 .problem-number {
     display: inline-flex;
-    align-items-center;
+    align-items: center;
     justify-content: center;
     width: 24px;
     height: 24px;
@@ -1696,6 +2724,47 @@ window.testTimeCalculation = function() {
     text-align: center;
 }
 
+/* 科学计数法特殊样式 */
+.scientific-notation-input .btn-group .btn-outline-primary.active {
+    background-color: #0d6efd;
+    color: white;
+}
+
+.scientific-notation-input .mantissa-input:focus,
+.scientific-notation-input .exponent-input:focus {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+
+/* 模式切换按钮动画 */
+#normal-mode-btn,
+#scientific-mode-btn {
+    transition: all 0.3s ease;
+}
+
+#normal-mode-btn:not(.active):hover,
+#scientific-mode-btn:not(.active):hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* 输入模式切换过渡 */
+.normal-mode,
+.scientific-mode {
+    animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 /* 响应式调整 */
 @media (max-width: 768px) {
     .problem-image {
@@ -1707,12 +2776,58 @@ window.testTimeCalculation = function() {
     .col-lg-3 {
         margin-bottom: 1rem;
     }
+
+    /* 移动端双模式输入调整 */
+    .scientific-notation-input {
+        flex-wrap: wrap;
+    }
+
+    .scientific-notation-input .btn-group {
+        width: 100%;
+        margin-bottom: 8px;
+        justify-content: center;
+    }
+
+    .scientific-notation-input .input-group {
+        width: 100% !important;
+        margin-bottom: 8px;
+    }
+
+    /* 移动端模式切换按钮调整 */
+    .btn-group[aria-label="输入模式切换"] {
+        width: 100%;
+        margin-top: 10px;
+    }
+
+    .btn-group[aria-label="输入模式切换"] .btn {
+        flex: 1;
+        text-align: center;
+    }
 }
 
 @media (max-width: 576px) {
     .problem-image {
         max-width: 100%;
         max-height: 200px;
+    }
+
+    .scientific-notation-input {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .scientific-notation-input .btn-group {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .scientific-notation-input .input-group {
+        margin: 5px 0;
+    }
+
+    /* 多答案题目在移动端垂直排列 */
+    #answer-inputs .row .col-md-6 {
+        margin-bottom: 1rem;
     }
 }
 
@@ -1769,7 +2884,6 @@ window.testTimeCalculation = function() {
 
     .btn {
         margin-bottom: 0.5rem;
-        width: 100%;
     }
 
     .btn-group .btn {
@@ -1811,6 +2925,11 @@ window.testTimeCalculation = function() {
     #spotlight-overlay-element {
         border-radius: 0; /* 移除圆角，避免定位问题 */
     }
+
+    /* 移动端输入提示调整 */
+    .normal-mode .form-text {
+        font-size: 0.8em;
+    }
 }
 
 /* 超小屏幕适配 */
@@ -1834,14 +2953,21 @@ window.testTimeCalculation = function() {
         font-size: 0.9rem;
     }
 
-    /* 多答案题目在移动端垂直排列 */
-    #answer-inputs .row .col-md-6 {
-        margin-bottom: 0.5rem;
-    }
-
     /* 统计卡片在移动端堆叠 */
     .row .col-md-6 {
         margin-bottom: 1rem;
+    }
+
+    /* 科学计数法输入组件的移动端适配 */
+    .scientific-notation-input .mantissa-input,
+    .scientific-notation-input .exponent-input {
+        font-size: 16px; /* 防止iOS缩放 */
+    }
+
+    /* 模式切换按钮在超小屏幕的调整 */
+    .btn-group[aria-label="输入模式切换"] .btn {
+        padding: 0.375rem 0.5rem;
+        font-size: 0.8rem;
     }
 }
 
@@ -1892,6 +3018,21 @@ window.testTimeCalculation = function() {
         transform: scale(0.98);
         transition: transform 0.1s;
     }
+
+    /* 科学计数法触摸优化 */
+    .scientific-notation-input .btn-group .btn {
+        padding: 0.5rem 1rem;
+        min-height: 44px;
+    }
+
+    .scientific-notation-input .input-group {
+        min-height: 44px;
+    }
+
+    /* 模式切换按钮触摸优化 */
+    .btn-group[aria-label="输入模式切换"] .btn {
+        min-height: 44px;
+    }
 }
 
 /* 高分屏移动设备优化 */
@@ -1899,6 +3040,12 @@ window.testTimeCalculation = function() {
     .math-formula {
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* 科学计数法高清优化 */
+    .scientific-notation-input .mantissa-input,
+    .scientific-notation-input .exponent-input {
+        -webkit-font-smoothing: antialiased;
     }
 }
 
