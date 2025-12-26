@@ -84,6 +84,20 @@
                             </div>
                         </div>
 
+                        <!-- 新增：答案单位字段 -->
+                        <div class="mb-3">
+                            <label for="answer_units" class="form-label">答案单位</label>
+                            <input type="text" class="form-control" id="answer_units" name="answer_units"
+                                   placeholder="例如：V 或 A,m/s,Ω">
+                            <div class="form-text">
+                                为每个答案指定单位，用逗号分隔。例如：<br>
+                                - 单答案题目：V<br>
+                                - 三个答案的题目：V,A,Ω<br>
+                                - 无量纲答案用减号：- 或 -,-<br>
+                                与答案数量保持一致。
+                            </div>
+                        </div>
+
                         <div class="d-grid gap-2">
                             <button type="submit" class="btn btn-primary">
                                 <i class="bi bi-check-lg me-2"></i> 添加题目
@@ -126,6 +140,14 @@
                         <li>LaTeX数学公式</li>
                         <li>图片路径：<code>/static/images/图片名.png</code></li>
                     </ul>
+
+                    <h6>答案单位格式：</h6>
+                    <ul class="small">
+                        <li>单位用逗号分隔</li>
+                        <li>无量纲答案用 "-" 表示</li>
+                        <li>单位数量必须与答案数量一致</li>
+                        <li>示例：V,A,Ω 或 -,- 或 V,-</li>
+                    </ul>
                 </div>
             </div>
 
@@ -157,12 +179,20 @@
                     <h6>单答案题目：</h6>
                     <pre class="small bg-light p-2 rounded">
 变量：r,R,i
-公式：i * R / (pi * (r/100)**2)</pre>
+公式：i * R / (pi * (r/100)**2)
+单位：T/s</pre>
 
                     <h6>多答案题目：</h6>
                     <pre class="small bg-light p-2 rounded">
 变量：l,B,omega
-公式："(3/8) * B * omega * l**2, -(3/8) * B * omega * l**2, 0"</pre>
+公式："(3/8) * B * omega * l**2, -(3/8) * B * omega * l**2, 0"
+单位：V,V,V</pre>
+
+                    <h6>混合单位题目：</h6>
+                    <pre class="small bg-light p-2 rounded">
+变量：v,AC,dBdt,B,x
+公式："B * v * (AC/100), (B * v * (AC/100)) + (dBdt * (x/100) * (AC/100)), 1"
+单位：V,V,-</pre>
                 </div>
             </div>
         </div>

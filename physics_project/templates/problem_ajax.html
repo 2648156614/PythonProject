@@ -143,6 +143,9 @@
                                            id="answer-normal" name="answer-normal"
                                            placeholder="输入数值（如：1.5, -0.003, 2500）"
                                            autocomplete="off">
+                                    {% if problem.answer_units and problem.answer_units[0] %}
+                                    <span class="input-group-text unit-display">{{ problem.answer_units[0] }}</span>
+                                    {% endif %}
                                 </div>
                                 <div class="form-text">
                                     <i class="bi bi-lightbulb me-1"></i>也可以输入科学计数法格式，如：1.6e-19 表示 1.6×10⁻¹⁹
@@ -174,23 +177,32 @@
                                                placeholder="有效数字"
                                                value="1.00"
                                                min="1" max="9.999" step="0.001">
+                                        <span class="input-group-text">×10</span>
                                     </div>
 
-                                    <!-- 乘号和指数 -->
-                                    <div class="input-group input-group-sm" style="width: 140px;">
-                                        <span class="input-group-text bg-light">×10</span>
+                                    <!-- 指数 -->
+                                    <div class="input-group input-group-sm me-2" style="width: 120px;">
                                         <input type="number" class="form-control exponent-input"
                                                id="exponent1"
                                                placeholder="指数"
                                                value="0"
                                                min="-50" max="50" step="1">
+                                        <span class="input-group-text">次方</span>
                                     </div>
+
+                                    <!-- 单位显示 -->
+                                    {% if problem.answer_units and problem.answer_units[0] %}
+                                    <span class="input-group-text unit-display">{{ problem.answer_units[0] }}</span>
+                                    {% endif %}
                                 </div>
 
                                 <!-- 实时计算结果和示例 -->
                                 <div class="mt-2">
                                     <small id="calc-result1" class="text-primary">
                                         当前值: 1.00 × 10⁰ = 1.00
+                                        {% if problem.answer_units and problem.answer_units[0] %}
+                                        {{ problem.answer_units[0] }}
+                                        {% endif %}
                                     </small>
                                 </div>
 
@@ -217,6 +229,9 @@
                             <div class="col-md-6 mb-4">
                                 <label class="form-label">
                                     <strong><i class="bi bi-input-cursor-text me-1"></i>答案 {{ i+1 }}：</strong>
+                                    {% if problem.answer_units and problem.answer_units[i] %}
+                                    <small class="text-muted">(单位: {{ problem.answer_units[i] }})</small>
+                                    {% endif %}
                                 </label>
 
                                 <div class="normal-input-container">
@@ -227,6 +242,9 @@
                                                    id="answer-normal{{ i+1 }}" name="answer-normal{{ i+1 }}"
                                                    placeholder="答案 {{ i+1 }}"
                                                    autocomplete="off">
+                                            {% if problem.answer_units and problem.answer_units[i] %}
+                                            <span class="input-group-text unit-display">{{ problem.answer_units[i] }}</span>
+                                            {% endif %}
                                         </div>
                                     </div>
 
@@ -255,23 +273,32 @@
                                                        placeholder="有效数字"
                                                        value="1.00"
                                                        min="1" max="9.999" step="0.001">
+                                                <span class="input-group-text">×10</span>
                                             </div>
 
-                                            <!-- 乘号和指数 -->
-                                            <div class="input-group input-group-sm" style="width: 110px;">
-                                                <span class="input-group-text bg-light">×10</span>
+                                            <!-- 指数 -->
+                                            <div class="input-group input-group-sm" style="width: 100px;">
                                                 <input type="number" class="form-control exponent-input"
                                                        id="exponent{{ i+1 }}"
                                                        placeholder="指数"
                                                        value="0"
                                                        min="-50" max="50" step="1">
+                                                <span class="input-group-text">次方</span>
                                             </div>
+
+                                            <!-- 单位显示 -->
+                                            {% if problem.answer_units and problem.answer_units[i] %}
+                                            <span class="input-group-text unit-display">{{ problem.answer_units[i] }}</span>
+                                            {% endif %}
                                         </div>
 
                                         <!-- 实时计算结果 -->
                                         <div class="mt-1">
                                             <small id="calc-result{{ i+1 }}" class="text-primary">
                                                 当前值: 1.00 × 10⁰ = 1.00
+                                                {% if problem.answer_units and problem.answer_units[i] %}
+                                                {{ problem.answer_units[i] }}
+                                                {% endif %}
                                             </small>
                                         </div>
                                     </div>
@@ -291,6 +318,15 @@
                                 <i class="bi bi-info-circle me-1"></i>
                                 <strong>多答案填写提示：</strong>
                                 每个答案可以使用不同输入模式，系统会自动进行容错判断（±1%）
+                                {% if problem.answer_units %}
+                                <br><i class="bi bi-rulers me-1"></i>
+                                <strong>单位说明：</strong>
+                                {% for i in range(answer_count) %}
+                                {% if problem.answer_units[i] %}
+                                答案{{ i+1 }}的单位为 {{ problem.answer_units[i] }}{% if not loop.last %}, {% endif %}
+                                {% endif %}
+                                {% endfor %}
+                                {% endif %}
                             </small>
                         </div>
                         {% endif %}
@@ -305,6 +341,12 @@
                                 <i class="bi bi-arrow-repeat me-1"></i>
                                 <strong>模式切换：</strong>点击上方的按钮可以在普通模式和科学计数法模式之间切换。
                             </span>
+                            {% if problem.answer_units %}
+                            <span class="d-block mt-1">
+                                <i class="bi bi-rulers me-1"></i>
+                                <strong>单位说明：</strong>输入数值时不需要输入单位，系统已显示正确答案的单位。
+                            </span>
+                            {% endif %}
                         </small>
                     </div>
 
@@ -2765,6 +2807,31 @@ window.toggleInputMode = function() {
     }
 }
 
+/* 单位显示样式 - 新增 */
+.unit-display {
+    min-width: 60px;
+    background-color: #e9ecef;
+    border-color: #dee2e6;
+    color: #495057;
+    font-weight: 500;
+}
+
+.input-group-text.unit-display {
+    transition: all 0.2s ease;
+}
+
+.input-group:focus-within .input-group-text.unit-display {
+    background-color: #0d6efd;
+    color: white;
+    border-color: #0d6efd;
+}
+
+/* 科学计数法单位显示 */
+.scientific-notation-input .input-group-text.unit-display {
+    font-size: 0.85em;
+    padding: 0.25rem 0.5rem;
+}
+
 /* 响应式调整 */
 @media (max-width: 768px) {
     .problem-image {
@@ -2803,6 +2870,17 @@ window.toggleInputMode = function() {
         flex: 1;
         text-align: center;
     }
+
+    /* 移动端单位显示调整 */
+    .unit-display {
+        min-width: 50px;
+        font-size: 0.9em;
+    }
+
+    .scientific-notation-input .input-group-text.unit-display {
+        padding: 0.2rem 0.4rem;
+        font-size: 0.8em;
+    }
 }
 
 @media (max-width: 576px) {
@@ -2828,6 +2906,12 @@ window.toggleInputMode = function() {
     /* 多答案题目在移动端垂直排列 */
     #answer-inputs .row .col-md-6 {
         margin-bottom: 1rem;
+    }
+
+    /* 超小屏幕单位显示 */
+    .unit-display {
+        min-width: 40px;
+        font-size: 0.8em;
     }
 }
 

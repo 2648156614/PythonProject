@@ -103,6 +103,21 @@
                             </div>
                         </div>
 
+                        <!-- 新增：答案单位字段 -->
+                        <div class="mb-3">
+                            <label for="answer_units" class="form-label">答案单位</label>
+                            <input type="text" class="form-control" id="answer_units" name="answer_units"
+                                   value="{{ template.answer_units or '' }}"
+                                   placeholder="例如：V 或 A,m/s,Ω">
+                            <div class="form-text">
+                                为每个答案指定单位，用逗号分隔。例如：<br>
+                                - 单答案题目：V<br>
+                                - 三个答案的题目：V,A,Ω<br>
+                                - 无量纲答案用减号：- 或 -,-<br>
+                                与答案数量保持一致。
+                            </div>
+                        </div>
+
                         <div class="d-grid gap-2">
                             <button type="submit" class="btn btn-primary">
                                 <i class="bi bi-check-lg me-2"></i> 更新题目
@@ -127,6 +142,7 @@
                     <div class="small">
                         <strong>变量：</strong> {{ template.variables or '无' }}<br>
                         <strong>答案数量：</strong> {{ template.answer_count }}<br>
+                        <strong>答案单位：</strong> {{ template.answer_units or '未设置' }}<br>
                         <strong>难度：</strong>
                         {% if template.difficulty == 'easy' %}简单
                         {% elif template.difficulty == 'hard' %}困难
