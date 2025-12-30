@@ -42,11 +42,8 @@
                     <div class="d-flex justify-content-between align-items-center">
                         <span>{{ status_text }}学生占总学生比例</span>
                         <span class="badge bg-info">
-                            {% if students %}
-                                {{ (students|length / (students|length + (8 if status == 'completed' else 0)) * 100)|round(1) }}%
-                            {% else %}
-                                0%
-                            {% endif %}
+                            {% set ratio = (completed_students / total_students * 100) if status == 'completed' and total_students else ( (total_students - completed_students) / total_students * 100) if total_students else 0 %}
+                            {{ ratio|round(1) }}%
                         </span>
                     </div>
                 </div>
@@ -94,7 +91,7 @@
                             </td>
                             <td>
                                 <span class="fw-bold">{{ student.total_score or 0 }}</span>
-                                <small class="text-muted">/ 8</small>
+                                <small class="text-muted">/ {{ total_problems }}</small>
                             </td>
                             <td>
                                 {% if student.total_time %}

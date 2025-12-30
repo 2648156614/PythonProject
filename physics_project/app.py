@@ -227,6 +227,18 @@ def get_problem_display_info():
     return display_mapping
 
 
+def build_display_to_actual_map():
+    """生成显示序号到实际ID的映射，便于前端查找"""
+    mapping = get_problem_display_info()
+    display_to_actual = {}
+
+    for actual_id, info in mapping.items():
+        display_number = info['display_number']
+        display_to_actual[display_number] = actual_id
+
+    return display_to_actual
+
+
 def get_display_number(actual_id):
     """根据实际ID获取显示序号"""
     mapping = get_problem_display_info()
@@ -242,6 +254,24 @@ def get_actual_id(display_number):
         if info['display_number'] == display_number:
             return actual_id
     return None  # 找不到对应的实际ID
+
+
+def is_problem_completed(user_id, template_id):
+    """检查指定题目是否已被用户正确完成"""
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) as completed
+            FROM user_responses
+            WHERE user_id = %s AND template_id = %s AND is_correct = TRUE
+        """, (user_id, template_id))
+        result = cursor.fetchone()
+        return result and result.get('completed', 0) > 0
+    finally:
+        cursor.close()
+        conn.close()
 
 
 def get_total_problem_count():
@@ -1157,6 +1187,24 @@ def update_user_completion_status(user_id):
         conn.close()
 
 
+def update_all_users_completion_status():
+    """为所有用户刷新完成状态，返回更新数量"""
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        cursor.execute("SELECT id FROM users")
+        users = cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+    for user in users:
+        update_user_completion_status(user['id'])
+
+    return len(users)
+
+
 def get_completion_stats():
     """获取完成情况统计"""
     conn = get_db_connection()
@@ -1762,6 +1810,7 @@ def problem_ajax(problem_id):
 
     # 获取题目显示映射和总数
     display_mapping = get_problem_display_info()
+    display_to_actual = build_display_to_actual_map()
     total_problems = len(display_mapping)
 
     # 1. 验证题目序号
@@ -1803,6 +1852,8 @@ def problem_ajax(problem_id):
     print(f"当前题目参数: {problem_data['var_values']}")
     print(f"=== Ajax问题页面结束 ===\n")
 
+    is_completed = is_problem_completed(session['user_id'], actual_id)
+
     return render_template('problem_ajax.html',
                            problem=problem_data,
                            problem_id=problem_id,  # 传递显示序号到模板
@@ -1810,7 +1861,9 @@ def problem_ajax(problem_id):
                            answer_count=answer_count,
                            username=session['username'],
                            total_problems=total_problems,
-                           display_mapping=display_mapping)
+                           display_mapping=display_mapping,
+                           display_to_actual=display_to_actual,
+                           is_completed=is_completed)
 
 
 @app.route('/api/submit/<int:problem_id>', methods=['POST'])  # 保持参数名为 problem_id
@@ -1854,6 +1907,14 @@ def api_submit(problem_id):
         user_id = session['user_id']
         template_id = problem_data['template_id']
         problem_text = problem_data['problem_text']
+
+        # 如果题目已完成，阻止重复作答
+        if is_problem_completed(user_id, actual_id):
+            return jsonify({
+                'success': False,
+                'message': '该题已完成，无需重复作答',
+                'already_completed': True
+            })
 
         print(f"[API DEBUG] 用户 {user_id} 提交问题 {problem_id} (实际ID: {actual_id})")
         print(f"模板ID: {template_id}")
@@ -2035,6 +2096,7 @@ def admin_dashboard():
 
     # 获取统计数据
     stats = get_completion_stats()
+    total_problems = get_total_problem_count()
 
     # 获取最近完成的学生
     recent_completions = get_students_by_completion(completed=True, limit=10)
@@ -2045,7 +2107,8 @@ def admin_dashboard():
     return render_template('admin_dashboard.html',
                            stats=stats,
                            recent_completions=recent_completions,
-                           incomplete_students=incomplete_students)
+                           incomplete_students=incomplete_students,
+                           total_problems=total_problems)
 
 
 @app.route('/admin/add_problem', methods=['GET', 'POST'])
@@ -2223,6 +2286,13 @@ def admin_delete_problem(template_id):
 
         conn.commit()
 
+        # 删除题目后刷新所有用户的完成状态和统计
+        try:
+            updated_count = update_all_users_completion_status()
+            print(f"ℹ️ 已刷新 {updated_count} 个用户的完成状态")
+        except Exception as update_error:
+            print(f"⚠️ 删除题目后刷新完成状态失败: {update_error}")
+
         # 如果题目有专属图片，检查并删除图片文件
         if template and template['image_filename']:
             try:
@@ -2263,15 +2333,7 @@ def update_all_status():
     cursor = conn.cursor(dictionary=True)
 
     try:
-        # 获取所有用户
-        cursor.execute("SELECT id FROM users")
-        users = cursor.fetchall()
-
-        updated_count = 0
-        for user in users:
-            if update_user_completion_status(user['id']):
-                updated_count += 1
-
+        updated_count = update_all_users_completion_status()
         flash(f'成功更新 {updated_count} 个用户的完成状态', 'success')
 
     except Exception as e:
@@ -2341,6 +2403,10 @@ def admin_students_by_status(status):
 
     completed = (status == 'completed')
     students = get_students_by_completion(completed=completed)
+    total_problems = get_total_problem_count()
+    completion_stats = get_completion_stats()
+    total_students = completion_stats['stats']['total_students'] or 0
+    completed_students = completion_stats['stats']['completed_count'] or 0
 
     status_text = '已完成' if completed else '未完成'
 
@@ -2348,6 +2414,9 @@ def admin_students_by_status(status):
                            students=students,
                            status=status,
                            status_text=status_text,
+                           total_problems=total_problems,
+                           total_students=total_students,
+                           completed_students=completed_students,
                            username=session['username'])
 
 
