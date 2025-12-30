@@ -1157,6 +1157,24 @@ def update_user_completion_status(user_id):
         conn.close()
 
 
+def update_all_users_completion_status():
+    """为所有用户刷新完成状态，返回更新数量"""
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        cursor.execute("SELECT id FROM users")
+        users = cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+    for user in users:
+        update_user_completion_status(user['id'])
+
+    return len(users)
+
+
 def get_completion_stats():
     """获取完成情况统计"""
     conn = get_db_connection()
@@ -2223,6 +2241,13 @@ def admin_delete_problem(template_id):
 
         conn.commit()
 
+        # 删除题目后刷新所有用户的完成状态和统计
+        try:
+            updated_count = update_all_users_completion_status()
+            print(f"ℹ️ 已刷新 {updated_count} 个用户的完成状态")
+        except Exception as update_error:
+            print(f"⚠️ 删除题目后刷新完成状态失败: {update_error}")
+
         # 如果题目有专属图片，检查并删除图片文件
         if template and template['image_filename']:
             try:
@@ -2263,15 +2288,7 @@ def update_all_status():
     cursor = conn.cursor(dictionary=True)
 
     try:
-        # 获取所有用户
-        cursor.execute("SELECT id FROM users")
-        users = cursor.fetchall()
-
-        updated_count = 0
-        for user in users:
-            if update_user_completion_status(user['id']):
-                updated_count += 1
-
+        updated_count = update_all_users_completion_status()
         flash(f'成功更新 {updated_count} 个用户的完成状态', 'success')
 
     except Exception as e:
