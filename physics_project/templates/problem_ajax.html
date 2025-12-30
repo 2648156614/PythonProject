@@ -1598,6 +1598,10 @@ const answerCount = {{ answer_count }};
 const totalProblems = {{ total_problems }};
 let totalAttempts = {{ total_attempts }};
 let timerInitialized = false;  // 添加标志防止重复初始化
+const displayMapping = {{ display_mapping | tojson }};
+const displayToActual = {{ display_to_actual | tojson }};
+const isProblemCompleted = {{ 'true' if is_completed else 'false' }};
+let completionLocked = false;
 
 // 初始化全局正确答案变量
 let currentCorrectAnswers = {{ problem.correct_answers | tojson }};
@@ -2105,6 +2109,43 @@ function getCurrentAnswer() {
     return false;
 }
 
+// 根据显示序号获取实际题目ID
+function getActualIdFromDisplay(displayId) {
+    if (displayToActual && displayToActual[displayId]) {
+        return displayToActual[displayId];
+    }
+
+    for (const [actualId, info] of Object.entries(displayMapping)) {
+        if (info.display_number === displayId) {
+            return parseInt(actualId);
+        }
+    }
+
+    return null;
+}
+
+// 锁定已完成题目的输入
+function handleCompletedProblem() {
+    if (completionLocked) {
+        return;
+    }
+
+    completionLocked = true;
+    disableInputs();
+
+    const submitBtn = document.getElementById('submit-btn');
+    if (submitBtn) {
+        submitBtn.style.display = 'none';
+    }
+
+    const nextBtn = document.getElementById('next-btn');
+    if (nextBtn) {
+        nextBtn.style.display = 'inline-block';
+    }
+
+    showMessage('该题已完成，无需再次作答', 'success');
+}
+
 // 获取题目完成状态
 async function getProblemCompletionStatus() {
     try {
@@ -2125,9 +2166,12 @@ async function updateProblemSidebar() {
     const completionStatus = await getProblemCompletionStatus();
     const sidebarItems = document.querySelectorAll('#problem-sidebar .list-group-item');
 
+    const currentActualId = getActualIdFromDisplay({{ problem_id }});
+
     sidebarItems.forEach(item => {
         const problemId = parseInt(item.getAttribute('data-problem-id'));
-        const isCompleted = completionStatus[problemId] || false;
+        const actualId = getActualIdFromDisplay(problemId);
+        const isCompleted = actualId ? completionStatus[actualId] || false : false;
         const currentProblemId = {{ problem_id }};
         const statusBadge = item.querySelector('.problem-status-badge');
 
@@ -2146,7 +2190,17 @@ async function updateProblemSidebar() {
         } else {
             statusBadge.innerHTML = '<span class="badge bg-secondary"><i class="bi bi-circle"></i> 未开始</span>';
         }
+
+        if (isCompleted) {
+            item.classList.add('completed');
+        } else {
+            item.classList.remove('completed');
+        }
     });
+
+    if (currentActualId && completionStatus[currentActualId]) {
+        handleCompletedProblem();
+    }
 }
 
 // 初始化题目侧边栏
@@ -2261,6 +2315,13 @@ document.getElementById('answer-form').addEventListener('submit', async function
 
         const data = await response.json();
         console.log('API响应:', data);
+
+        if (data.already_completed) {
+            showMessage(data.message || '该题已完成，无需再次作答', 'info');
+            handleCompletedProblem();
+            resetSubmitButton();
+            return;
+        }
 
         if (data.success) {
             if (data.correct) {
@@ -2391,6 +2452,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 初始化双模式输入系统
     initDualModeInput();
+
+    // 已完成的题目直接锁定输入
+    if (isProblemCompleted) {
+        handleCompletedProblem();
+    }
 
     // 移动端特殊处理：监听输入框变化
     if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
@@ -2585,13 +2651,6 @@ window.addEventListener('beforeunload', function() {
     if (spotlightTimer) {
         clearInterval(spotlightTimer);
         spotlightTimer = null;
-    }
-
-    // 清理蒙版元素
-    if (spotlightElement) {
-        spotlightElement.remove();
-        spotlightElement = null;
-        problemContentContainer = null;
     }
 });
 
@@ -2814,6 +2873,11 @@ window.toggleInputMode = function() {
     border: none;
     border-bottom: 1px solid #e9ecef;
     transition: all 0.2s ease;
+}
+
+#problem-sidebar .list-group-item.completed {
+    background-color: #e7f8ee;
+    color: #198754;
 }
 
 #problem-sidebar .list-group-item:last-child {
