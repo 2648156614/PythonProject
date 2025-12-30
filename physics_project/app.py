@@ -227,6 +227,18 @@ def get_problem_display_info():
     return display_mapping
 
 
+def build_display_to_actual_map():
+    """生成显示序号到实际ID的映射，便于前端查找"""
+    mapping = get_problem_display_info()
+    display_to_actual = {}
+
+    for actual_id, info in mapping.items():
+        display_number = info['display_number']
+        display_to_actual[display_number] = actual_id
+
+    return display_to_actual
+
+
 def get_display_number(actual_id):
     """根据实际ID获取显示序号"""
     mapping = get_problem_display_info()
@@ -242,6 +254,24 @@ def get_actual_id(display_number):
         if info['display_number'] == display_number:
             return actual_id
     return None  # 找不到对应的实际ID
+
+
+def is_problem_completed(user_id, template_id):
+    """检查指定题目是否已被用户正确完成"""
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) as completed
+            FROM user_responses
+            WHERE user_id = %s AND template_id = %s AND is_correct = TRUE
+        """, (user_id, template_id))
+        result = cursor.fetchone()
+        return result and result.get('completed', 0) > 0
+    finally:
+        cursor.close()
+        conn.close()
 
 
 def get_total_problem_count():
@@ -1780,6 +1810,7 @@ def problem_ajax(problem_id):
 
     # 获取题目显示映射和总数
     display_mapping = get_problem_display_info()
+    display_to_actual = build_display_to_actual_map()
     total_problems = len(display_mapping)
 
     # 1. 验证题目序号
@@ -1821,6 +1852,8 @@ def problem_ajax(problem_id):
     print(f"当前题目参数: {problem_data['var_values']}")
     print(f"=== Ajax问题页面结束 ===\n")
 
+    is_completed = is_problem_completed(session['user_id'], actual_id)
+
     return render_template('problem_ajax.html',
                            problem=problem_data,
                            problem_id=problem_id,  # 传递显示序号到模板
@@ -1828,7 +1861,9 @@ def problem_ajax(problem_id):
                            answer_count=answer_count,
                            username=session['username'],
                            total_problems=total_problems,
-                           display_mapping=display_mapping)
+                           display_mapping=display_mapping,
+                           display_to_actual=display_to_actual,
+                           is_completed=is_completed)
 
 
 @app.route('/api/submit/<int:problem_id>', methods=['POST'])  # 保持参数名为 problem_id
@@ -1872,6 +1907,14 @@ def api_submit(problem_id):
         user_id = session['user_id']
         template_id = problem_data['template_id']
         problem_text = problem_data['problem_text']
+
+        # 如果题目已完成，阻止重复作答
+        if is_problem_completed(user_id, actual_id):
+            return jsonify({
+                'success': False,
+                'message': '该题已完成，无需重复作答',
+                'already_completed': True
+            })
 
         print(f"[API DEBUG] 用户 {user_id} 提交问题 {problem_id} (实际ID: {actual_id})")
         print(f"模板ID: {template_id}")
