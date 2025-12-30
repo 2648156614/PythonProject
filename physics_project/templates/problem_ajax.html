@@ -2652,13 +2652,6 @@ window.addEventListener('beforeunload', function() {
         clearInterval(spotlightTimer);
         spotlightTimer = null;
     }
-
-    // 清理蒙版元素
-    if (spotlightElement) {
-        spotlightElement.remove();
-        spotlightElement = null;
-        problemContentContainer = null;
-    }
 });
 
 // ======================== 调试功能 ========================
