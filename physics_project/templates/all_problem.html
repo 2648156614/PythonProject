@@ -551,6 +551,71 @@ document.addEventListener('DOMContentLoaded', function() {
     document.addEventListener('click', function() {
         setTimeout(updateAllProblemsSpotlightLayout, 100);
     });
+
+    // ============ 添加复制保护 ============
+    const problemContainer = document.getElementById('problem-list-container');
+
+    if (problemContainer) {
+        // 1. 防止右键菜单
+        problemContainer.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+            alert('题目内容不可复制');
+            return false;
+        });
+
+        // 2. 防止键盘快捷键复制
+        document.addEventListener('keydown', function(e) {
+            const activeElement = document.activeElement;
+
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+                const isInInput = activeElement.tagName === 'INPUT' ||
+                                 activeElement.tagName === 'TEXTAREA' ||
+                                 activeElement.tagName === 'SELECT';
+
+                if (!isInInput) {
+                    e.preventDefault();
+                    alert('题目内容不可复制');
+                    return false;
+                }
+            }
+        });
+
+        // 3. 防止触摸长按
+        problemContainer.addEventListener('touchstart', function(e) {
+            const touchTimer = setTimeout(function() {
+                alert('题目内容不可复制');
+                e.preventDefault();
+            }, 500);
+
+            const cancelTimer = function() {
+                clearTimeout(touchTimer);
+                problemContainer.removeEventListener('touchend', cancelTimer);
+            };
+
+            problemContainer.addEventListener('touchend', cancelTimer);
+        });
+
+        // 4. 防止文本选择
+        document.addEventListener('selectstart', function(e) {
+            const allowedTags = ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'];
+            if (!allowedTags.includes(e.target.tagName)) {
+                e.preventDefault();
+                return false;
+            }
+        });
+    }
+
+    // 5. 防止开发者工具
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'F12' ||
+            (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i')) ||
+            (e.ctrlKey && e.shiftKey && e.key === 'J') ||
+            (e.ctrlKey && e.key === 'U')) {
+            e.preventDefault();
+            alert('开发者工具已禁用');
+            return false;
+        }
+    });
 });
 
 </script>
@@ -616,6 +681,52 @@ document.addEventListener('DOMContentLoaded', function() {
 .btn, a, button, input, select {
     position: relative;
     z-index: 3 !important;
+}
+
+/* 防止复制题目内容 */
+#problem-list-container,
+.math-formula,
+.problem-card .card-body > div:not(.btn-group) {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    -moz-user-select: none !important;
+    -ms-user-select: none !important;
+    cursor: default !important;
+}
+
+/* 允许按钮和表单元素 */
+.btn, a, button, input, select {
+    user-select: auto !important;
+    -webkit-user-select: auto !important;
+    cursor: pointer !important;
+}
+
+/* 防止图片拖拽 */
+.problem-image {
+    pointer-events: none !important;
+    -webkit-user-drag: none !important;
+}
+
+/* 防止公式被选中 */
+mjx-container {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
+/* 增强保护：禁止选择文本 */
+.problem-card .card-body {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    -khtml-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+}
+
+/* 输入框和按钮除外 */
+input, textarea, select, button {
+    -webkit-user-select: auto !important;
+    user-select: auto !important;
 }
 </style>
 {% endblock %}

@@ -1,3 +1,5 @@
+import math
+import numpy as np
 import traceback
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
 import mysql.connector
@@ -78,28 +80,128 @@ def login_required(f):
 
 
 def is_correct(user_answer, correct_answer):
-    """判断答案是否正确（允许1%误差）"""
+    """判断答案是否正确（允许1%误差，支持科学计数法范围）"""
     print(f"[DEBUG is_correct] 用户答案: {user_answer}, 正确答案: {correct_answer}")
+    print(f"[DEBUG is_correct] 类型 - 用户答案: {type(user_answer)}, 正确答案: {type(correct_answer)}")
 
     # 处理None值
     if user_answer is None or correct_answer is None:
         print(f"[DEBUG is_correct] 答案为空，返回False")
         return False
 
-    if correct_answer == 0:
-        result = user_answer == 0
-        print(f"[DEBUG is_correct] 正确答案为0，比较结果: {result}")
+    # 转换为浮点数
+    try:
+        user_float = float(user_answer)
+        correct_float = float(correct_answer)
+    except (ValueError, TypeError) as e:
+        print(f"[DEBUG is_correct] 数值转换失败: {e}")
+        return False
+
+    print(f"[DEBUG is_correct] 转换后 - 用户答案: {user_float}, 正确答案: {correct_float}")
+
+    # 处理特殊情况：两个都是0
+    if user_float == 0 and correct_float == 0:
+        print(f"[DEBUG is_correct] 两者均为0，返回True")
+        return True
+
+    # 处理特殊情况：其中一个为0，另一个不为0
+    if user_float == 0 or correct_float == 0:
+        # 如果其中一个为0，则要求完全相等（因为0的1%还是0）
+        result = user_float == correct_float
+        print(f"[DEBUG is_correct] 有0值，直接比较结果: {result}")
         return result
 
-    tolerance = abs(correct_answer) * 0.01  # 1%容错
-    difference = abs(user_answer - correct_answer)
-    result = difference <= tolerance
+    # 计算相对误差（百分比）
+    relative_error = abs((user_float - correct_float) / correct_float) * 100
 
-    print(f"[DEBUG is_correct] 容错范围: ±{tolerance:.6f}")
-    print(f"[DEBUG is_correct] 实际差异: {difference:.6f}")
+    # 动态误差阈值（根据数量级调整）
+    base_tolerance = 1.0  # 基础1%误差
+
+    # 对于非常大或非常小的数，稍微放宽误差限制
+    magnitude = math.log10(abs(correct_float))
+    if magnitude > 10:  # 大于10^10
+        adjusted_tolerance = min(base_tolerance * 1.5, 2.0)
+    elif magnitude < -10:  # 小于10^-10
+        adjusted_tolerance = min(base_tolerance * 1.5, 2.0)
+    else:
+        adjusted_tolerance = base_tolerance
+
+    # 检查相对误差
+    result = relative_error <= adjusted_tolerance
+
+    print(f"[DEBUG is_correct] 相对误差: {relative_error:.6f}%")
+    print(f"[DEBUG is_correct] 允许误差: {adjusted_tolerance}%")
     print(f"[DEBUG is_correct] 是否在容错范围内: {result}")
 
+    # 调试信息：显示科学计数法格式
+    print(f"[DEBUG is_correct] 科学计数法 - 用户答案: {user_float:.2e}, 正确答案: {correct_float:.2e}")
+
     return result
+
+
+# 新增辅助函数：科学计数法格式化
+def format_scientific(value, precision=2):
+    """将数值格式化为科学计数法字符串"""
+    if value == 0:
+        return "0.00 × 10⁰"
+
+    is_negative = value < 0
+    abs_value = abs(value)
+
+    # 计算指数
+    exponent = math.floor(math.log10(abs_value))
+    mantissa = abs_value / (10 ** exponent)
+
+    # 调整到标准形式 (1 ≤ mantissa < 10)
+    if mantissa >= 10:
+        mantissa /= 10
+        exponent += 1
+    elif mantissa < 1:
+        mantissa *= 10
+        exponent -= 1
+
+    # 格式化
+    sign = '-' if is_negative else ''
+    mantissa_str = f"{mantissa:.{precision}f}"
+
+    # 获取上标数字
+    superscript_digits = {
+        '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+        '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹'
+    }
+
+    exp_str = str(exponent)
+    sup_exp = ''
+    if exp_str[0] == '-':
+        sup_exp += '⁻'
+        exp_str = exp_str[1:]
+    for digit in exp_str:
+        sup_exp += superscript_digits.get(digit, digit)
+
+    return f"{sign}{mantissa_str} × 10{sup_exp}"
+
+
+# 新增函数：用于生成正确答案的科学计数法提示
+def get_scientific_hint(correct_answers):
+    """生成科学计数法格式的正确答案提示"""
+    if not correct_answers or not isinstance(correct_answers, list):
+        return "正确答案: 暂无"
+
+    formatted_answers = []
+    for answer in correct_answers:
+        try:
+            formatted = format_scientific(float(answer))
+            formatted_answers.append(formatted)
+        except:
+            formatted_answers.append(str(answer))
+
+    if len(formatted_answers) == 1:
+        return f"正确答案: {formatted_answers[0]}"
+    else:
+        parts = []
+        for i, answer in enumerate(formatted_answers):
+            parts.append(f"答案{i + 1} = {answer}")
+        return f"正确答案: {', '.join(parts)}"
 
 
 def get_problem_display_info():
@@ -149,7 +251,7 @@ def get_total_problem_count():
 
 
 def generate_problem_from_template(template_id, max_attempts=50):
-    """从模板生成具体问题 - 完全动态的合理性验证（无学习表）"""
+    """从模板生成具体问题 - 完全动态的合理性验证（无学习表），包含答案单位处理"""
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     cursor.execute("SELECT * FROM problem_templates WHERE id = %s", (template_id,))
@@ -217,23 +319,132 @@ def generate_problem_from_template(template_id, max_attempts=50):
                         max(current_max, value * 1.2)  # 稍微扩大上限
                     )
 
-                return {
+                # 解析答案单位
+                answer_units = []
+                if template.get('answer_units'):
+                    answer_units = [u.strip() for u in template['answer_units'].split(',')]
+
+                # 确保答案单位数量与答案数量匹配
+                answer_count = template.get('answer_count', 1)
+                if len(answer_units) < answer_count:
+                    # 如果单位数量不足，用空字符串补齐
+                    answer_units.extend([''] * (answer_count - len(answer_units)))
+                elif len(answer_units) > answer_count:
+                    # 如果单位数量过多，只取前answer_count个
+                    answer_units = answer_units[:answer_count]
+
+                # 格式化显示答案（保留适当小数位数）
+                formatted_correct_answers = []
+                for i, answer in enumerate(correct_answers):
+                    # 根据答案大小选择合适的小数位数
+                    abs_answer = abs(answer)
+                    if abs_answer == 0:
+                        formatted_correct_answers.append(0.0)
+                    elif abs_answer >= 1000:
+                        formatted_correct_answers.append(round(answer, 0))
+                    elif abs_answer >= 1:
+                        formatted_correct_answers.append(round(answer, 2))
+                    elif abs_answer >= 0.01:
+                        formatted_correct_answers.append(round(answer, 4))
+                    else:
+                        formatted_correct_answers.append(round(answer, 6))
+
+                # 构建最终返回数据，包含答案单位
+                result_data = {
                     'problem_text': problem_content,
                     'var_values': var_values,
-                    'correct_answers': correct_answers,
+                    'correct_answers': formatted_correct_answers,  # 使用格式化后的答案
+                    'answer_units': answer_units,  # 添加答案单位
                     'template_id': template_id,
                     'answer_count': template.get('answer_count', 1),
                     'template_name': template['template_name'],
                     'image_filename': template.get('image_filename')
                 }
 
+                # 调试信息
+                print(f"✅ 题目生成成功 - 模板: {template['template_name']}")
+                print(f"   变量值: {var_values}")
+                print(f"   正确答案: {formatted_correct_answers}")
+                print(f"   答案单位: {answer_units}")
+                print(f"   答案数量: {answer_count}")
+
+                return result_data
+
         except Exception as e:
             # 计算失败，继续尝试
+            print(f"⚠️ 题目生成尝试 {attempt + 1} 失败: {str(e)}")
             continue
 
     # 最终回退：使用保守但保证成功的方法
     return generate_fallback_problem(template, variables, local_vars)
 
+
+def generate_fallback_problem(template, variables, local_vars):
+    """最终回退方案：使用保守范围生成题目"""
+    var_values = {}
+    for var in variables:
+        # 使用非常保守但保证合理的小范围
+        var_values[var] = round(random.uniform(1.0, 3.0), 2)
+
+    problem_content = format_problem_text(template['problem_text'], var_values)
+
+    try:
+        current_vars = local_vars.copy()
+        current_vars.update(var_values)
+        correct_answer = eval(template['solution_formula'], {}, current_vars)
+
+        if isinstance(correct_answer, tuple):
+            correct_answers = [float(a.evalf()) if hasattr(a, 'evalf') else float(a) for a in correct_answer]
+        else:
+            correct_answers = [
+                float(correct_answer.evalf()) if hasattr(correct_answer, 'evalf') else float(correct_answer)]
+
+        answer_count = template.get('answer_count', 1)
+        if len(correct_answers) != answer_count:
+            correct_answers = [correct_answers[0]] * answer_count
+    except:
+        correct_answers = [0.0] * template.get('answer_count', 1)
+
+    # 解析答案单位（回退方案也处理单位）
+    answer_units = []
+    if template.get('answer_units'):
+        answer_units = [u.strip() for u in template['answer_units'].split(',')]
+
+    # 确保答案单位数量与答案数量匹配
+    answer_count = template.get('answer_count', 1)
+    if len(answer_units) < answer_count:
+        answer_units.extend([''] * (answer_count - len(answer_units)))
+    elif len(answer_units) > answer_count:
+        answer_units = answer_units[:answer_count]
+
+    # 格式化答案
+    formatted_correct_answers = []
+    for answer in correct_answers:
+        abs_answer = abs(answer)
+        if abs_answer >= 1000:
+            formatted_correct_answers.append(round(answer, 0))
+        elif abs_answer >= 1:
+            formatted_correct_answers.append(round(answer, 2))
+        else:
+            formatted_correct_answers.append(round(answer, 4))
+
+    result_data = {
+        'problem_text': problem_content,
+        'var_values': var_values,
+        'correct_answers': formatted_correct_answers,
+        'answer_units': answer_units,  # 包含答案单位
+        'template_id': template['id'],
+        'answer_count': template.get('answer_count', 1),
+        'template_name': template['template_name'],
+        'image_filename': template.get('image_filename')
+    }
+
+    print(f"⚠️ 使用回退方案生成题目 - 模板: {template['template_name']}")
+    print(f"   变量值: {var_values}")
+    print(f"   正确答案: {formatted_correct_answers}")
+    print(f"   答案单位: {answer_units}")
+
+    return result_data
 
 def get_adaptive_default_range(var_name):
     """根据变量名特征自适应设置默认范围"""
@@ -317,43 +528,6 @@ def check_dynamic_consistency(answer, var_values, attempt_num):
         return False
 
     return True
-
-
-def generate_fallback_problem(template, variables, local_vars):
-    """最终回退方案：使用保守范围生成题目"""
-    var_values = {}
-    for var in variables:
-        # 使用非常保守但保证合理的小范围
-        var_values[var] = round(random.uniform(1.0, 3.0), 2)
-
-    problem_content = format_problem_text(template['problem_text'], var_values)
-
-    try:
-        current_vars = local_vars.copy()
-        current_vars.update(var_values)
-        correct_answer = eval(template['solution_formula'], {}, current_vars)
-
-        if isinstance(correct_answer, tuple):
-            correct_answers = [float(a.evalf()) if hasattr(a, 'evalf') else float(a) for a in correct_answer]
-        else:
-            correct_answers = [
-                float(correct_answer.evalf()) if hasattr(correct_answer, 'evalf') else float(correct_answer)]
-
-        answer_count = template.get('answer_count', 1)
-        if len(correct_answers) != answer_count:
-            correct_answers = [correct_answers[0]] * answer_count
-    except:
-        correct_answers = [0.0] * template.get('answer_count', 1)
-
-    return {
-        'problem_text': problem_content,
-        'var_values': var_values,
-        'correct_answers': correct_answers,
-        'template_id': template['id'],
-        'answer_count': template.get('answer_count', 1),
-        'template_name': template['template_name'],
-        'image_filename': template.get('image_filename')
-    }
 
 
 def format_problem_text(problem_text, var_values):
@@ -526,7 +700,7 @@ def repair_database():
 
 
 def initialize_database():
-    """初始化数据库 - 使用新的图片管理方式"""
+    """初始化数据库 - 使用新的图片管理方式，包含答案单位字段"""
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -544,7 +718,7 @@ def initialize_database():
     )
     """)
 
-    # 创建问题模板表（如果不存在）- 添加图片文件名字段
+    # 创建问题模板表（如果不存在）- 添加图片文件名字段和答案单位字段
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS problem_templates (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -553,6 +727,7 @@ def initialize_database():
         variables TEXT NOT NULL,
         solution_formula TEXT NOT NULL,
         answer_count INT DEFAULT 1,
+        answer_units TEXT,  -- 新增：答案单位字段
         difficulty VARCHAR(20) DEFAULT 'medium',
         image_filename VARCHAR(255) NULL
     )
@@ -589,7 +764,7 @@ def initialize_database():
     )
     """)
 
-    # 插入电磁学题目模板 - 使用新的图片管理方式
+    # 插入电磁学题目模板 - 包含答案单位信息
     templates = [
         # 题目1：闭合圆形线圈的感应电流（无图片）
         {
@@ -610,6 +785,7 @@ def initialize_database():
             'variables': 'r,R,i',
             'formula': "i * R / (pi * (r/100)**2)",
             'answer_count': 1,
+            'answer_units': 'T/s',  # 磁感应强度变化率，单位：特斯拉/秒
             'image_filename': None
         },
 
@@ -621,7 +797,7 @@ def initialize_database():
             <h5>题目描述：</h5>
             <p>中国是目前世界上高速铁路运行里程最长的国家，已知"复兴号"高铁长度为 L = __L__ m，车厢高 h = __h__ m，正常行驶速度 v = __v__ km/h。</p>
             <p>假设地面附近地磁场的水平分量约为 B = __B__ μT，将列车视为一整块导体，只考虑地磁场的水平分量。</p>
-            <p>则"复兴号"列车在自西向东正常行驶的过程中，求车头与车尾之间的电势差大小（单位：μV）。</p>
+            <p>则"复兴号"列车在自西向东正常行驶的过程中，求车顶与车底之间的电势差大小。</p>
             <div class="problem-hint-static">
                         <h5>解题提示：</h5>
                 <p>1. 速度单位换算：km/h → m/s</p>
@@ -634,6 +810,7 @@ def initialize_database():
             'variables': 'L,h,v,B',
             'formula': "B * L * (v / 3.6)",
             'answer_count': 1,
+            'answer_units': 'μV',  # 电势差，单位：微伏
             'image_filename': None
         },
 
@@ -660,6 +837,7 @@ def initialize_database():
             'variables': 'l,B,omega',
             'formula': "(3/8) * B * omega * l**2, -(3/8) * B * omega * l**2,0",
             'answer_count': 3,
+            'answer_units': 'V,V,V',  # 三个电动势，单位都是伏特
             'image_filename': 'problem3.png'
         },
 
@@ -688,6 +866,7 @@ def initialize_database():
             'variables': 'v,AC,dBdt,B,x',
             'formula': "B * v * (AC/100), (B * v * (AC/100)) + (dBdt * (x/100) * (AC/100)), 1",
             'answer_count': 3,
+            'answer_units': 'V,V,-',  # 前两个是伏特，第三个是无量纲
             'image_filename': 'problem4.png'
         },
 
@@ -715,6 +894,7 @@ def initialize_database():
             'variables': 'L,B,v',
             'formula': "B * v * L /2 , -1",
             'answer_count': 2,
+            'answer_units': 'V,-',  # 第一个是伏特，第二个是无量纲
             'image_filename': 'problem5.png'
         },
 
@@ -739,6 +919,7 @@ def initialize_database():
             'variables': '',
             'formula': "1, 0",
             'answer_count': 2,
+            'answer_units': '-,-',  # 两个都是无量纲
             'image_filename': None
         },
 
@@ -762,6 +943,7 @@ def initialize_database():
             'variables': 'R,a,B0,omega',
             'formula': "(pi * omega * B0 / R) * ((a/100)**2 + (2*a/100)**2)",
             'answer_count': 1,
+            'answer_units': 'A',  # 电流，单位：安培
             'image_filename': 'problem7.png'
         },
 
@@ -787,11 +969,12 @@ def initialize_database():
             'variables': 'dBdt,m,r,R,density',
             'formula': "(m * dBdt) / (4 * pi * 1.7e-7 * density)",
             'answer_count': 1,
+            'answer_units': 'A',  # 电流，单位：安培
             'image_filename': None
         }
     ]
 
-    # 插入模板到数据库 - 使用新的方式
+    # 插入模板到数据库 - 包含答案单位信息
     for template in templates:
         cursor.execute("SELECT id FROM problem_templates WHERE template_name = %s", (template['name'],))
         if not cursor.fetchone():
@@ -807,22 +990,28 @@ def initialize_database():
                 '''
                 problem_text = img_html + problem_text
 
+            # 插入包含答案单位的数据
             cursor.execute("""
-                INSERT INTO problem_templates (template_name, problem_text, variables, 
-                                            solution_formula, answer_count, image_filename)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO problem_templates 
+                (template_name, problem_text, variables, solution_formula, 
+                 answer_count, answer_units, image_filename)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (
                 template['name'],
                 problem_text,
                 template['variables'],
                 template['formula'],
                 template['answer_count'],
+                template.get('answer_units', ''),
                 template.get('image_filename')
             ))
+            print(f"✅ 插入题目: {template['name']}, 答案单位: {template.get('answer_units', '无')}")
 
     conn.commit()
     cursor.close()
     conn.close()
+
+    print("✅ 数据库初始化完成，所有题目已添加答案单位")
 
 
 def create_admin_user():
@@ -2473,6 +2662,7 @@ def exam_system_status():
 if __name__ == '__main__':
     # 确保图片目录存在
     os.makedirs('static/images', exist_ok=True)
+
 
     # 初始化数据库
     initialize_database()
