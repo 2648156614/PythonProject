@@ -1560,12 +1560,22 @@ def statistics():
 
         # 总体统计 - 添加错误处理
         cursor.execute("""
-            SELECT 
-                COUNT(*) as total_count,
-                SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) as correct_count,
-                AVG(time_taken) as avg_time
-            FROM user_responses 
-            WHERE user_id = %s
+            WITH attempt_summary AS (
+                SELECT
+                    template_id,
+                    attempt_count,
+                    COUNT(*) AS total_answers,
+                    SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) AS correct_answers,
+                    MAX(time_taken) AS time_taken
+                FROM user_responses
+                WHERE user_id = %s
+                GROUP BY template_id, attempt_count
+            )
+            SELECT
+                COUNT(*) AS total_count,
+                SUM(CASE WHEN correct_answers = total_answers THEN 1 ELSE 0 END) AS correct_count,
+                AVG(time_taken) AS avg_time
+            FROM attempt_summary
         """, (session['user_id'],))
 
         stats_result = cursor.fetchone()
@@ -1587,15 +1597,25 @@ def statistics():
 
         # 各题目统计 - 添加错误处理
         cursor.execute("""
-            SELECT 
+            WITH attempt_summary AS (
+                SELECT
+                    template_id,
+                    attempt_count,
+                    COUNT(*) AS total_answers,
+                    SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) AS correct_answers,
+                    MAX(time_taken) AS time_taken
+                FROM user_responses
+                WHERE user_id = %s
+                GROUP BY template_id, attempt_count
+            )
+            SELECT
                 t.template_name,
-                COUNT(*) as total,
-                SUM(CASE WHEN r.is_correct THEN 1 ELSE 0 END) as correct,
-                AVG(r.time_taken) as avg_time
-            FROM user_responses r
-            JOIN problem_templates t ON r.template_id = t.id
-            WHERE r.user_id = %s
-            GROUP BY t.id, t.template_name
+                COUNT(*) AS total,
+                SUM(CASE WHEN s.correct_answers = s.total_answers THEN 1 ELSE 0 END) AS correct,
+                AVG(s.time_taken) AS avg_time
+            FROM attempt_summary s
+            JOIN problem_templates t ON s.template_id = t.id
+            GROUP BY s.template_id, t.template_name
             ORDER BY t.id
         """, (session['user_id'],))
 
