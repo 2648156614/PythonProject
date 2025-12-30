@@ -32,64 +32,6 @@ MAX_FILE_SIZE = 16 * 1024 * 1024  # 16MB
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 
-def add_answer_units_to_existing_templates():
-    """为现有题目模板添加答案单位信息"""
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-
-    # 定义各题目的答案单位
-    answer_units_map = {
-        1: 'T/s',  # 题目1：dB/dt 单位
-        2: 'μV',  # 题目2：电势差单位
-        3: 'V,V,V',  # 题目3：三个电动势
-        4: 'V,V,-',  # 题目4：前两个是V，第三个是无量纲
-        5: 'V,-',  # 题目5：第一个是V，第二个是无量纲
-        6: '-,-',  # 题目6：两个都是无量纲
-        7: 'A',  # 题目7：电流
-        8: 'A',  # 题目8：电流
-    }
-
-    try:
-        for template_id, answer_units in answer_units_map.items():
-            cursor.execute("""
-                UPDATE problem_templates 
-                SET answer_units = %s
-                WHERE id = %s
-            """, (answer_units, template_id))
-            print(f"✅ 更新题目 {template_id} 的答案单位: {answer_units}")
-
-        conn.commit()
-        print("✅ 所有题目答案单位更新完成")
-    except Exception as e:
-        print(f"❌ 更新失败: {e}")
-        conn.rollback()
-    finally:
-        cursor.close()
-        conn.close()
-
-def migrate_add_answer_units():
-    """迁移数据库，添加答案单位字段"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    try:
-        # 检查列是否存在，不存在则添加
-        cursor.execute("SHOW COLUMNS FROM problem_templates LIKE 'answer_units'")
-        if not cursor.fetchone():
-            cursor.execute("ALTER TABLE problem_templates ADD COLUMN answer_units TEXT AFTER answer_count")
-            print("✅ 成功添加 answer_units 列")
-        else:
-            print("ℹ️ answer_units 列已存在")
-
-        conn.commit()
-        print("✅ 数据库迁移完成")
-    except Exception as e:
-        print(f"❌ 数据库迁移失败: {e}")
-        conn.rollback()
-    finally:
-        cursor.close()
-        conn.close()
-
 def allowed_file(filename):
     """检查文件扩展名是否允许"""
     return '.' in filename and \
@@ -855,7 +797,7 @@ def initialize_database():
             <h5>题目描述：</h5>
             <p>中国是目前世界上高速铁路运行里程最长的国家，已知"复兴号"高铁长度为 L = __L__ m，车厢高 h = __h__ m，正常行驶速度 v = __v__ km/h。</p>
             <p>假设地面附近地磁场的水平分量约为 B = __B__ μT，将列车视为一整块导体，只考虑地磁场的水平分量。</p>
-            <p>则"复兴号"列车在自西向东正常行驶的过程中，求车头与车尾之间的电势差大小。</p>
+            <p>则"复兴号"列车在自西向东正常行驶的过程中，求车顶与车底之间的电势差大小。</p>
             <div class="problem-hint-static">
                         <h5>解题提示：</h5>
                 <p>1. 速度单位换算：km/h → m/s</p>
@@ -2721,8 +2663,7 @@ if __name__ == '__main__':
     # 确保图片目录存在
     os.makedirs('static/images', exist_ok=True)
 
-    migrate_add_answer_units()
-    add_answer_units_to_existing_templates()
+
     # 初始化数据库
     initialize_database()
 
