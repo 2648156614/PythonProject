@@ -2053,6 +2053,7 @@ def admin_dashboard():
 
     # 获取统计数据
     stats = get_completion_stats()
+    total_problems = get_total_problem_count()
 
     # 获取最近完成的学生
     recent_completions = get_students_by_completion(completed=True, limit=10)
@@ -2063,7 +2064,8 @@ def admin_dashboard():
     return render_template('admin_dashboard.html',
                            stats=stats,
                            recent_completions=recent_completions,
-                           incomplete_students=incomplete_students)
+                           incomplete_students=incomplete_students,
+                           total_problems=total_problems)
 
 
 @app.route('/admin/add_problem', methods=['GET', 'POST'])
@@ -2358,6 +2360,10 @@ def admin_students_by_status(status):
 
     completed = (status == 'completed')
     students = get_students_by_completion(completed=completed)
+    total_problems = get_total_problem_count()
+    completion_stats = get_completion_stats()
+    total_students = completion_stats['stats']['total_students'] or 0
+    completed_students = completion_stats['stats']['completed_count'] or 0
 
     status_text = '已完成' if completed else '未完成'
 
@@ -2365,6 +2371,9 @@ def admin_students_by_status(status):
                            students=students,
                            status=status,
                            status_text=status_text,
+                           total_problems=total_problems,
+                           total_students=total_students,
+                           completed_students=completed_students,
                            username=session['username'])
 
 
