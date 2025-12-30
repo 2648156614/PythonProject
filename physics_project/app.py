@@ -256,19 +256,53 @@ def get_actual_id(display_number):
     return None  # 找不到对应的实际ID
 
 
+def has_full_correct_attempt(cursor, user_id, template_id):
+    """判断是否存在所有答案均正确的作答记录"""
+    cursor.execute("""
+        SELECT attempt_count
+        FROM user_responses
+        WHERE user_id = %s AND template_id = %s
+        GROUP BY attempt_count
+        HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+        LIMIT 1
+    """, (user_id, template_id))
+    return cursor.fetchone() is not None
+
+
+def get_latest_full_correct_attempt(cursor, user_id, template_id):
+    """获取最近一次所有答案均正确的作答统计"""
+    cursor.execute("""
+        SELECT attempt_count
+        FROM user_responses
+        WHERE user_id = %s AND template_id = %s
+        GROUP BY attempt_count
+        HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+        ORDER BY attempt_count DESC
+        LIMIT 1
+    """, (user_id, template_id))
+    attempt_row = cursor.fetchone()
+
+    if not attempt_row:
+        return None
+
+    attempt_count = attempt_row['attempt_count']
+    cursor.execute("""
+        SELECT time_taken, attempt_count,
+               CASE WHEN is_correct THEN 100 ELSE 0 END as score
+        FROM user_responses
+        WHERE user_id = %s AND template_id = %s AND attempt_count = %s
+        LIMIT 1
+    """, (user_id, template_id, attempt_count))
+    return cursor.fetchone()
+
+
 def is_problem_completed(user_id, template_id):
     """检查指定题目是否已被用户正确完成"""
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
     try:
-        cursor.execute("""
-            SELECT COUNT(*) as completed
-            FROM user_responses
-            WHERE user_id = %s AND template_id = %s AND is_correct = TRUE
-        """, (user_id, template_id))
-        result = cursor.fetchone()
-        return result and result.get('completed', 0) > 0
+        return has_full_correct_attempt(cursor, user_id, template_id)
     finally:
         cursor.close()
         conn.close()
@@ -1138,19 +1172,31 @@ def update_user_completion_status(user_id):
 
         # 检查是否完成所有题目
         cursor.execute("""
-            SELECT COUNT(DISTINCT template_id) as completed_count 
-            FROM user_responses 
-            WHERE user_id = %s AND is_correct = TRUE
+            SELECT COUNT(DISTINCT template_id) as completed_count
+            FROM (
+                SELECT template_id, attempt_count
+                FROM user_responses
+                WHERE user_id = %s
+                GROUP BY template_id, attempt_count
+                HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+            ) as completed_attempts
         """, (user_id,))
         completed_count = cursor.fetchone()['completed_count']
 
-        # 计算总分和总用时
+        # 计算总分和总用时（仅统计完全正确的尝试）
         cursor.execute("""
-            SELECT 
+            SELECT
                 COUNT(*) as total_score,
                 SUM(time_taken) as total_time
-            FROM user_responses 
-            WHERE user_id = %s AND is_correct = TRUE
+            FROM user_responses
+            WHERE (user_id, template_id, attempt_count) IN (
+                SELECT user_id, template_id, attempt_count
+                FROM user_responses
+                WHERE user_id = %s
+                GROUP BY template_id, attempt_count
+                HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+            )
+            AND is_correct = TRUE
         """, (user_id,))
         stats = cursor.fetchone()
 
@@ -1422,11 +1468,15 @@ def dashboard():
             for display_info in display_mapping.values():
                 actual_id = display_info['actual_id']
                 cursor.execute("""
-                    SELECT COUNT(*) as count FROM user_responses 
-                    WHERE user_id = %s AND template_id = %s AND is_correct = TRUE
+                    SELECT 1
+                    FROM user_responses
+                    WHERE user_id = %s AND template_id = %s
+                    GROUP BY attempt_count
+                    HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+                    LIMIT 1
                 """, (session['user_id'], actual_id))
                 result = cursor.fetchone()
-                if result['count'] == 0:
+                if not result:
                     current_display_number = display_info['display_number']
                     break
 
@@ -1705,24 +1755,12 @@ def all_problems():
             problem_content = re.sub(pattern, replace_var, problem_text)
 
             # 检查题目是否已完成
-            cursor.execute("""
-                SELECT COUNT(*) as completed 
-                FROM user_responses 
-                WHERE user_id = %s AND template_id = %s AND is_correct = TRUE
-            """, (session['user_id'], template['id']))
-            completed = cursor.fetchone()['completed'] > 0
+            completed = has_full_correct_attempt(cursor, session['user_id'], template['id'])
 
             # 获取答题统计（如果已完成）
             stats = None
             if completed:
-                cursor.execute("""
-                    SELECT time_taken, attempt_count, 
-                           CASE WHEN is_correct THEN 100 ELSE 0 END as score
-                    FROM user_responses 
-                    WHERE user_id = %s AND template_id = %s AND is_correct = TRUE
-                    ORDER BY response_time DESC LIMIT 1
-                """, (session['user_id'], template['id']))
-                stats_result = cursor.fetchone()
+                stats_result = get_latest_full_correct_attempt(cursor, session['user_id'], template['id'])
                 if stats_result:
                     stats = {
                         'time_taken': round(stats_result['time_taken'], 1),
@@ -2595,13 +2633,7 @@ def api_user_completion_status():
         for template in templates:
             template_id = template['id']
             # 检查该题目是否已完成（有正确答题记录）
-            cursor.execute("""
-                SELECT COUNT(*) as completed 
-                FROM user_responses 
-                WHERE user_id = %s AND template_id = %s AND is_correct = TRUE
-            """, (session['user_id'], template_id))
-            result = cursor.fetchone()
-            completion_status[template_id] = result['completed'] > 0
+            completion_status[template_id] = has_full_correct_attempt(cursor, session['user_id'], template_id)
 
         cursor.close()
         conn.close()
