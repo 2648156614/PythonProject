@@ -606,8 +606,34 @@ def format_problem_text(problem_text, var_values):
     return re.sub(pattern, replace_var, problem_text)
 
 
+def classify_error_type(user_answer, correct_answer, is_correct):
+    """根据用户答案与正确答案的差异推断错误类型"""
+    if is_correct:
+        return '正确'
+
+    if user_answer is None:
+        return '未作答'
+
+    try:
+        user_float = float(user_answer)
+        correct_float = float(correct_answer)
+    except (TypeError, ValueError):
+        return '格式错误'
+
+    if correct_float == 0:
+        return '计算错误' if user_float != 0 else '正确'
+
+    relative_error = abs((user_float - correct_float) / correct_float) * 100
+
+    if relative_error > 50:
+        return '概念错误'
+    if relative_error > 5:
+        return '计算误差'
+    return '精度或单位偏差'
+
+
 def save_user_response(user_id, template_id, problem_text, user_answers, correct_answers, is_correct_list,
-                       attempt_count, time_taken):
+                       attempt_count, time_taken, error_types=None):
     """保存用户答题记录（支持多答案）"""
     print(f"\n=== 保存答题记录开始 ===")
     print(f"用户ID: {user_id}")
@@ -653,19 +679,25 @@ def save_user_response(user_id, template_id, problem_text, user_answers, correct
         all_success = True
         saved_count = 0
 
-        for i, (user_answer, correct_answer, is_correct) in enumerate(
-                zip(user_answers, correct_answers, is_correct_list)):
+        if error_types is None:
+            error_types = [
+                classify_error_type(user_answer, correct_answer, is_correct)
+                for user_answer, correct_answer, is_correct in zip(user_answers, correct_answers, is_correct_list)
+            ]
+
+        for i, (user_answer, correct_answer, is_correct, error_type) in enumerate(
+                zip(user_answers, correct_answers, is_correct_list, error_types)):
             try:
                 print(
-                    f"正在保存答案 {i + 1}: user_answer={user_answer}, correct_answer={correct_answer}, is_correct={is_correct}")
+                    f"正在保存答案 {i + 1}: user_answer={user_answer}, correct_answer={correct_answer}, is_correct={is_correct}, error_type={error_type}")
 
                 cursor.execute("""
-                    INSERT INTO user_responses 
-                    (user_id, template_id, problem_text, user_answer, 
-                     correct_answer, is_correct, attempt_count, time_taken, answer_index)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO user_responses
+                    (user_id, template_id, problem_text, user_answer,
+                     correct_answer, is_correct, error_type, attempt_count, time_taken, answer_index)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (user_id, template_id, truncated_problem_text, user_answer,
-                      correct_answer, is_correct, attempt_count, time_taken, i))
+                      correct_answer, is_correct, error_type, attempt_count, time_taken, i))
 
                 saved_count += 1
                 print(f"✅ 答案 {i + 1} 保存成功")
@@ -728,6 +760,13 @@ def repair_database():
         if not cursor.fetchone():
             cursor.execute("ALTER TABLE user_responses ADD COLUMN template_id INT NOT NULL AFTER user_id")
             print("已添加 template_id 列")
+
+        cursor.execute("SHOW COLUMNS FROM user_responses LIKE 'error_type'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE user_responses ADD COLUMN error_type VARCHAR(50) DEFAULT '未知' AFTER is_correct")
+            cursor.execute("UPDATE user_responses SET error_type = '正确' WHERE is_correct = TRUE")
+            cursor.execute("UPDATE user_responses SET error_type = '计算误差' WHERE is_correct = FALSE")
+            print("已添加 error_type 列")
 
         # 添加外键约束（如果不存在）
         cursor.execute("""
@@ -807,6 +846,7 @@ def initialize_database():
         user_answer FLOAT NOT NULL,
         correct_answer FLOAT NOT NULL,
         is_correct BOOLEAN NOT NULL,
+        error_type VARCHAR(50) DEFAULT '未知',
         attempt_count INT NOT NULL,
         time_taken FLOAT NOT NULL,
         response_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -2000,6 +2040,11 @@ def api_submit(problem_id):
             print(
                 f"答案{i + 1}: {user_answer} (正确: {correct_answer}, 结果: {'正确' if answer_is_correct else '错误'})")
 
+        error_types = [
+            classify_error_type(user_answer, correct_answer, is_correct)
+            for user_answer, correct_answer, is_correct in zip(user_answers, correct_answers, is_correct_list)
+        ]
+
         # 增加累计尝试次数
         session['current_problem']['total_attempts'] += 1
         total_attempts = session['current_problem']['total_attempts']
@@ -2007,7 +2052,7 @@ def api_submit(problem_id):
         # 保存答题记录 - 使用更新后的累计尝试次数
         save_success = save_user_response(
             user_id, template_id, problem_text, user_answers,
-            correct_answers, is_correct_list, total_attempts, time_taken
+            correct_answers, is_correct_list, total_attempts, time_taken, error_types
         )
 
         if not save_success:
@@ -2544,21 +2589,31 @@ def admin_all_problems_stats():
     cursor = conn.cursor(dictionary=True)
 
     try:
-        # 修复SQL查询 - 简化查询逻辑
+        # 题目层级统计
         cursor.execute("""
-            SELECT 
+            SELECT
                 t.id as template_id,
                 t.template_name,
-                COUNT(DISTINCT u.id) as total_students,
-                COUNT(DISTINCT CASE WHEN ur.is_correct = TRUE THEN u.id ELSE NULL END) as completed_students,
                 COUNT(ur.id) as total_attempts,
                 SUM(CASE WHEN ur.is_correct = TRUE THEN 1 ELSE 0 END) as correct_attempts,
+                COUNT(DISTINCT CASE WHEN ur.is_correct = TRUE THEN ur.user_id END) as completed_students,
+                COUNT(DISTINCT ur.user_id) as participant_students,
+                AVG(ur.time_taken) as avg_time,
                 AVG(CASE WHEN ur.is_correct = TRUE THEN ur.time_taken ELSE NULL END) as avg_correct_time,
-                AVG(ur.time_taken) as avg_time
+                SUM(ur.time_taken) as total_time_spent,
+                COALESCE((
+                    SELECT error_type
+                    FROM user_responses ur2
+                    JOIN users u2 ON ur2.user_id = u2.id
+                    WHERE ur2.template_id = t.id AND u2.username != 'admin' AND ur2.is_correct = FALSE
+                    GROUP BY error_type
+                    ORDER BY COUNT(*) DESC
+                    LIMIT 1
+                ), '暂无数据') as top_error_type
             FROM problem_templates t
-            CROSS JOIN users u
-            LEFT JOIN user_responses ur ON t.id = ur.template_id AND u.id = ur.user_id
-            WHERE u.username != 'admin'
+            LEFT JOIN user_responses ur ON t.id = ur.template_id
+            LEFT JOIN users u ON ur.user_id = u.id
+            WHERE (u.username != 'admin' OR u.id IS NULL)
             GROUP BY t.id, t.template_name
             ORDER BY t.id
         """)
@@ -2577,9 +2632,49 @@ def admin_all_problems_stats():
         total_students_result = cursor.fetchone()
         total_students = total_students_result['total'] if total_students_result else 0
 
+        # 汇总总用时和分布
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total_attempts,
+                SUM(time_taken) as total_time,
+                AVG(time_taken) as avg_time,
+                AVG(CASE WHEN is_correct = TRUE THEN time_taken ELSE NULL END) as avg_correct_time
+            FROM user_responses ur
+            JOIN users u ON ur.user_id = u.id
+            WHERE u.username != 'admin'
+        """)
+        overall_stats = cursor.fetchone() or {}
+        overall_stats.setdefault('total_attempts', 0)
+        overall_stats.setdefault('total_time', 0)
+        overall_stats.setdefault('avg_time', 0)
+        overall_stats.setdefault('avg_correct_time', 0)
+
+        cursor.execute("""
+            SELECT HOUR(ur.response_time) as hour_slot, COUNT(*) as attempts
+            FROM user_responses ur
+            JOIN users u ON ur.user_id = u.id
+            WHERE u.username != 'admin'
+            GROUP BY hour_slot
+            ORDER BY hour_slot
+        """)
+        time_distribution = cursor.fetchall()
+
+        cursor.execute("""
+            SELECT error_type, COUNT(*) as count
+            FROM user_responses ur
+            JOIN users u ON ur.user_id = u.id
+            WHERE u.username != 'admin' AND ur.is_correct = FALSE
+            GROUP BY error_type
+            ORDER BY count DESC
+        """)
+        error_breakdown = cursor.fetchall()
+
         return render_template('admin_all_problems_stats.html',
                                problem_stats=problem_stats,
                                total_students=total_students,
+                               overall_stats=overall_stats,
+                               time_distribution=time_distribution,
+                               error_breakdown=error_breakdown,
                                username=session['username'])
 
     except Exception as e:

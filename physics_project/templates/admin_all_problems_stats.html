@@ -14,7 +14,7 @@
     </div>
 
     <!-- 总体统计 -->
-    <div class="row mb-4">
+    <div class="row mb-4 g-3">
         <div class="col-md-3">
             <div class="card text-white bg-primary">
                 <div class="card-body text-center">
@@ -34,22 +34,17 @@
         <div class="col-md-3">
             <div class="card text-white bg-success">
                 <div class="card-body text-center">
-                    <h5 class="card-title">
-                        {% set total_completions = problem_stats|sum(attribute='completed_students') %}
-                        {{ total_completions }}
-                    </h5>
-                    <p class="card-text">总完成次数</p>
+                    <h5 class="card-title">{{ overall_stats.total_attempts or 0 }}</h5>
+                    <p class="card-text">累计答题次数</p>
                 </div>
             </div>
         </div>
         <div class="col-md-3">
             <div class="card text-white bg-warning">
                 <div class="card-body text-center">
-                    <h5 class="card-title">
-                        {% set total_attempts = problem_stats|sum(attribute='total_attempts') %}
-                        {{ total_attempts }}
-                    </h5>
-                    <p class="card-text">总答题次数</p>
+                    {% set total_minutes = (overall_stats.total_time or 0) / 60 %}
+                    <h5 class="card-title">{{ '%.1f'|format(total_minutes) }} 分钟</h5>
+                    <p class="card-text">累计答题时长</p>
                 </div>
             </div>
         </div>
@@ -67,14 +62,15 @@
                         <tr>
                             <th>#</th>
                             <th>题目名称</th>
-                            <th>完成学生数</th>
+                            <th>参与学生</th>
                             <th>完成率</th>
                             <th>总答题次数</th>
                             <th>正确次数</th>
                             <th>正确率</th>
+                            <th>平均用时(全部)</th>
                             <th>平均用时(正确)</th>
-                            <th>总体平均用时</th>
-                            <th>难度</th>
+                            <th>累计用时</th>
+                            <th>常见错误</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -83,8 +79,8 @@
                             <td>{{ stat.template_id }}</td>
                             <td>{{ stat.template_name }}</td>
                             <td>
-                                <span class="fw-bold">{{ stat.completed_students }}</span>
-                                <small class="text-muted">/ {{ total_students }}</small>
+                                <span class="fw-bold">{{ stat.participant_students or 0 }}</span>
+                                <small class="text-muted">完成 {{ stat.completed_students or 0 }}</small>
                             </td>
                             <td>
                                 {% set completion_rate = (stat.completed_students/total_students*100) if total_students > 0 else 0 %}
@@ -104,13 +100,6 @@
                                 </span>
                             </td>
                             <td>
-                                {% if stat.avg_correct_time %}
-                                <span class="text-success">{{ "%.1f"|format(stat.avg_correct_time) }}秒</span>
-                                {% else %}
-                                <span class="text-muted">-</span>
-                                {% endif %}
-                            </td>
-                            <td>
                                 {% if stat.avg_time %}
                                 <span class="text-info">{{ "%.1f"|format(stat.avg_time) }}秒</span>
                                 {% else %}
@@ -118,19 +107,71 @@
                                 {% endif %}
                             </td>
                             <td>
-                                {% set completion_rate = (stat.completed_students/total_students*100) if total_students > 0 else 0 %}
-                                {% if completion_rate >= 80 %}
-                                <span class="badge bg-success">简单</span>
-                                {% elif completion_rate >= 50 %}
-                                <span class="badge bg-warning">中等</span>
+                                {% if stat.avg_correct_time %}
+                                <span class="text-success">{{ "%.1f"|format(stat.avg_correct_time) }}秒</span>
                                 {% else %}
-                                <span class="badge bg-danger">困难</span>
+                                <span class="text-muted">-</span>
                                 {% endif %}
+                            </td>
+                            <td>
+                                {% if stat.total_time_spent %}
+                                <span class="text-primary">{{ "%.1f"|format(stat.total_time_spent) }}秒</span>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge bg-secondary">{{ stat.top_error_type }}</span>
                             </td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mt-4 g-3">
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-clock-history me-2"></i> 答题时间分布</h5>
+                </div>
+                <div class="card-body">
+                    {% if time_distribution %}
+                    <ul class="list-group">
+                        {% for slot in time_distribution %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <span>{{ '%02d'|format(slot.hour_slot) }}:00 - {{ '%02d'|format(slot.hour_slot) }}:59</span>
+                            <span class="badge bg-primary rounded-pill">{{ slot.attempts }} 次</span>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% else %}
+                    <p class="text-muted mb-0">暂无时间分布数据</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-bug me-2"></i> 常见错误类型</h5>
+                </div>
+                <div class="card-body">
+                    {% if error_breakdown %}
+                    <ul class="list-group">
+                        {% for error in error_breakdown %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <span>{{ error.error_type }}</span>
+                            <span class="badge bg-danger rounded-pill">{{ error.count }} 次</span>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% else %}
+                    <p class="text-muted mb-0">暂无错误统计数据</p>
+                    {% endif %}
+                </div>
             </div>
         </div>
     </div>
