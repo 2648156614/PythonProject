@@ -229,40 +229,31 @@
     <!-- 图表JavaScript -->
     <script>
     document.addEventListener('DOMContentLoaded', function() {
-        // 可缩放圆形包裹图，将四个统计表格融入气泡中展示
-        const rawStats = {{ problem_stats|tojson|safe }} || [];
-        const rows = rawStats.map(stat => ({
-            name: stat.template_name || '未命名题型',
-            total: stat.total,
-            correct: stat.correct,
-            accuracy: stat.total > 0 ? +(stat.correct / stat.total * 100).toFixed(1) : 0,
-            avg_time: +(stat.avg_time || 0).toFixed(1)
-        }));
-
+        // 可缩放圆形包裹图
         const circleData = {
             name: '题目覆盖',
-            children: [
-                { name: '答题次数', key: 'total' },
-                { name: '正确次数', key: 'correct' },
-                { name: '正确率', key: 'accuracy' },
-                { name: '平均用时', key: 'avg_time' }
-            ].map(item => ({
-                ...item,
-                value: rows.reduce((sum, row) => sum + (row[item.key] || 0), 0) || 1,
-                rows
+            children: (
+                {{ problem_stats|tojson|safe }} || []
+            ).map(stat => ({
+                name: stat.template_name || '未命名题型',
+                value: Math.max(stat.total, 1),
+                total: stat.total,
+                correct: stat.correct,
+                accuracy: stat.total > 0 ? +(stat.correct / stat.total * 100).toFixed(1) : 0,
+                avg_time: +(stat.avg_time || 0).toFixed(1)
             }))
         };
 
-        const packWidth = Math.max(document.getElementById('circlePack').clientWidth, 720);
-        const packHeight = Math.max(packWidth * 0.62, 480);
+        const packWidth = document.getElementById('circlePack').clientWidth || 960;
+        const packHeight = 520;
 
         const color = d3.scaleLinear()
-            .domain([0, 3])
+            .domain([0, 5])
             .range(["#e0d7ff", "#6f42c1"]);
 
         const root = d3.pack()
             .size([packWidth, packHeight])
-            .padding(14)(
+            .padding(8)(
                 d3.hierarchy(circleData)
                     .sum(d => d.value)
                     .sort((a, b) => b.value - a.value)
@@ -273,13 +264,12 @@
 
         const svg = d3.select('#circlePack')
             .append('svg')
-            .attr('viewBox', `0 0 ${packWidth} ${packHeight}`)
+            .attr('viewBox', `-${packWidth / 2} -${packHeight / 2} ${packWidth} ${packHeight}`)
             .style('display', 'block')
             .style('width', '100%')
             .style('height', `${packHeight}px`)
             .style('cursor', 'pointer')
-            .style('background', 'radial-gradient(circle at 30% 30%, #faf5ff, #f2ecff)')
-            .style('overflow', 'visible');
+            .style('background', 'radial-gradient(circle at 30% 30%, #faf5ff, #f2ecff)');
 
         const tooltip = d3.select('#circlePack')
             .append('div')
@@ -296,16 +286,15 @@
             .on('mouseover', function(event, d) {
                 if (d === root) return;
                 d3.select(this).transition().duration(150).attr('stroke-width', 3);
-                if (d.depth === 1) {
-                    tooltip.transition().duration(150).style('opacity', 1);
-                    tooltip.html(`
-                        <strong>${d.data.name}</strong><br/>
-                        共 ${d.data.rows.length} 个题型<br/>
-                        点击可放大查看表格详情
-                    `)
-                    .style('left', `${event.offsetX + 10}px`)
-                    .style('top', `${event.offsetY + 10}px`);
-                }
+                tooltip.transition().duration(150).style('opacity', 1);
+                tooltip.html(`
+                    <strong>${d.data.name}</strong><br/>
+                    答题次数：${d.data.total} 次<br/>
+                    正确率：${d.data.accuracy}%<br/>
+                    平均用时：${d.data.avg_time} 秒
+                `)
+                .style('left', `${event.offsetX + 10}px`)
+                .style('top', `${event.offsetY + 10}px`);
             })
             .on('mouseout', function() {
                 d3.select(this).transition().duration(150).attr('stroke-width', 2);
@@ -325,77 +314,22 @@
             .style('display', d => d.parent === root ? 'inline' : 'none')
             .text(d => d.data.name);
 
-        const tables = svg.append('g')
-            .selectAll('foreignObject')
-            .data(root.children)
-            .join('foreignObject')
-            .attr('class', 'bubble-table')
-            .attr('width', d => d.r * 1.8)
-            .attr('height', d => d.r * 1.8)
-            .html(d => createTableHTML(d.data));
-
         zoomTo([root.x, root.y, root.r * 2]);
-
-        function createTableHTML(data) {
-            const titles = {
-                total: '答题次数',
-                correct: '正确次数',
-                accuracy: '正确率 (%)',
-                avg_time: '平均用时 (秒)'
-            };
-
-            const rowsHTML = (data.rows || []).map(row => `
-                <tr>
-                    <td>${row.name}</td>
-                    <td>${data.key === 'accuracy' ? row.accuracy + '%' : row[data.key]}</td>
-                </tr>
-            `).join('');
-
-            return `
-                <div class="bubble-table-card">
-                    <div class="bubble-table-title">${titles[data.key] || data.name}</div>
-                    <div class="bubble-table-scroll">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>题型</th>
-                                    <th>${titles[data.key] || data.name}</th>
-                                </tr>
-                            </thead>
-                            <tbody>${rowsHTML}</tbody>
-                        </table>
-                    </div>
-                </div>
-            `;
-        }
 
         function zoomTo(v) {
             const k = packWidth / v[2];
             view = v;
-
-            labels
-                .attr('transform', d => `translate(${(d.x - v[0]) * k + packWidth / 2}, ${(d.y - v[1]) * k + packHeight / 2})`)
-                .style('font-size', d => `${12 + (d.depth === 1 ? 2 : 0)}px`);
-
-            nodes
-                .attr('transform', d => `translate(${(d.x - v[0]) * k + packWidth / 2}, ${(d.y - v[1]) * k + packHeight / 2})`)
-                .attr('r', d => d.r * k);
-
-            tables
-                .attr('x', d => (d.x - v[0]) * k + packWidth / 2 - d.r * k * 0.9)
-                .attr('y', d => (d.y - v[1]) * k + packHeight / 2 - d.r * k * 0.9)
-                .attr('width', d => d.r * k * 1.8)
-                .attr('height', d => d.r * k * 1.8)
-                .style('opacity', d => d === focus ? 1 : 0.35)
-                .style('pointer-events', d => d === focus ? 'auto' : 'none');
+            labels.attr('transform', d => `translate(${(d.x - v[0]) * k}, ${(d.y - v[1]) * k})`);
+            nodes.attr('transform', d => `translate(${(d.x - v[0]) * k}, ${(d.y - v[1]) * k})`);
+            nodes.attr('r', d => d.r * k);
         }
 
         function zoom(event, d) {
-            focus = d.depth === 1 ? d : root;
+            focus = d;
             const transition = svg.transition()
                 .duration(event.altKey ? 2000 : 750)
                 .tween('zoom', () => {
-                    const i = d3.interpolateZoom(view, [focus.x, focus.y, focus.r * 2.4]);
+                    const i = d3.interpolateZoom(view, [focus.x, focus.y, focus.r * 2]);
                     return t => zoomTo(i(t));
                 });
 
