@@ -35,23 +35,6 @@
             </div>
         </div>
 
-        <!-- 快速操作卡片 -->
-        <div class="card mt-3">
-            <div class="card-body">
-                <h6 class="card-title"><i class="bi bi-lightning me-2"></i>快速操作</h6>
-                <div class="d-grid gap-2">
-                    <button type="button" class="btn btn-warning btn-sm" id="sidebar-refresh-btn">
-                        <i class="bi bi-arrow-clockwise me-1"></i> 刷新本题
-                    </button>
-                    <a href="{{ url_for('all_problems') }}" class="btn btn-outline-primary btn-sm">
-                        <i class="bi bi-list-ul me-1"></i> 所有题目
-                    </a>
-                    <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary btn-sm">
-                        <i class="bi bi-house me-1"></i> 返回主页
-                    </a>
-                </div>
-            </div>
-        </div>
     </div>
 
     <!-- 主题目区域 -->
@@ -674,7 +657,6 @@
     #answer-form textarea,
     #answer-form select,
     #answer-form button,
-    #sidebar-refresh-btn,
     .btn,
     .form-control {
         user-select: auto !important;
@@ -2411,18 +2393,6 @@ document.getElementById('next-btn').addEventListener('click', function() {
 
 // 刷新题目按钮
 document.getElementById('refresh-btn').addEventListener('click', function() {
-    if (confirm('确定要刷新题目吗？这将生成新的题目参数，但不会增加尝试次数。')) {
-        refreshProblemParams()
-            .then(success => {
-                if (success) {
-                    resetFormState();
-                }
-            });
-    }
-});
-
-// 侧边栏刷新按钮
-document.getElementById('sidebar-refresh-btn').addEventListener('click', function() {
     if (confirm('确定要刷新题目吗？这将生成新的题目参数，但不会增加尝试次数。')) {
         refreshProblemParams()
             .then(success => {
