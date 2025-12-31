@@ -201,6 +201,26 @@ body {
     transform: translateX(5px);
 }
 
+.circle-pack-container {
+    position: relative;
+    min-height: 520px;
+}
+
+.circle-pack-tooltip {
+    position: absolute;
+    background: #ffffff;
+    border: 1px solid #e0e0f5;
+    box-shadow: 0 10px 30px rgba(111, 66, 193, 0.15);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 0.9rem;
+    color: #3c366b;
+    pointer-events: none;
+    transform: translate(-50%, -50%);
+    white-space: nowrap;
+    transition: opacity 0.2s ease;
+}
+
 .sidebar-menu i {
     margin-right: 10px;
     width: 20px;
