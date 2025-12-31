@@ -30,9 +30,6 @@
                     {% if completed_count > 0 %}继续{% endif %}学习
                 </a>
                 {% endif %}
-                <a href="{{ url_for('all_problems') }}" class="btn btn-outline-light btn-lg">
-                    <i class="bi bi-list-check me-2"></i>所有题目
-                </a>
                 <!-- 管理员功能按钮 -->
                 {% if username == 'admin' %}
                 <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-light btn-lg">
@@ -204,10 +201,6 @@
                                 开始学习第 {{ current_problem }} 题吧！
                             {% endif %}
                         </p>
-                        <a href="{{ url_for('problem_ajax', problem_id=current_problem) }}" class="btn btn-primary">
-                            <i class="bi bi-play-circle me-1"></i>
-                            {% if completed_count > 0 %}继续{% endif %}学习
-                        </a>
                     {% endif %}
                 </div>
             </div>
