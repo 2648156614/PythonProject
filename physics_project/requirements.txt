@@ -9,6 +9,7 @@ mysql-connector-python==8.1.0
 # 数学计算
 sympy==1.12
 numpy==1.24.3
+redis==5.0.8
 
 # 生产服务器
 waitress==2.1.2
