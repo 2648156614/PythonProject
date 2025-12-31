@@ -85,6 +85,21 @@
     </div>
 
     {% if total_count > 0 %}
+    <!-- 圆形包裹可视化 -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card shadow h-100">
+                <div class="card-header bg-purple text-white" style="background: linear-gradient(120deg, #6f42c1, #8e2de2);">
+                    <h6 class="mb-0"><i class="bi bi-bullseye"></i> 题型总览（缩放查看细节）</h6>
+                </div>
+                <div class="card-body">
+                    <div class="circle-pack-container" id="circlePack"></div>
+                    <p class="text-muted small text-center mb-0">悬停查看提示，点击圆圈可放大查看该题型的正确率与用时。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- 图表区域 -->
     <div class="row">
         <!-- 正确率环形图 -->
@@ -210,9 +225,182 @@
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
     <!-- 图表JavaScript -->
     <script>
     document.addEventListener('DOMContentLoaded', function() {
+        // 可缩放圆形包裹图：每个气泡包含原先四个表格（次数 / 正确 / 正确率 / 用时）
+        const rawStats = {{ problem_stats|tojson|safe }} || [];
+        const rows = rawStats.map(stat => ({
+            name: stat.template_name || '未命名题型',
+            total: stat.total,
+            correct: stat.correct,
+            accuracy: stat.total > 0 ? +(stat.correct / stat.total * 100).toFixed(1) : 0,
+            avg_time: +(stat.avg_time || 0).toFixed(1)
+        }));
+
+        const circleData = {
+            name: '题目覆盖',
+            children: rows.map(row => ({
+                ...row,
+                value: Math.max(row.total || row.correct || row.accuracy || row.avg_time, 1)
+            }))
+        };
+
+        const packWidth = Math.max(document.getElementById('circlePack').clientWidth, 720);
+        const packHeight = Math.max(packWidth * 0.62, 480);
+
+        const color = d3.scaleLinear()
+            .domain([0, 3])
+            .range(["#e0d7ff", "#6f42c1"]);
+
+        const root = d3.pack()
+            .size([packWidth, packHeight])
+            .padding(14)(
+                d3.hierarchy(circleData)
+                    .sum(d => d.value)
+                    .sort((a, b) => b.value - a.value)
+            );
+
+        let focus = root;
+        let view;
+
+        const svg = d3.select('#circlePack')
+            .append('svg')
+            .attr('viewBox', `0 0 ${packWidth} ${packHeight}`)
+            .style('display', 'block')
+            .style('width', '100%')
+            .style('height', `${packHeight}px`)
+            .style('cursor', 'pointer')
+            .style('background', 'radial-gradient(circle at 30% 30%, #faf5ff, #f2ecff)')
+            .style('overflow', 'visible');
+
+        const tooltip = d3.select('#circlePack')
+            .append('div')
+            .attr('class', 'circle-pack-tooltip')
+            .style('opacity', 0);
+
+        const nodes = svg.append('g')
+            .selectAll('circle')
+            .data(root.descendants())
+            .join('circle')
+            .attr('fill', d => d.depth === 0 ? 'transparent' : color(d.depth))
+            .attr('stroke', d => d.depth === 1 ? '#6f42c1' : '#fff')
+            .attr('stroke-width', 2)
+            .on('mouseover', function(event, d) {
+                if (d === root) return;
+                d3.select(this).transition().duration(150).attr('stroke-width', 3);
+                if (d.depth === 1) {
+                    tooltip.transition().duration(150).style('opacity', 1);
+                    tooltip.html(`
+                        <strong>${d.data.name}</strong><br/>
+                        答题次数：${d.data.total} 次<br/>
+                        正确率：${d.data.accuracy}%<br/>
+                        点击可放大查看表格详情
+                    `)
+                    .style('left', `${event.offsetX + 10}px`)
+                    .style('top', `${event.offsetY + 10}px`);
+                }
+            })
+            .on('mouseout', function() {
+                d3.select(this).transition().duration(150).attr('stroke-width', 2);
+                tooltip.transition().duration(200).style('opacity', 0);
+            })
+            .on('click', (event, d) => focus !== d && zoom(event, d));
+
+        const labels = svg.append('g')
+            .style('font', '14px sans-serif')
+            .attr('fill', '#44337a')
+            .attr('pointer-events', 'none')
+            .attr('text-anchor', 'middle')
+            .selectAll('text')
+            .data(root.descendants())
+            .join('text')
+            .style('fill-opacity', d => d.parent === root ? 1 : 0)
+            .style('display', d => d.parent === root ? 'inline' : 'none')
+            .text(d => d.data.name);
+
+        const tables = svg.append('g')
+            .selectAll('foreignObject')
+            .data(root.children || [])
+            .join('foreignObject')
+            .attr('class', 'bubble-table')
+            .attr('width', d => d.r * 1.8)
+            .attr('height', d => d.r * 1.8)
+            .html(d => createTableHTML(d.data));
+
+        zoomTo([root.x, root.y, root.r * 2]);
+
+        function createTableHTML(data) {
+            const grids = [
+                { title: '答题次数', value: data.total, unit: '次' },
+                { title: '正确次数', value: data.correct, unit: '次' },
+                { title: '正确率', value: `${data.accuracy}%`, unit: '' },
+                { title: '平均用时', value: data.avg_time, unit: '秒' }
+            ];
+
+            const tablesHTML = grids.map(item => `
+                <div class="bubble-mini-table">
+                    <div class="bubble-mini-title">${item.title}</div>
+                    <table>
+                        <tbody>
+                            <tr>
+                                <th>${data.name}</th>
+                            </tr>
+                            <tr>
+                                <td><strong>${item.value}</strong>${item.unit}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            `).join('');
+
+            return `
+                <div class="bubble-table-card bubble-table-grid">
+                    <div class="bubble-table-title">${data.name}</div>
+                    <div class="bubble-table-scroll bubble-grid">${tablesHTML}</div>
+                </div>
+            `;
+        }
+
+        function zoomTo(v) {
+            const k = packWidth / v[2];
+            view = v;
+
+            labels
+                .attr('transform', d => `translate(${(d.x - v[0]) * k + packWidth / 2}, ${(d.y - v[1]) * k + packHeight / 2})`)
+                .style('font-size', d => `${12 + (d.depth === 1 ? 2 : 0)}px`);
+
+            nodes
+                .attr('transform', d => `translate(${(d.x - v[0]) * k + packWidth / 2}, ${(d.y - v[1]) * k + packHeight / 2})`)
+                .attr('r', d => d.r * k);
+
+            tables
+                .attr('x', d => (d.x - v[0]) * k + packWidth / 2 - d.r * k * 0.9)
+                .attr('y', d => (d.y - v[1]) * k + packHeight / 2 - d.r * k * 0.9)
+                .attr('width', d => d.r * k * 1.8)
+                .attr('height', d => d.r * k * 1.8)
+                .style('opacity', d => d === focus ? 1 : 0.35)
+                .style('pointer-events', d => d === focus ? 'auto' : 'none');
+        }
+
+        function zoom(event, d) {
+            focus = d.depth === 1 ? d : root;
+            const transition = svg.transition()
+                .duration(event.altKey ? 2000 : 750)
+                .tween('zoom', () => {
+                    const i = d3.interpolateZoom(view, [focus.x, focus.y, focus.r * 2.4]);
+                    return t => zoomTo(i(t));
+                });
+
+            labels
+                .filter(function(node) { return node.parent === focus || this.style.display === 'inline'; })
+                .transition(transition)
+                .style('fill-opacity', node => node.parent === focus ? 1 : 0)
+                .on('start', function(node) { if (node.parent === focus) this.style.display = 'inline'; })
+                .on('end', function(node) { if (node.parent !== focus) this.style.display = 'none'; });
+        }
+
         // 正确率环形图
         const accuracyCtx = document.getElementById('accuracyChart').getContext('2d');
         const accuracyChart = new Chart(accuracyCtx, {
