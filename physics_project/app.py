@@ -1050,32 +1050,6 @@ def initialize_database():
             'answer_units': 'A',  # 电流，单位：安培
             'image_filename': 'problem7.png'
         },
-
-        # 题目8：铜制回路的感应电流（无图片）
-        {
-            'name': '铜制回路的感应电流',
-            'text': r"""
-                <div class="math-formula">
-                    <h5>题目描述：</h5>
-                    <p>有一磁感强度为 \( B \) 的均匀磁场，以恒定的变化率 \( \frac{dB}{dt} = __dBdt__ \, \text{T/s} \) 在变化。</p>
-                    <p>把一块质量为 \( m = __m__ \, \text{kg} \) 的铜，拉成截面半径为 \( r = __r__ \, \text{m} \) 的导线，</p>
-                    <p>并用它做成一个半径为 \( R = __R__ \, \text{m} \) 的圆形回路。圆形回路的平面与磁感强度 \( B \) 垂直。</p>
-                    <p>试求这回路中的感应电流。</p>
-                    <p>其中铜的电阻率 \( \rho = 1.7 \times 10^{-7} \, \Omega\cdot\text{m} \)，铜的密度 \( d = __density__ \, \text{kg/m}^3 \)。</p>
-                    <div class="problem-hint-static">
-                        <h5>解题提示：</h5>
-                        <p>导线长度与质量关系</p>
-                        <p>回路电阻计算</p>
-                        <p>感应电动势与电流关系</p>
-                    </div>
-                </div>
-            """,
-            'variables': 'dBdt,m,r,R,density',
-            'formula': "(m * dBdt) / (4 * pi * 1.7e-7 * density)",
-            'answer_count': 1,
-            'answer_units': 'A',  # 电流，单位：安培
-            'image_filename': None
-        }
     ]
 
     # 插入模板到数据库 - 包含答案单位信息
