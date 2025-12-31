@@ -23,6 +23,14 @@ app.secret_key = 'your_secret_key_here'
 # Redis 配置
 redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
 redis_client = redis.Redis.from_url(redis_url, decode_responses=True)
+POOL_TARGET = int(os.getenv('POOL_TARGET', 50))
+POOL_LOW_WATER = int(os.getenv('POOL_LOW_WATER', 25))
+POOL_REFILL_BATCH = int(os.getenv('POOL_REFILL_BATCH', 10))
+PROBLEM_TTL_SECONDS = int(os.getenv('PROBLEM_TTL_SECONDS', 900))
+
+TEMPLATE_CACHE = {}
+TEMPLATE_CACHE_TS = 0
+
 PROBLEM_POOL_TARGET_SIZE = int(os.getenv('PROBLEM_POOL_TARGET_SIZE', 20))
 PROBLEM_POOL_REFILL_BATCH = int(os.getenv('PROBLEM_POOL_REFILL_BATCH', 10))
 PROBLEM_TTL_SECONDS = int(os.getenv('PROBLEM_TTL_SECONDS', 900))
@@ -105,6 +113,30 @@ def get_problem_by_token(token):
         return None
 
 
+def load_template_from_db(template_id):
+    conn = get_db_connection()
+    if not conn:
+        return None
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT * FROM problem_templates WHERE id = %s", (template_id,))
+    template = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return template
+
+
+def get_template(template_id):
+    global TEMPLATE_CACHE, TEMPLATE_CACHE_TS
+    if template_id in TEMPLATE_CACHE:
+        return TEMPLATE_CACHE[template_id]
+
+    template = load_template_from_db(template_id)
+    if template:
+        TEMPLATE_CACHE[template_id] = template
+        TEMPLATE_CACHE_TS = time.time()
+    return template
+
+
 def refill_problem_pool(template_id, count):
     """生成题目并补充到池中"""
     created = 0
@@ -117,6 +149,10 @@ def refill_problem_pool(template_id, count):
 
 
 def ensure_problem_pool(template_id):
+    """低水位补货（小批量）"""
+    current_size = redis_client.llen(get_pool_key(template_id))
+    if current_size < POOL_LOW_WATER:
+        refill_problem_pool(template_id, POOL_REFILL_BATCH)
     """确保题目池达到目标大小"""
     current_size = redis_client.llen(get_pool_key(template_id))
     if current_size < PROBLEM_POOL_TARGET_SIZE:
@@ -129,6 +165,12 @@ def fetch_problem_from_pool(template_id):
     raw_problem = redis_client.rpop(get_pool_key(template_id))
 
     if not raw_problem:
+        problem_data = generate_problem_from_template(template_id)
+        if not problem_data:
+            return None, None
+        token = uuid.uuid4().hex
+        cache_problem_with_token(token, problem_data)
+        return token, problem_data
         refill_problem_pool(template_id, PROBLEM_POOL_REFILL_BATCH)
         raw_problem = redis_client.rpop(get_pool_key(template_id))
 
@@ -153,6 +195,30 @@ def generate_and_cache_problem(template_id):
     token = uuid.uuid4().hex
     cache_problem_with_token(token, problem_data)
     return token, problem_data
+
+
+def prewarm_pools():
+    print("[PREWARM] 开始预热题目池")
+    conn = get_db_connection()
+    if not conn:
+        print("[PREWARM] 数据库连接失败，跳过预热")
+        return
+
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT id FROM problem_templates")
+    template_ids = [row['id'] for row in cursor.fetchall()]
+    cursor.close()
+    conn.close()
+
+    for template_id in template_ids:
+        pool_size = redis_client.llen(get_pool_key(template_id))
+        if pool_size < POOL_TARGET:
+            to_add = POOL_TARGET - pool_size
+            print(f"[PREWARM] 模板 {template_id} 补货 {to_add} 道")
+            refill_problem_pool(template_id, to_add)
+        else:
+            print(f"[PREWARM] 模板 {template_id} 池已满足，当前 {pool_size}")
+    print("[PREWARM] 预热完成")
 
 
 # 登录装饰器
@@ -404,12 +470,7 @@ def get_total_problem_count():
 
 def generate_problem_from_template(template_id, max_attempts=10):
     """从模板生成具体问题 - 完全动态的合理性验证（无学习表），包含答案单位处理"""
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM problem_templates WHERE id = %s", (template_id,))
-    template = cursor.fetchone()
-    cursor.close()
-    conn.close()
+    template = get_template(template_id)
 
     if not template:
         return None
@@ -1733,6 +1794,14 @@ def debug_images():
     })
 
 
+@app.route('/debug/reload_templates', methods=['GET'])
+def reload_templates():
+    global TEMPLATE_CACHE, TEMPLATE_CACHE_TS
+    TEMPLATE_CACHE = {}
+    TEMPLATE_CACHE_TS = time.time()
+    return jsonify({'success': True, 'message': '模板缓存已清空', 'timestamp': TEMPLATE_CACHE_TS})
+
+
 @app.route('/history')
 @login_required
 def history():
@@ -3040,5 +3109,11 @@ if __name__ == '__main__':
     images_ok = verify_image_consistency()
     if not images_ok:
         print("⚠️ 警告: 部分图片文件缺失，请检查以上列表")
+
+    prewarm_flag = os.getenv('PREWARM') == '1' or os.getenv('PORT') == '5000'
+    if prewarm_flag:
+        prewarm_pools()
+    else:
+        print("[PREWARM] 跳过预热，未满足 PREWARM 或端口条件")
 
     app.run(host='0.0.0.0', port=5000, debug=False)
