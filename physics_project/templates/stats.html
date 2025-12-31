@@ -117,6 +117,24 @@
         </div>
     </div>
 
+    <!-- 可缩放圆形包裹视图 -->
+    <div class="row">
+        <div class="col-12 mb-4">
+            <div class="card shadow h-100">
+                <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="bi bi-bullseye"></i> 题目表现气泡概览</h6>
+                    <small class="text-muted">点击气泡即可放大查看详情</small>
+                </div>
+                <div class="card-body">
+                    <div id="circlePack" class="d3-zoom-pack position-relative"></div>
+                    <div class="text-muted small mt-2">
+                        气泡大小代表答题次数，颜色代表正确率（红色偏低，绿色偏高）。
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- 第二行图表 -->
     <div class="row">
         <!-- 答题时间趋势图 -->
@@ -211,6 +229,7 @@
     </div>
 
     <!-- 图表JavaScript -->
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
     <script>
     document.addEventListener('DOMContentLoaded', function() {
         // 正确率环形图
@@ -396,6 +415,123 @@
                 }
             }
         });
+
+        // 可缩放圆形包裹（Zoomable Circle Packing）
+        const circleContainer = document.getElementById('circlePack');
+        const diameter = Math.min(circleContainer.offsetWidth || 600, 700);
+        const height = Math.max(420, diameter);
+
+        const svg = d3.select('#circlePack')
+            .append('svg')
+            .attr('width', '100%')
+            .attr('height', height)
+            .attr('viewBox', `0 0 ${diameter} ${height}`)
+            .attr('preserveAspectRatio', 'xMidYMid meet')
+            .classed('w-100', true);
+
+        const tooltip = d3.select('#circlePack')
+            .append('div')
+            .attr('class', 'position-absolute bg-white border rounded shadow-sm p-2 small')
+            .style('pointer-events', 'none')
+            .style('opacity', 0);
+
+        const packData = {
+            name: '题目统计',
+            children: [
+                {% for stat in problem_stats %}
+                {{ {
+                    'name': stat.template_name,
+                    'value': stat.total if stat.total > 0 else 1,
+                    'accuracy': (stat.correct / stat.total * 100)|round(1) if stat.total > 0 else 0,
+                    'correct': stat.correct,
+                    'total': stat.total,
+                    'avg_time': stat.avg_time|round(1)
+                } | tojson }}{% if not loop.last %},{% endif %}
+                {% endfor %}
+            ]
+        };
+
+        const colorScale = d3.scaleSequential(d3.interpolateRdYlGn)
+            .domain([0, 100]);
+
+        const pack = d3.pack()
+            .size([diameter, height])
+            .padding(4);
+
+        const root = d3.hierarchy(packData)
+            .sum(d => d.value)
+            .sort((a, b) => b.value - a.value);
+
+        const nodes = pack(root).descendants();
+        let focus = root;
+        let view;
+
+        const circles = svg.append('g')
+            .attr('stroke', '#fff')
+            .attr('stroke-width', 2)
+            .selectAll('circle')
+            .data(nodes)
+            .join('circle')
+            .attr('fill', d => d.depth === 0 ? 'transparent' : colorScale(d.data.accuracy || 0))
+            .style('cursor', d => d.children ? 'pointer' : 'default')
+            .on('mouseover', function(event, d) {
+                if (d.depth === 0) return;
+                d3.select(this).attr('stroke-width', 3);
+                tooltip.transition().duration(150).style('opacity', 0.95);
+                tooltip.html(`
+                    <strong>${d.data.name}</strong><br>
+                    正确率: ${d.data.accuracy}%<br>
+                    答题: ${d.data.total} 次<br>
+                    正确: ${d.data.correct} 次<br>
+                    平均用时: ${d.data.avg_time} 秒
+                `)
+                .style('left', `${event.offsetX + 12}px`)
+                .style('top', `${event.offsetY + 12}px`);
+            })
+            .on('mouseout', function() {
+                d3.select(this).attr('stroke-width', 2);
+                tooltip.transition().duration(150).style('opacity', 0);
+            })
+            .on('click', (event, d) => focus !== d && zoom(event, d));
+
+        const labels = svg.append('g')
+            .style('font', '14px sans-serif')
+            .attr('text-anchor', 'middle')
+            .selectAll('text')
+            .data(nodes)
+            .join('text')
+            .style('fill-opacity', d => d.parent === root ? 1 : 0)
+            .style('display', d => d.parent === root ? 'inline' : 'none')
+            .text(d => d.data.name);
+
+        svg.on('click', (event) => zoom(event, root));
+        zoomTo([root.x, root.y, root.r * 2]);
+
+        function zoom(event, d) {
+            focus = d;
+
+            const transition = svg.transition()
+                .duration(event.altKey ? 7500 : 750)
+                .tween('zoom', () => {
+                    const i = d3.interpolateZoom(view, [focus.x, focus.y, focus.r * 2]);
+                    return t => zoomTo(i(t));
+                });
+
+            labels
+                .filter(function(l) { return l.parent === focus || this.style.display === 'inline'; })
+                .transition(transition)
+                .style('fill-opacity', l => l.parent === focus ? 1 : 0)
+                .on('start', function(l) { if (l.parent === focus) this.style.display = 'inline'; })
+                .on('end', function(l) { if (l.parent !== focus) this.style.display = 'none'; });
+        }
+
+        function zoomTo(v) {
+            const k = diameter / v[2];
+            view = v;
+            circles.attr('transform', d => `translate(${(d.x - v[0]) * k}, ${(d.y - v[1]) * k})`);
+            circles.attr('r', d => d.r * k);
+            labels.attr('transform', d => `translate(${(d.x - v[0]) * k}, ${(d.y - v[1]) * k})`);
+        }
     });
     </script>
     {% else %}
