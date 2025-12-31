@@ -31,6 +31,10 @@ PROBLEM_TTL_SECONDS = int(os.getenv('PROBLEM_TTL_SECONDS', 900))
 TEMPLATE_CACHE = {}
 TEMPLATE_CACHE_TS = 0
 
+PROBLEM_POOL_TARGET_SIZE = int(os.getenv('PROBLEM_POOL_TARGET_SIZE', 20))
+PROBLEM_POOL_REFILL_BATCH = int(os.getenv('PROBLEM_POOL_REFILL_BATCH', 10))
+PROBLEM_TTL_SECONDS = int(os.getenv('PROBLEM_TTL_SECONDS', 900))
+
 # 数据库配置
 db_config = {
     'host': 'localhost',
@@ -149,6 +153,10 @@ def ensure_problem_pool(template_id):
     current_size = redis_client.llen(get_pool_key(template_id))
     if current_size < POOL_LOW_WATER:
         refill_problem_pool(template_id, POOL_REFILL_BATCH)
+    """确保题目池达到目标大小"""
+    current_size = redis_client.llen(get_pool_key(template_id))
+    if current_size < PROBLEM_POOL_TARGET_SIZE:
+        refill_problem_pool(template_id, PROBLEM_POOL_TARGET_SIZE - current_size)
 
 
 def fetch_problem_from_pool(template_id):
@@ -163,6 +171,11 @@ def fetch_problem_from_pool(template_id):
         token = uuid.uuid4().hex
         cache_problem_with_token(token, problem_data)
         return token, problem_data
+        refill_problem_pool(template_id, PROBLEM_POOL_REFILL_BATCH)
+        raw_problem = redis_client.rpop(get_pool_key(template_id))
+
+    if not raw_problem:
+        return None, None
 
     try:
         problem_data = json.loads(raw_problem)
