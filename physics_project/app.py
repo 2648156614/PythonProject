@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 import math
 import os
@@ -14,7 +16,7 @@ import mysql.connector
 import numpy as np
 import redis
 import sympy as sp
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__, template_folder='templates', static_folder='static', static_url_path='/static')
@@ -2362,6 +2364,227 @@ def admin_dashboard():
                            recent_completions=recent_completions,
                            incomplete_students=incomplete_students,
                            total_problems=total_problems)
+
+
+@app.route('/admin/export/students/<status>')
+@login_required
+def admin_export_students(status):
+    """导出已完成/未完成学生列表"""
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    if status not in {'completed', 'incomplete'}:
+        flash('无效的导出类型', 'danger')
+        return redirect(url_for('admin_dashboard'))
+
+    completed = (status == 'completed')
+    students = get_students_by_completion(completed=completed)
+    total_problems = get_total_problem_count()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        '学生ID',
+        '用户名',
+        '完成状态',
+        '完成题目数',
+        '总题目数',
+        '完成时间',
+        '总用时(秒)',
+        '注册时间'
+    ])
+
+    status_label = '已完成' if completed else '未完成'
+    for student in students:
+        completed_at = student['completed_at'].strftime('%Y-%m-%d %H:%M:%S') if student['completed_at'] else ''
+        created_at = student['created_at'].strftime('%Y-%m-%d %H:%M:%S') if student['created_at'] else ''
+        writer.writerow([
+            student['id'],
+            student['username'],
+            status_label,
+            student['total_score'] or 0,
+            total_problems,
+            completed_at,
+            round(student['total_time'] or 0, 1),
+            created_at
+        ])
+
+    filename = f"students_{status}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    response = Response(output.getvalue(), mimetype='text/csv; charset=utf-8')
+    response.headers['Content-Disposition'] = f'attachment; filename={filename}'
+    return response
+
+
+@app.route('/admin/export/overview')
+@login_required
+def admin_export_overview():
+    """导出整体答题情况统计"""
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    stats = get_completion_stats()
+    total_problems = get_total_problem_count()
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute("""
+        WITH attempt_summary AS (
+            SELECT
+                ur.user_id,
+                ur.template_id,
+                ur.attempt_count,
+                COUNT(*) AS total_answers,
+                SUM(CASE WHEN ur.is_correct THEN 1 ELSE 0 END) AS correct_answers,
+                MAX(ur.time_taken) AS time_taken
+            FROM user_responses ur
+            JOIN users u ON ur.user_id = u.id
+            WHERE u.username != 'admin'
+            GROUP BY ur.user_id, ur.template_id, ur.attempt_count
+        )
+        SELECT
+            COUNT(*) as total_attempts,
+            SUM(time_taken) as total_time,
+            AVG(time_taken) as avg_time,
+            AVG(CASE WHEN correct_answers = total_answers THEN time_taken ELSE NULL END) as avg_correct_time
+        FROM attempt_summary
+    """)
+    overall_stats = cursor.fetchone() or {}
+    cursor.close()
+    conn.close()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        '总学生数',
+        '已完成学生数',
+        '未完成学生数',
+        '完成率(%)',
+        '平均正确题数',
+        '平均用时(秒)',
+        '今日完成人数',
+        '总题目数',
+        '总答题次数',
+        '总答题时长(秒)',
+        '平均答题时长(秒)',
+        '平均正确答题时长(秒)'
+    ])
+    total_students = stats['stats']['total_students'] or 0
+    completed_students = stats['stats']['completed_count'] or 0
+    writer.writerow([
+        total_students,
+        completed_students,
+        max(total_students - completed_students, 0),
+        stats['stats']['completion_rate'] or 0,
+        round(stats['stats']['avg_score'] or 0, 1),
+        round(stats['stats']['avg_time'] or 0, 1),
+        stats['today_stats']['today_completions'] or 0,
+        total_problems,
+        overall_stats.get('total_attempts') or 0,
+        round(overall_stats.get('total_time') or 0, 1),
+        round(overall_stats.get('avg_time') or 0, 1),
+        round(overall_stats.get('avg_correct_time') or 0, 1)
+    ])
+
+    filename = f"overview_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    response = Response(output.getvalue(), mimetype='text/csv; charset=utf-8')
+    response.headers['Content-Disposition'] = f'attachment; filename={filename}'
+    return response
+
+
+@app.route('/admin/export/problem-stats')
+@login_required
+def admin_export_problem_stats():
+    """导出题目统计"""
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute("""
+        WITH attempt_summary AS (
+            SELECT
+                ur.user_id,
+                ur.template_id,
+                ur.attempt_count,
+                COUNT(*) AS total_answers,
+                SUM(CASE WHEN ur.is_correct THEN 1 ELSE 0 END) AS correct_answers,
+                MAX(ur.time_taken) AS time_taken
+            FROM user_responses ur
+            JOIN users u ON ur.user_id = u.id
+            WHERE u.username != 'admin'
+            GROUP BY ur.user_id, ur.template_id, ur.attempt_count
+        )
+        SELECT
+            t.id as template_id,
+            t.template_name,
+            COUNT(a.attempt_count) as total_attempts,
+            SUM(CASE WHEN a.correct_answers = a.total_answers THEN 1 ELSE 0 END) as correct_attempts,
+            COUNT(DISTINCT CASE WHEN a.correct_answers = a.total_answers THEN a.user_id END) as completed_students,
+            COUNT(DISTINCT a.user_id) as participant_students,
+            AVG(a.time_taken) as avg_time,
+            AVG(CASE WHEN a.correct_answers = a.total_answers THEN a.time_taken ELSE NULL END) as avg_correct_time,
+            SUM(a.time_taken) as total_time_spent,
+            COALESCE((
+                SELECT error_type
+                FROM user_responses ur2
+                JOIN users u2 ON ur2.user_id = u2.id
+                WHERE ur2.template_id = t.id AND u2.username != 'admin' AND ur2.is_correct = FALSE
+                GROUP BY error_type
+                ORDER BY COUNT(*) DESC
+                LIMIT 1
+            ), '暂无数据') as top_error_type
+        FROM problem_templates t
+        LEFT JOIN attempt_summary a ON t.id = a.template_id
+        ORDER BY t.id
+    """)
+    problem_stats = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        '题目ID',
+        '题目名称',
+        '总答题次数',
+        '正确答题次数',
+        '完成学生数',
+        '参与学生数',
+        '正确率(%)',
+        '平均用时(秒)',
+        '平均正确用时(秒)',
+        '总用时(秒)',
+        '最常见错误类型'
+    ])
+
+    for stat in problem_stats:
+        total_attempts = stat['total_attempts'] or 0
+        correct_attempts = stat['correct_attempts'] or 0
+        correct_rate = round((correct_attempts / total_attempts) * 100, 1) if total_attempts else 0
+        writer.writerow([
+            stat['template_id'],
+            stat['template_name'],
+            total_attempts,
+            correct_attempts,
+            stat['completed_students'] or 0,
+            stat['participant_students'] or 0,
+            correct_rate,
+            round(stat['avg_time'] or 0, 1),
+            round(stat['avg_correct_time'] or 0, 1),
+            round(stat['total_time_spent'] or 0, 1),
+            stat['top_error_type']
+        ])
+
+    filename = f"problem_stats_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    response = Response(output.getvalue(), mimetype='text/csv; charset=utf-8')
+    response.headers['Content-Disposition'] = f'attachment; filename={filename}'
+    return response
 
 
 @app.route('/admin/add_problem', methods=['GET', 'POST'])
