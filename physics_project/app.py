@@ -3040,6 +3040,7 @@ def admin_all_problems_stats():
                 ), '暂无数据') as top_error_type
             FROM problem_templates t
             LEFT JOIN attempt_summary a ON t.id = a.template_id
+            GROUP BY t.id, t.template_name
             ORDER BY t.id
         """)
 
