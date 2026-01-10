@@ -1,5 +1,7 @@
-import mysql.connector
 import csv
+
+import mysql.connector
+from werkzeug.security import generate_password_hash
 
  # 使用原始字符串
 
@@ -28,17 +30,22 @@ try:
             print("⚠️ CSV文件为空")
 
         data = []
+        default_password_hash = generate_password_hash('123456')
         for row in reader:
-            if row and len(row) > 0:
+            if row and len(row) > 1:
                 student_id = row[0].strip()
+                student_name = row[1].strip()
                 # 确保学号是数字
-                if student_id and student_id.isdigit():
-                    data.append((student_id, '123456'))
-                    print(f"添加学生: {student_id}")
+                if student_id and student_id.isdigit() and student_name:
+                    data.append((student_id, student_name, default_password_hash))
+                    print(f"添加学生: {student_id} - {student_name}")
 
         # 批量插入
         if data:
-            sql = "INSERT INTO users (username, password) VALUES (%s, %s)"
+            sql = """
+                INSERT INTO users (username, name, password_hash, must_change_password, role)
+                VALUES (%s, %s, %s, TRUE, 'student')
+            """
             cursor.executemany(sql, data)
             conn.commit()
             print(f"✅ 成功插入 {len(data)} 条记录")
