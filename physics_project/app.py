@@ -1,20 +1,41 @@
+import csv
+import io
+import json
 import math
-import numpy as np
-import traceback
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
-import mysql.connector
-import random
-import sympy as sp
-import time
 import os
+import random
 import re
+import time
+import traceback
+import uuid
+from datetime import datetime
 from functools import wraps
 from math import pi, log
+
+import mysql.connector
+import numpy as np
+import redis
+import sympy as sp
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response
 from werkzeug.utils import secure_filename
-from datetime import datetime
 
 app = Flask(__name__, template_folder='templates', static_folder='static', static_url_path='/static')
 app.secret_key = 'your_secret_key_here'
+
+# Redis 配置
+redis_url = os.getenv('REDIS_URL', 'redis://172.17.66.87:6379/0')
+redis_client = redis.Redis.from_url(redis_url, decode_responses=True)
+POOL_TARGET = 50
+POOL_LOW_WATER = 25
+POOL_REFILL_BATCH = 10
+PROBLEM_TTL_SECONDS = int(os.getenv('PROBLEM_TTL_SECONDS', 900))
+
+TEMPLATE_CACHE = {}
+TEMPLATE_CACHE_TS = 0
+
+PROBLEM_POOL_TARGET_SIZE = int(os.getenv('PROBLEM_POOL_TARGET_SIZE', 20))
+PROBLEM_POOL_REFILL_BATCH = int(os.getenv('PROBLEM_POOL_REFILL_BATCH', 10))
+PROBLEM_TTL_SECONDS = int(os.getenv('PROBLEM_TTL_SECONDS', 900))
 
 # 数据库配置
 db_config = {
@@ -65,6 +86,135 @@ def get_db_connection():
     except mysql.connector.Error as err:
         print(f"数据库连接失败：{err}")
         return None
+
+
+def get_pool_key(template_id):
+    return f"exam:pool:{template_id}"
+
+
+def get_problem_key(token):
+    return f"exam:problem:{token}"
+
+
+def cache_problem_with_token(token, problem_data):
+    """将题目数据写入Redis并设置TTL"""
+    redis_client.setex(get_problem_key(token), PROBLEM_TTL_SECONDS, json.dumps(problem_data))
+
+
+def get_problem_by_token(token):
+    """通过token从Redis获取题目数据"""
+    if not token:
+        return None
+    raw = redis_client.get(get_problem_key(token))
+    if not raw:
+        return None
+    try:
+        redis_client.expire(get_problem_key(token), PROBLEM_TTL_SECONDS)
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+def load_template_from_db(template_id):
+    conn = get_db_connection()
+    if not conn:
+        return None
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT * FROM problem_templates WHERE id = %s", (template_id,))
+    template = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return template
+
+
+def get_template(template_id):
+    global TEMPLATE_CACHE, TEMPLATE_CACHE_TS
+    if template_id in TEMPLATE_CACHE:
+        return TEMPLATE_CACHE[template_id]
+
+    template = load_template_from_db(template_id)
+    if template:
+        TEMPLATE_CACHE[template_id] = template
+        TEMPLATE_CACHE_TS = time.time()
+    return template
+
+
+def refill_problem_pool(template_id, count):
+    """生成题目并补充到池中"""
+    created = 0
+    for _ in range(count):
+        problem_data = generate_problem_from_template(template_id)
+        if problem_data:
+            redis_client.lpush(get_pool_key(template_id), json.dumps(problem_data))
+            created += 1
+    return created
+
+
+def ensure_problem_pool(template_id):
+    """低水位补货（小批量）"""
+    current_size = redis_client.llen(get_pool_key(template_id))
+    if current_size < POOL_LOW_WATER:
+        refill_problem_pool(template_id, POOL_REFILL_BATCH)
+
+
+def fetch_problem_from_pool(template_id):
+    """从池中获取题目，如果不足则补充"""
+    ensure_problem_pool(template_id)
+    raw_problem = redis_client.rpop(get_pool_key(template_id))
+
+    if not raw_problem:
+        problem_data = generate_problem_from_template(template_id)
+        if not problem_data:
+            return None, None
+        token = uuid.uuid4().hex
+        cache_problem_with_token(token, problem_data)
+        return token, problem_data
+
+    if not raw_problem:
+        return None, None
+
+    try:
+        problem_data = json.loads(raw_problem)
+    except json.JSONDecodeError:
+        return None, None
+
+    token = uuid.uuid4().hex
+    cache_problem_with_token(token, problem_data)
+    return token, problem_data
+
+
+def generate_and_cache_problem(template_id):
+    """直接生成题目并写入Redis，作为池为空时的兜底"""
+    problem_data = generate_problem_from_template(template_id)
+    if not problem_data:
+        return None, None
+    token = uuid.uuid4().hex
+    cache_problem_with_token(token, problem_data)
+    return token, problem_data
+
+
+def prewarm_pools():
+    print("[PREWARM] 开始预热题目池")
+    conn = get_db_connection()
+    if not conn:
+        print("[PREWARM] 数据库连接失败，跳过预热")
+        return
+
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT id FROM problem_templates")
+    template_ids = [row['id'] for row in cursor.fetchall()]
+    cursor.close()
+    conn.close()
+
+    for template_id in template_ids:
+        pool_size = redis_client.llen(get_pool_key(template_id))
+        if pool_size < POOL_TARGET:
+            to_add = POOL_TARGET - pool_size
+            print(f"[PREWARM] 模板 {template_id} 补货 {to_add} 道")
+            refill_problem_pool(template_id, to_add)
+        else:
+            print(f"[PREWARM] 模板 {template_id} 池已满足，当前 {pool_size}")
+    print("[PREWARM] 预热完成")
 
 
 # 登录装饰器
@@ -314,14 +464,9 @@ def get_total_problem_count():
     return len(mapping)
 
 
-def generate_problem_from_template(template_id, max_attempts=50):
+def generate_problem_from_template(template_id, max_attempts=10):
     """从模板生成具体问题 - 完全动态的合理性验证（无学习表），包含答案单位处理"""
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM problem_templates WHERE id = %s", (template_id,))
-    template = cursor.fetchone()
-    cursor.close()
-    conn.close()
+    template = get_template(template_id)
 
     if not template:
         return None
@@ -1645,6 +1790,14 @@ def debug_images():
     })
 
 
+@app.route('/debug/reload_templates', methods=['GET'])
+def reload_templates():
+    global TEMPLATE_CACHE, TEMPLATE_CACHE_TS
+    TEMPLATE_CACHE = {}
+    TEMPLATE_CACHE_TS = time.time()
+    return jsonify({'success': True, 'message': '模板缓存已清空', 'timestamp': TEMPLATE_CACHE_TS})
+
+
 @app.route('/history')
 @login_required
 def history():
@@ -1837,20 +1990,24 @@ def refresh_problem(problem_id):
         if actual_id is None:
             return jsonify({'success': False, 'message': '无效的题目编号'})
 
-        # 重新生成题目数据
-        problem_data = generate_problem_from_template(actual_id)
-
+        token, problem_data = fetch_problem_from_pool(actual_id)
         if not problem_data:
+            token, problem_data = generate_and_cache_problem(actual_id)
+
+        if not problem_data or not token:
             return jsonify({'success': False, 'message': '题目生成失败'})
 
-        # 更新session中的题目数据
+        # 更新session中的题目状态
         if 'current_problem' in session and session['current_problem']['display_number'] == problem_id:
-            session['current_problem']['data'] = problem_data
-            session['current_problem']['total_attempts'] = 0
-            session['current_problem']['answered_correctly'] = False
-            session['current_problem']['start_time'] = time.time()
+            session['current_problem'].update({
+                'token': token,
+                'total_attempts': 0,
+                'answered_correctly': False,
+                'start_time': time.time(),
+                'actual_id': actual_id
+            })
 
-        return jsonify({'success': True, 'message': '题目刷新成功'})
+        return jsonify({'success': True, 'message': '题目刷新成功', 'token': token})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
 
@@ -1891,33 +2048,55 @@ def problem_ajax(problem_id):
         return redirect(url_for('dashboard'))
 
     # 2. 初始化或获取题目数据
-    if ('current_problem' not in session or
-            session['current_problem']['display_number'] != problem_id):
+    problem_data = None
+    problem_token = None
 
-        print(f"生成新题目... 实际ID: {actual_id}")
-        problem_data = generate_problem_from_template(actual_id)
+    if ('current_problem' in session and
+            session['current_problem'].get('display_number') == problem_id):
+        problem_token = session['current_problem'].get('token')
+        problem_data = get_problem_by_token(problem_token)
+        if not problem_data:
+            print("缓存中的题目已过期，重新获取新题目")
+
+    if not problem_data:
+        print(f"生成/获取新题目... 实际ID: {actual_id}")
+        problem_token, problem_data = fetch_problem_from_pool(actual_id)
+
+        if not problem_data:
+            problem_token, problem_data = generate_and_cache_problem(actual_id)
+
         if not problem_data:
             flash('题目生成失败', 'danger')
             return redirect(url_for('dashboard'))
 
         session['current_problem'] = {
-            'display_number': problem_id,  # 存储显示序号
-            'actual_id': actual_id,  # 存储实际ID
-            'data': problem_data,
+            'display_number': problem_id,
+            'actual_id': actual_id,
+            'token': problem_token,
             'total_attempts': 0,
             'answered_correctly': False,
             'start_time': time.time()
         }
         print(f"新题目生成成功，答案数量: {problem_data.get('answer_count', 1)}")
+    else:
+        # 确保最小状态存在
+        session['current_problem'].setdefault('total_attempts', 0)
+        session['current_problem'].setdefault('answered_correctly', False)
+        session['current_problem'].setdefault('start_time', time.time())
+        session['current_problem'].setdefault('token', problem_token)
+        session['current_problem']['actual_id'] = actual_id
 
     # 3. 检查是否已经完成
     if session['current_problem'].get('answered_correctly', False):
         print(f"题目 {problem_id} 已完成")
 
     # 4. 渲染Ajax模板
-    problem_data = session['current_problem']['data']
-    total_attempts = session['current_problem']['total_attempts']
+    total_attempts = session['current_problem'].get('total_attempts', 0)
     answer_count = problem_data.get('answer_count', 1)
+
+    # 确保token写回session（兼容旧数据）
+    session['current_problem']['token'] = problem_token or session['current_problem'].get('token')
+    session.modified = True
 
     print(f"渲染Ajax模板，显示序号: {problem_id}, 实际ID: {actual_id}")
     print(f"答案数量: {answer_count}, 累计尝试: {total_attempts}")
@@ -1963,17 +2142,12 @@ def api_submit(problem_id):
                 session['current_problem']['display_number'] != problem_id):
             return jsonify({'success': False, 'message': '会话过期，请重新开始答题'})
 
-        problem_data = session['current_problem']['data']
+        problem_token = session['current_problem'].get('token')
+        problem_data = get_problem_by_token(problem_token)
+        if not problem_data:
+            return jsonify({'success': False, 'message': '题目已过期，请刷新后重试'})
 
-        # 关键修改：使用前端传递的正确答案，而不是session中的旧答案
-        correct_answers = data.get('correct_answers')
-        if not correct_answers:
-            # 如果前端没有传递正确答案，则使用session中的（兼容性处理）
-            correct_answers = problem_data['correct_answers']
-            print(f"[API WARNING] 使用session中的正确答案: {correct_answers}")
-        else:
-            print(f"[API] 使用前端传递的正确答案: {correct_answers}")
-
+        correct_answers = problem_data.get('correct_answers', [])
         answer_count = problem_data.get('answer_count', 1)
         time_taken = float(data.get('time_taken', 0))
         user_id = session['user_id']
@@ -2098,10 +2272,13 @@ def api_submit(problem_id):
             next_problem_id = problem_id
 
             # 答错时生成新题目（不再限制尝试次数）
-            new_problem_data = generate_problem_from_template(actual_id)
+            new_token, new_problem_data = fetch_problem_from_pool(actual_id)
+            if not new_problem_data:
+                new_token, new_problem_data = generate_and_cache_problem(actual_id)
+
             if new_problem_data:
                 # 更新session中的题目数据和正确答案
-                session['current_problem']['data'] = new_problem_data
+                session['current_problem']['token'] = new_token
                 session['current_problem']['start_time'] = time.time()
 
                 # 构建错误消息
@@ -2116,7 +2293,8 @@ def api_submit(problem_id):
                     'new_problem_generated': True,
                     'new_var_values': new_problem_data['var_values'],
                     'new_correct_answers': new_problem_data['correct_answers'],
-                    'new_problem_text': new_problem_data['problem_text']
+                    'new_problem_text': new_problem_data['problem_text'],
+                    'token': new_token
                 })
 
                 print(f"[API] 生成新题目参数: {new_problem_data['var_values']}")
@@ -2186,6 +2364,227 @@ def admin_dashboard():
                            recent_completions=recent_completions,
                            incomplete_students=incomplete_students,
                            total_problems=total_problems)
+
+
+@app.route('/admin/export/students/<status>')
+@login_required
+def admin_export_students(status):
+    """导出已完成/未完成学生列表"""
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    if status not in {'completed', 'incomplete'}:
+        flash('无效的导出类型', 'danger')
+        return redirect(url_for('admin_dashboard'))
+
+    completed = (status == 'completed')
+    students = get_students_by_completion(completed=completed)
+    total_problems = get_total_problem_count()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        '学生ID',
+        '用户名',
+        '完成状态',
+        '完成题目数',
+        '总题目数',
+        '完成时间',
+        '总用时(秒)',
+        '注册时间'
+    ])
+
+    status_label = '已完成' if completed else '未完成'
+    for student in students:
+        completed_at = student['completed_at'].strftime('%Y-%m-%d %H:%M:%S') if student['completed_at'] else ''
+        created_at = student['created_at'].strftime('%Y-%m-%d %H:%M:%S') if student['created_at'] else ''
+        writer.writerow([
+            student['id'],
+            student['username'],
+            status_label,
+            student['total_score'] or 0,
+            total_problems,
+            completed_at,
+            round(student['total_time'] or 0, 1),
+            created_at
+        ])
+
+    filename = f"students_{status}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    response = Response(output.getvalue(), mimetype='text/csv; charset=utf-8')
+    response.headers['Content-Disposition'] = f'attachment; filename={filename}'
+    return response
+
+
+@app.route('/admin/export/overview')
+@login_required
+def admin_export_overview():
+    """导出整体答题情况统计"""
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    stats = get_completion_stats()
+    total_problems = get_total_problem_count()
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute("""
+        WITH attempt_summary AS (
+            SELECT
+                ur.user_id,
+                ur.template_id,
+                ur.attempt_count,
+                COUNT(*) AS total_answers,
+                SUM(CASE WHEN ur.is_correct THEN 1 ELSE 0 END) AS correct_answers,
+                MAX(ur.time_taken) AS time_taken
+            FROM user_responses ur
+            JOIN users u ON ur.user_id = u.id
+            WHERE u.username != 'admin'
+            GROUP BY ur.user_id, ur.template_id, ur.attempt_count
+        )
+        SELECT
+            COUNT(*) as total_attempts,
+            SUM(time_taken) as total_time,
+            AVG(time_taken) as avg_time,
+            AVG(CASE WHEN correct_answers = total_answers THEN time_taken ELSE NULL END) as avg_correct_time
+        FROM attempt_summary
+    """)
+    overall_stats = cursor.fetchone() or {}
+    cursor.close()
+    conn.close()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        '总学生数',
+        '已完成学生数',
+        '未完成学生数',
+        '完成率(%)',
+        '平均正确题数',
+        '平均用时(秒)',
+        '今日完成人数',
+        '总题目数',
+        '总答题次数',
+        '总答题时长(秒)',
+        '平均答题时长(秒)',
+        '平均正确答题时长(秒)'
+    ])
+    total_students = stats['stats']['total_students'] or 0
+    completed_students = stats['stats']['completed_count'] or 0
+    writer.writerow([
+        total_students,
+        completed_students,
+        max(total_students - completed_students, 0),
+        stats['stats']['completion_rate'] or 0,
+        round(stats['stats']['avg_score'] or 0, 1),
+        round(stats['stats']['avg_time'] or 0, 1),
+        stats['today_stats']['today_completions'] or 0,
+        total_problems,
+        overall_stats.get('total_attempts') or 0,
+        round(overall_stats.get('total_time') or 0, 1),
+        round(overall_stats.get('avg_time') or 0, 1),
+        round(overall_stats.get('avg_correct_time') or 0, 1)
+    ])
+
+    filename = f"overview_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    response = Response(output.getvalue(), mimetype='text/csv; charset=utf-8')
+    response.headers['Content-Disposition'] = f'attachment; filename={filename}'
+    return response
+
+
+@app.route('/admin/export/problem-stats')
+@login_required
+def admin_export_problem_stats():
+    """导出题目统计"""
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute("""
+        WITH attempt_summary AS (
+            SELECT
+                ur.user_id,
+                ur.template_id,
+                ur.attempt_count,
+                COUNT(*) AS total_answers,
+                SUM(CASE WHEN ur.is_correct THEN 1 ELSE 0 END) AS correct_answers,
+                MAX(ur.time_taken) AS time_taken
+            FROM user_responses ur
+            JOIN users u ON ur.user_id = u.id
+            WHERE u.username != 'admin'
+            GROUP BY ur.user_id, ur.template_id, ur.attempt_count
+        )
+        SELECT
+            t.id as template_id,
+            t.template_name,
+            COUNT(a.attempt_count) as total_attempts,
+            SUM(CASE WHEN a.correct_answers = a.total_answers THEN 1 ELSE 0 END) as correct_attempts,
+            COUNT(DISTINCT CASE WHEN a.correct_answers = a.total_answers THEN a.user_id END) as completed_students,
+            COUNT(DISTINCT a.user_id) as participant_students,
+            AVG(a.time_taken) as avg_time,
+            AVG(CASE WHEN a.correct_answers = a.total_answers THEN a.time_taken ELSE NULL END) as avg_correct_time,
+            SUM(a.time_taken) as total_time_spent,
+            COALESCE((
+                SELECT error_type
+                FROM user_responses ur2
+                JOIN users u2 ON ur2.user_id = u2.id
+                WHERE ur2.template_id = t.id AND u2.username != 'admin' AND ur2.is_correct = FALSE
+                GROUP BY error_type
+                ORDER BY COUNT(*) DESC
+                LIMIT 1
+            ), '暂无数据') as top_error_type
+        FROM problem_templates t
+        LEFT JOIN attempt_summary a ON t.id = a.template_id
+        ORDER BY t.id
+    """)
+    problem_stats = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        '题目ID',
+        '题目名称',
+        '总答题次数',
+        '正确答题次数',
+        '完成学生数',
+        '参与学生数',
+        '正确率(%)',
+        '平均用时(秒)',
+        '平均正确用时(秒)',
+        '总用时(秒)',
+        '最常见错误类型'
+    ])
+
+    for stat in problem_stats:
+        total_attempts = stat['total_attempts'] or 0
+        correct_attempts = stat['correct_attempts'] or 0
+        correct_rate = round((correct_attempts / total_attempts) * 100, 1) if total_attempts else 0
+        writer.writerow([
+            stat['template_id'],
+            stat['template_name'],
+            total_attempts,
+            correct_attempts,
+            stat['completed_students'] or 0,
+            stat['participant_students'] or 0,
+            correct_rate,
+            round(stat['avg_time'] or 0, 1),
+            round(stat['avg_correct_time'] or 0, 1),
+            round(stat['total_time_spent'] or 0, 1),
+            stat['top_error_type']
+        ])
+
+    filename = f"problem_stats_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    response = Response(output.getvalue(), mimetype='text/csv; charset=utf-8')
+    response.headers['Content-Disposition'] = f'attachment; filename={filename}'
+    return response
 
 
 @app.route('/admin/add_problem', methods=['GET', 'POST'])
@@ -2641,6 +3040,7 @@ def admin_all_problems_stats():
                 ), '暂无数据') as top_error_type
             FROM problem_templates t
             LEFT JOIN attempt_summary a ON t.id = a.template_id
+            GROUP BY t.id, t.template_name
             ORDER BY t.id
         """)
 
@@ -2927,5 +3327,11 @@ if __name__ == '__main__':
     images_ok = verify_image_consistency()
     if not images_ok:
         print("⚠️ 警告: 部分图片文件缺失，请检查以上列表")
+
+    prewarm_flag = os.getenv('PREWARM') == '1' or os.getenv('PORT') == '5000'
+    if prewarm_flag:
+        prewarm_pools()
+    else:
+        print("[PREWARM] 跳过预热，未满足 PREWARM 或端口条件")
 
     app.run(host='0.0.0.0', port=5000, debug=False)
