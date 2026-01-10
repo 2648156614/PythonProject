@@ -23,7 +23,7 @@ app = Flask(__name__, template_folder='templates', static_folder='static', stati
 app.secret_key = 'your_secret_key_here'
 
 # Redis 配置
-redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+redis_url = os.getenv('REDIS_URL', 'redis://172.17.66.87:6379/0')
 redis_client = redis.Redis.from_url(redis_url, decode_responses=True)
 POOL_TARGET = 50
 POOL_LOW_WATER = 25
