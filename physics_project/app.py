@@ -16,7 +16,9 @@ import mysql.connector
 import numpy as np
 import redis
 import sympy as sp
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, abort
+from openpyxl import load_workbook
+from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__, template_folder='templates', static_folder='static', static_url_path='/static')
@@ -217,6 +219,18 @@ def prewarm_pools():
     print("[PREWARM] 预热完成")
 
 
+def is_admin_session():
+    return session.get('role') == 'admin' or session.get('username') == 'admin'
+
+
+@app.context_processor
+def inject_user_context():
+    return {
+        'is_admin': is_admin_session(),
+        'display_name': session.get('name') or session.get('username')
+    }
+
+
 # 登录装饰器
 def login_required(f):
     @wraps(f)
@@ -224,9 +238,52 @@ def login_required(f):
         if 'user_id' not in session:
             flash('请先登录！', 'danger')
             return redirect(url_for('login'))
+
+        if not is_admin_session():
+            session_token = session.get('session_token')
+            if not session_token:
+                session.clear()
+                flash('登录状态已失效，请重新登录。', 'warning')
+                return redirect(url_for('login'))
+
+            conn = get_db_connection()
+            if not conn:
+                session.clear()
+                flash('数据库连接失败，请重新登录。', 'danger')
+                return redirect(url_for('login'))
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("SELECT current_session_token FROM users WHERE id = %s", (session['user_id'],))
+            user_record = cursor.fetchone()
+            cursor.close()
+            conn.close()
+
+            if not user_record or user_record['current_session_token'] != session_token:
+                session.clear()
+                flash('您的账号已在别处登录，请重新登录。', 'warning')
+                return redirect(url_for('login'))
+
         return f(*args, **kwargs)
 
     return decorated_function
+
+
+@app.before_request
+def enforce_password_change():
+    if 'user_id' not in session:
+        return None
+
+    if is_admin_session():
+        return None
+
+    allowed_endpoints = {'change_password', 'logout', 'login', 'static'}
+    if request.endpoint in allowed_endpoints or request.endpoint is None:
+        return None
+
+    if session.get('must_change_password'):
+        flash('请先修改初始密码后再继续使用。', 'warning')
+        return redirect(url_for('change_password'))
+
+    return None
 
 
 def is_correct(user_answer, correct_answer):
@@ -892,9 +949,34 @@ def save_user_response(user_id, template_id, problem_text, user_answers, correct
 def repair_database():
     """修复数据库表结构"""
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(dictionary=True)
 
     try:
+        cursor.execute("SHOW COLUMNS FROM users LIKE 'name'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE users ADD COLUMN name VARCHAR(100) AFTER username")
+            print("已添加 name 列")
+
+        cursor.execute("SHOW COLUMNS FROM users LIKE 'password_hash'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE users ADD COLUMN password_hash VARCHAR(255) NOT NULL DEFAULT '' AFTER name")
+            print("已添加 password_hash 列")
+
+        cursor.execute("SHOW COLUMNS FROM users LIKE 'must_change_password'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT FALSE AFTER password_hash")
+            print("已添加 must_change_password 列")
+
+        cursor.execute("SHOW COLUMNS FROM users LIKE 'role'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'student' AFTER must_change_password")
+            print("已添加 role 列")
+
+        cursor.execute("SHOW COLUMNS FROM users LIKE 'current_session_token'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE users ADD COLUMN current_session_token VARCHAR(64) AFTER role")
+            print("已添加 current_session_token 列")
+
         # 检查并添加缺失的列
         cursor.execute("SHOW COLUMNS FROM user_responses LIKE 'user_id'")
         if not cursor.fetchone():
@@ -915,11 +997,11 @@ def repair_database():
 
         # 添加外键约束（如果不存在）
         cursor.execute("""
-            SELECT COUNT(*) FROM information_schema.table_constraints
+            SELECT COUNT(*) AS constraint_count FROM information_schema.table_constraints
             WHERE table_name = 'user_responses' 
             AND constraint_name = 'user_responses_ibfk_1'
         """)
-        if cursor.fetchone()[0] == 0:
+        if cursor.fetchone()['constraint_count'] == 0:
             cursor.execute("""
                 ALTER TABLE user_responses
                 ADD FOREIGN KEY (user_id) REFERENCES users(id)
@@ -927,16 +1009,42 @@ def repair_database():
             print("已添加 user_id 外键约束")
 
         cursor.execute("""
-            SELECT COUNT(*) FROM information_schema.table_constraints
+            SELECT COUNT(*) AS constraint_count FROM information_schema.table_constraints
             WHERE table_name = 'user_responses' 
             AND constraint_name = 'user_responses_ibfk_2'
         """)
-        if cursor.fetchone()[0] == 0:
+        if cursor.fetchone()['constraint_count'] == 0:
             cursor.execute("""
                 ALTER TABLE user_responses
                 ADD FOREIGN KEY (template_id) REFERENCES problem_templates(id)
             """)
             print("已添加 template_id 外键约束")
+
+        cursor.execute("SHOW COLUMNS FROM users LIKE 'password'")
+        has_password_column = cursor.fetchone() is not None
+
+        if has_password_column:
+            cursor.execute("ALTER TABLE users MODIFY COLUMN password VARCHAR(100) NULL")
+            cursor.execute("UPDATE users SET password = NULL")
+            cursor.execute("SELECT id, password_hash, password FROM users")
+        else:
+            cursor.execute("SELECT id, password_hash FROM users")
+
+        users = cursor.fetchall()
+        for user in users:
+            if not user['password_hash']:
+                raw_password = user.get('password') or '123456'
+                new_hash = generate_password_hash(raw_password)
+                must_change = raw_password == '123456'
+                cursor.execute("""
+                    UPDATE users
+                    SET password_hash = %s,
+                        must_change_password = %s
+                    WHERE id = %s
+                """, (new_hash, must_change, user['id']))
+
+        cursor.execute("UPDATE users SET role = 'student' WHERE role IS NULL")
+        cursor.execute("UPDATE users SET must_change_password = FALSE WHERE must_change_password IS NULL")
 
         conn.commit()
     except mysql.connector.Error as err:
@@ -957,7 +1065,11 @@ def initialize_database():
     CREATE TABLE IF NOT EXISTS users (
         id INT AUTO_INCREMENT PRIMARY KEY,
         username VARCHAR(50) NOT NULL UNIQUE,
-        password VARCHAR(100) NOT NULL,
+        name VARCHAR(100),
+        password_hash VARCHAR(255) NOT NULL,
+        must_change_password BOOLEAN DEFAULT FALSE,
+        role VARCHAR(20) DEFAULT 'student',
+        current_session_token VARCHAR(64),
         completed_all BOOLEAN DEFAULT FALSE,
         completed_at TIMESTAMP NULL,
         total_score INT DEFAULT 0,
@@ -1240,17 +1352,33 @@ def initialize_database():
 def create_admin_user():
     """创建管理员用户"""
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(dictionary=True)
 
     try:
         # 检查管理员用户是否已存在
-        cursor.execute("SELECT id FROM users WHERE username = 'admin'")
-        if not cursor.fetchone():
+        cursor.execute("SELECT id, password_hash, role FROM users WHERE username = 'admin'")
+        admin_user = cursor.fetchone()
+        admin_password_hash = generate_password_hash('admin123')
+        if not admin_user:
             # 创建管理员用户
-            cursor.execute("INSERT INTO users (username, password) VALUES ('admin', 'admin123')")
+            cursor.execute("""
+                INSERT INTO users (username, name, password_hash, must_change_password, role)
+                VALUES ('admin', '管理员', %s, FALSE, 'admin')
+            """, (admin_password_hash,))
             conn.commit()
             print("管理员用户创建成功: admin / admin123")
         else:
+            updates = []
+            params = []
+            if not admin_user.get('password_hash'):
+                updates.append("password_hash = %s")
+                params.append(admin_password_hash)
+            if admin_user.get('role') != 'admin':
+                updates.append("role = 'admin'")
+            if updates:
+                cursor.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = %s",
+                               (*params, admin_user['id']))
+                conn.commit()
             print("管理员用户已存在")
     except Exception as e:
         print(f"创建管理员用户失败: {e}")
@@ -1530,25 +1658,7 @@ def diagnose_database_issue():
 # 用户认证路由
 @app.route('/register', methods=['GET', 'POST'])
 def register():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        try:
-            cursor.execute("INSERT INTO users (username, password) VALUES (%s, %s)", (username, password))
-            conn.commit()
-            flash('注册成功！请登录。', 'success')
-            return redirect(url_for('login'))
-        except mysql.connector.Error as err:
-            flash('用户名已存在！', 'danger')
-        finally:
-            cursor.close()
-            conn.close()
-
-    return render_template('register.html')
+    abort(404)
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -1560,16 +1670,42 @@ def login():
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        cursor.execute("SELECT * FROM users WHERE username = %s AND password = %s", (username, password))
+        cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
         user = cursor.fetchone()
+
+        if user:
+            password_hash = user.get('password_hash')
+            valid_password = False
+            if password_hash:
+                valid_password = check_password_hash(password_hash, password)
+            elif user.get('password') == password:
+                valid_password = True
+                new_hash = generate_password_hash(password)
+                cursor.execute("UPDATE users SET password_hash = %s WHERE id = %s", (new_hash, user['id']))
+                conn.commit()
 
         cursor.close()
         conn.close()
 
-        if user:
+        if user and valid_password:
+            session_token = uuid.uuid4().hex
+
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET current_session_token = %s WHERE id = %s", (session_token, user['id']))
+            conn.commit()
+            cursor.close()
+            conn.close()
+
             session['user_id'] = user['id']
             session['username'] = user['username']
+            session['name'] = user.get('name') or user['username']
+            session['role'] = user.get('role') or 'student'
+            session['must_change_password'] = bool(user.get('must_change_password'))
+            session['session_token'] = session_token
             flash('登录成功！', 'success')
+            if session['must_change_password']:
+                return redirect(url_for('change_password'))
             return redirect(url_for('dashboard'))
         else:
             flash('用户名或密码错误！', 'danger')
@@ -1579,9 +1715,172 @@ def login():
 
 @app.route('/logout')
 def logout():
+    user_id = session.get('user_id')
+    session_token = session.get('session_token')
+    if user_id and session_token:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE users
+            SET current_session_token = NULL
+            WHERE id = %s AND current_session_token = %s
+        """, (user_id, session_token))
+        conn.commit()
+        cursor.close()
+        conn.close()
     session.clear()
     flash('您已成功退出。', 'success')
     return redirect(url_for('login'))
+
+
+@app.route('/change_password', methods=['GET', 'POST'])
+@login_required
+def change_password():
+    if request.method == 'POST':
+        data = request.get_json(silent=True) or request.form
+        current_password = data.get('current_password', '')
+        new_password = data.get('new_password', '')
+        confirm_password = data.get('confirm_password', '')
+
+        if new_password != confirm_password:
+            message = '新密码与确认密码不一致。'
+            if request.is_json:
+                return jsonify({'success': False, 'message': message}), 400
+            flash(message, 'danger')
+            return redirect(url_for('change_password'))
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT password_hash FROM users WHERE id = %s", (session['user_id'],))
+        user = cursor.fetchone()
+
+        if not user or not check_password_hash(user['password_hash'], current_password):
+            cursor.close()
+            conn.close()
+            message = '旧密码不正确。'
+            if request.is_json:
+                return jsonify({'success': False, 'message': message}), 400
+            flash(message, 'danger')
+            return redirect(url_for('change_password'))
+
+        new_hash = generate_password_hash(new_password)
+        cursor.execute("""
+            UPDATE users
+            SET password_hash = %s, must_change_password = FALSE
+            WHERE id = %s
+        """, (new_hash, session['user_id']))
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        session['must_change_password'] = False
+        message = '密码修改成功！'
+        if request.is_json:
+            return jsonify({'success': True, 'message': message})
+        flash(message, 'success')
+        return redirect(url_for('dashboard'))
+
+    return render_template('change_password.html')
+
+
+def map_import_headers(headers):
+    header_map = {
+        'username': 'username',
+        'student_id': 'username',
+        'studentid': 'username',
+        '学号': 'username',
+        'name': 'name',
+        '姓名': 'name'
+    }
+    mapped = {}
+    for idx, header in enumerate(headers):
+        if header is None:
+            continue
+        normalized = str(header).strip()
+        normalized_lower = normalized.lower()
+        if normalized_lower in header_map:
+            mapped[idx] = header_map[normalized_lower]
+        elif normalized in header_map:
+            mapped[idx] = header_map[normalized]
+    if 'username' not in mapped.values() or 'name' not in mapped.values():
+        raise ValueError('导入文件必须包含 username(学号) 和 name(姓名) 列')
+    return mapped
+
+
+def parse_user_import_file(file_storage):
+    filename = secure_filename(file_storage.filename or '')
+    ext = os.path.splitext(filename)[1].lower()
+
+    if ext == '.csv':
+        content = file_storage.read().decode('utf-8-sig')
+        reader = csv.DictReader(io.StringIO(content))
+        if not reader.fieldnames:
+            raise ValueError('CSV 文件缺少表头')
+        headers = list(reader.fieldnames)
+        header_map = map_import_headers(headers)
+        rows = []
+        for row in reader:
+            row_data = {}
+            for idx, key in header_map.items():
+                field = headers[idx]
+                row_data[key] = (row.get(field) or '').strip()
+            rows.append(row_data)
+        return rows
+
+    if ext in {'.xlsx', '.xlsm'}:
+        workbook = load_workbook(filename=io.BytesIO(file_storage.read()), data_only=True)
+        sheet = workbook.active
+        rows = list(sheet.iter_rows(values_only=True))
+        if not rows:
+            raise ValueError('Excel 文件为空')
+        headers = [cell for cell in rows[0]]
+        header_map = map_import_headers(headers)
+        parsed_rows = []
+        for row in rows[1:]:
+            if row is None:
+                continue
+            row_data = {}
+            for idx, key in header_map.items():
+                value = row[idx] if idx < len(row) else None
+                row_data[key] = str(value).strip() if value is not None else ''
+            parsed_rows.append(row_data)
+        return parsed_rows
+
+    raise ValueError('仅支持 CSV 或 Excel(xlsx/xlsm) 文件')
+
+
+def upsert_users_from_import(rows):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    created = 0
+    updated = 0
+    skipped = 0
+    default_password_hash = generate_password_hash('123456')
+
+    for row in rows:
+        username = (row.get('username') or '').strip()
+        name = (row.get('name') or '').strip()
+        if not username or not name:
+            skipped += 1
+            continue
+
+        cursor.execute("SELECT id FROM users WHERE username = %s", (username,))
+        existing = cursor.fetchone()
+        if existing:
+            cursor.execute("UPDATE users SET name = %s WHERE id = %s", (name, existing['id']))
+            updated += 1
+        else:
+            cursor.execute("""
+                INSERT INTO users (username, name, password_hash, must_change_password, role)
+                VALUES (%s, %s, %s, TRUE, 'student')
+            """, (username, name, default_password_hash))
+            created += 1
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    return created, updated, skipped
 
 
 # 主应用路由
@@ -1643,8 +1942,13 @@ def dashboard():
         session.pop('attempt_count', None)
         session.pop('current_problem', None)
 
+        display_name = session.get('name') or session['username']
+        if session.get('name') and session['name'] != session['username']:
+            display_name = f"{session['name']}（{session['username']}）"
+
         return render_template('dashboard.html',
                                username=session['username'],
+                               display_name=display_name,
                                current_problem=current_display_number,  # 使用显示序号
                                completed_count=completed_count,
                                completed_all=completed_all,
@@ -2345,7 +2649,7 @@ def api_submit(problem_id):
 @login_required
 def admin_dashboard():
     """管理员主页"""
-    if session.get('username') != 'admin':
+    if not is_admin_session():
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
@@ -2366,11 +2670,36 @@ def admin_dashboard():
                            total_problems=total_problems)
 
 
+@app.route('/admin/import-users', methods=['GET', 'POST'])
+@login_required
+def admin_import_users():
+    if not is_admin_session():
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    if request.method == 'POST':
+        file = request.files.get('file')
+        if not file or file.filename == '':
+            flash('请选择要导入的文件。', 'danger')
+            return redirect(url_for('admin_import_users'))
+
+        try:
+            rows = parse_user_import_file(file)
+            created, updated, skipped = upsert_users_from_import(rows)
+            flash(f'导入完成：新增 {created}，更新 {updated}，跳过 {skipped}。', 'success')
+        except ValueError as exc:
+            flash(str(exc), 'danger')
+
+        return redirect(url_for('admin_import_users'))
+
+    return render_template('admin_import_users.html')
+
+
 @app.route('/admin/export/students/<status>')
 @login_required
 def admin_export_students(status):
     """导出已完成/未完成学生列表"""
-    if session.get('username') != 'admin':
+    if not is_admin_session():
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
@@ -2420,7 +2749,7 @@ def admin_export_students(status):
 @login_required
 def admin_export_overview():
     """导出整体答题情况统计"""
-    if session.get('username') != 'admin':
+    if not is_admin_session():
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
@@ -2441,7 +2770,7 @@ def admin_export_overview():
                 MAX(ur.time_taken) AS time_taken
             FROM user_responses ur
             JOIN users u ON ur.user_id = u.id
-            WHERE u.username != 'admin'
+            WHERE COALESCE(u.role, 'student') != 'admin'
             GROUP BY ur.user_id, ur.template_id, ur.attempt_count
         )
         SELECT
@@ -2498,7 +2827,7 @@ def admin_export_overview():
 @login_required
 def admin_export_problem_stats():
     """导出题目统计"""
-    if session.get('username') != 'admin':
+    if not is_admin_session():
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
@@ -2516,7 +2845,7 @@ def admin_export_problem_stats():
                 MAX(ur.time_taken) AS time_taken
             FROM user_responses ur
             JOIN users u ON ur.user_id = u.id
-            WHERE u.username != 'admin'
+            WHERE COALESCE(u.role, 'student') != 'admin'
             GROUP BY ur.user_id, ur.template_id, ur.attempt_count
         )
         SELECT
@@ -2533,7 +2862,7 @@ def admin_export_problem_stats():
                 SELECT error_type
                 FROM user_responses ur2
                 JOIN users u2 ON ur2.user_id = u2.id
-                WHERE ur2.template_id = t.id AND u2.username != 'admin' AND ur2.is_correct = FALSE
+                WHERE ur2.template_id = t.id AND COALESCE(u2.role, 'student') != 'admin' AND ur2.is_correct = FALSE
                 GROUP BY error_type
                 ORDER BY COUNT(*) DESC
                 LIMIT 1
@@ -2591,7 +2920,7 @@ def admin_export_problem_stats():
 @login_required
 def admin_add_problem():
     """添加新题目"""
-    if session.get('username') != 'admin':
+    if not is_admin_session():
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
@@ -2643,7 +2972,7 @@ def admin_add_problem():
 @login_required
 def admin_manage_problems():
     """管理所有题目"""
-    if session.get('username') != 'admin':
+    if not is_admin_session():
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
@@ -2670,7 +2999,7 @@ def admin_manage_problems():
 @login_required
 def admin_edit_problem(template_id):
     """编辑题目"""
-    if session.get('username') != 'admin':
+    if not is_admin_session():
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
@@ -2743,7 +3072,7 @@ def admin_edit_problem(template_id):
 @login_required
 def admin_delete_problem(template_id):
     """删除题目并清理相关图片"""
-    if session.get('username') != 'admin':
+    if not is_admin_session():
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
@@ -2801,7 +3130,7 @@ def admin_delete_problem(template_id):
 @login_required
 def update_all_status():
     """批量更新所有用户的完成状态"""
-    if session.get('username') != 'admin':
+    if not is_admin_session():
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
@@ -2873,7 +3202,7 @@ def check_completion(user_id):
 @login_required
 def admin_students_by_status(status):
     """按完成状态查看学生列表"""
-    if session.get('username') != 'admin':
+    if not is_admin_session():
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
@@ -2901,7 +3230,7 @@ def admin_students_by_status(status):
 @login_required
 def admin_student_details(user_id):
     """查看学生详细答题情况"""
-    if session.get('username') != 'admin':
+    if not is_admin_session():
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
@@ -2996,7 +3325,7 @@ def admin_student_details(user_id):
 @login_required
 def admin_all_problems_stats():
     """查看所有学生对每道题的答题情况"""
-    if session.get('username') != 'admin':
+    if not is_admin_session():
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
@@ -3016,7 +3345,7 @@ def admin_all_problems_stats():
                     MAX(ur.time_taken) AS time_taken
                 FROM user_responses ur
                 JOIN users u ON ur.user_id = u.id
-                WHERE u.username != 'admin'
+                WHERE COALESCE(u.role, 'student') != 'admin'
                 GROUP BY ur.user_id, ur.template_id, ur.attempt_count
             )
             SELECT
@@ -3033,7 +3362,7 @@ def admin_all_problems_stats():
                     SELECT error_type
                     FROM user_responses ur2
                     JOIN users u2 ON ur2.user_id = u2.id
-                    WHERE ur2.template_id = t.id AND u2.username != 'admin' AND ur2.is_correct = FALSE
+                    WHERE ur2.template_id = t.id AND COALESCE(u2.role, 'student') != 'admin' AND ur2.is_correct = FALSE
                     GROUP BY error_type
                     ORDER BY COUNT(*) DESC
                     LIMIT 1
@@ -3054,7 +3383,7 @@ def admin_all_problems_stats():
                 stat['correct_rate'] = 0
 
         # 获取学生总数（排除管理员）
-        cursor.execute("SELECT COUNT(*) as total FROM users WHERE username != 'admin'")
+        cursor.execute("SELECT COUNT(*) as total FROM users WHERE COALESCE(role, 'student') != 'admin'")
         total_students_result = cursor.fetchone()
         total_students = total_students_result['total'] if total_students_result else 0
 
@@ -3070,7 +3399,7 @@ def admin_all_problems_stats():
                     MAX(ur.time_taken) AS time_taken
                 FROM user_responses ur
                 JOIN users u ON ur.user_id = u.id
-                WHERE u.username != 'admin'
+                WHERE COALESCE(u.role, 'student') != 'admin'
                 GROUP BY ur.user_id, ur.template_id, ur.attempt_count
             )
             SELECT
@@ -3095,7 +3424,7 @@ def admin_all_problems_stats():
                     HOUR(MAX(ur.response_time)) as hour_slot
                 FROM user_responses ur
                 JOIN users u ON ur.user_id = u.id
-                WHERE u.username != 'admin'
+                WHERE COALESCE(u.role, 'student') != 'admin'
                 GROUP BY ur.user_id, ur.template_id, ur.attempt_count
             )
             SELECT hour_slot, COUNT(*) as attempts
@@ -3109,7 +3438,7 @@ def admin_all_problems_stats():
             SELECT error_type, COUNT(*) as count
             FROM user_responses ur
             JOIN users u ON ur.user_id = u.id
-            WHERE u.username != 'admin' AND ur.is_correct = FALSE
+            WHERE COALESCE(u.role, 'student') != 'admin' AND ur.is_correct = FALSE
             GROUP BY error_type
             ORDER BY count DESC
         """)
@@ -3197,7 +3526,7 @@ def api_user_completion_status():
 @login_required
 def admin_image_manager():
     """图片管理页面"""
-    if session.get('username') != 'admin':
+    if not is_admin_session():
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
@@ -3225,7 +3554,7 @@ def admin_image_manager():
 @login_required
 def admin_delete_image(filename):
     """删除图片"""
-    if session.get('username') != 'admin':
+    if not is_admin_session():
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
@@ -3312,11 +3641,11 @@ if __name__ == '__main__':
     # 确保默认图片存在
     ensure_default_images()
 
-    # 创建管理员用户
-    create_admin_user()
-
     # 修复可能存在的表结构问题
     repair_database()
+
+    # 创建管理员用户
+    create_admin_user()
 
     # 运行数据库诊断
     print("运行数据库诊断...")
