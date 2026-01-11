@@ -28,6 +28,9 @@
             <a href="{{ url_for('admin_all_problems_stats') }}" class="btn btn-info">
                 <i class="bi bi-graph-up"></i> 题目统计
             </a>
+            <a href="{{ url_for('admin_import_users') }}" class="btn btn-outline-primary">
+                <i class="bi bi-upload"></i> 导入用户
+            </a>
             <a href="{{ url_for('admin_manage_problems') }}" class="btn btn-primary">
                 <i class="bi bi-journal-plus"></i> 题目管理
             </a>
@@ -111,7 +114,8 @@
                         {% for student in recent_completions %}
                         <div class="list-group-item d-flex justify-content-between align-items-center">
                             <div>
-                                <h6 class="mb-1">{{ student.username }}</h6>
+                                <h6 class="mb-1">{{ student.name or student.username }}</h6>
+                                <small class="text-muted">账号: {{ student.username }}</small><br>
                                 <small class="text-muted">完成时间: {{ student.completed_at.strftime('%m-%d %H:%M') }}</small>
                             </div>
                             <div class="text-end">
@@ -144,7 +148,8 @@
                         {% for student in incomplete_students %}
                         <div class="list-group-item d-flex justify-content-between align-items-center">
                             <div>
-                                <h6 class="mb-1">{{ student.username }}</h6>
+                                <h6 class="mb-1">{{ student.name or student.username }}</h6>
+                                <small class="text-muted">账号: {{ student.username }}</small><br>
                                 <small class="text-muted">注册时间: {{ student.created_at.strftime('%m-%d %H:%M') }}</small>
                             </div>
                             <div class="text-end">
@@ -214,12 +219,17 @@
                 </div>
             </div>
             <div class="row">
-                <div class="col-md-6 mb-3">
+                <div class="col-md-4 mb-3">
+                    <a href="{{ url_for('admin_import_users') }}" class="btn btn-outline-primary w-100">
+                        <i class="bi bi-upload me-2"></i>导入用户
+                    </a>
+                </div>
+                <div class="col-md-4 mb-3">
                     <a href="{{ url_for('admin_students_by_status', status='completed') }}" class="btn btn-outline-success w-100">
                         <i class="bi bi-check-circle me-2"></i>已完成学生
                     </a>
                 </div>
-                <div class="col-md-6 mb-3">
+                <div class="col-md-4 mb-3">
                     <a href="{{ url_for('admin_students_by_status', status='incomplete') }}" class="btn btn-outline-warning w-100">
                         <i class="bi bi-exclamation-triangle me-2"></i>未完成学生
                     </a>
