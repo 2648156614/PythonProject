@@ -19,17 +19,8 @@
             <a href="{{ url_for('admin_export_students', status='incomplete') }}" class="btn btn-outline-warning">
                 <i class="bi bi-download"></i> 导出未完成
             </a>
-            <a href="{{ url_for('admin_export_overview') }}" class="btn btn-outline-secondary">
-                <i class="bi bi-download"></i> 导出整体统计
-            </a>
-            <a href="{{ url_for('admin_export_problem_stats') }}" class="btn btn-outline-info">
-                <i class="bi bi-download"></i> 导出题目统计
-            </a>
             <a href="{{ url_for('admin_all_problems_stats') }}" class="btn btn-info">
                 <i class="bi bi-graph-up"></i> 题目统计
-            </a>
-            <a href="{{ url_for('admin_import_users') }}" class="btn btn-outline-primary">
-                <i class="bi bi-upload"></i> 导入用户
             </a>
             <a href="{{ url_for('admin_manage_problems') }}" class="btn btn-primary">
                 <i class="bi bi-journal-plus"></i> 题目管理
@@ -190,71 +181,6 @@
                 <div class="col-md-4">
                     <h3 class="text-info">{{ "%.1f"|format(stats.stats.avg_time or 0) }}</h3>
                     <p class="text-muted">平均用时(秒)</p>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- 快捷操作 -->
-    <div class="card mt-4">
-        <div class="card-header">
-            <h5 class="mb-0"><i class="bi bi-lightning me-2"></i>快捷操作</h5>
-        </div>
-        <div class="card-body">
-            <div class="row">
-                <div class="col-md-4 mb-3">
-                    <a href="{{ url_for('update_all_status') }}" class="btn btn-outline-success w-100">
-                        <i class="bi bi-arrow-clockwise me-2"></i>更新状态
-                    </a>
-                </div>
-                <div class="col-md-4 mb-3">
-                    <a href="{{ url_for('admin_all_problems_stats') }}" class="btn btn-outline-info w-100">
-                        <i class="bi bi-graph-up me-2"></i>题目统计
-                    </a>
-                </div>
-                <div class="col-md-4 mb-3">
-                    <a href="{{ url_for('admin_manage_problems') }}" class="btn btn-outline-primary w-100">
-                        <i class="bi bi-journal-plus me-2"></i>题目管理
-                    </a>
-                </div>
-            </div>
-            <div class="row">
-                <div class="col-md-4 mb-3">
-                    <a href="{{ url_for('admin_import_users') }}" class="btn btn-outline-primary w-100">
-                        <i class="bi bi-upload me-2"></i>导入用户
-                    </a>
-                </div>
-                <div class="col-md-4 mb-3">
-                    <a href="{{ url_for('admin_students_by_status', status='completed') }}" class="btn btn-outline-success w-100">
-                        <i class="bi bi-check-circle me-2"></i>已完成学生
-                    </a>
-                </div>
-                <div class="col-md-4 mb-3">
-                    <a href="{{ url_for('admin_students_by_status', status='incomplete') }}" class="btn btn-outline-warning w-100">
-                        <i class="bi bi-exclamation-triangle me-2"></i>未完成学生
-                    </a>
-                </div>
-            </div>
-            <div class="row">
-                <div class="col-md-3 mb-3">
-                    <a href="{{ url_for('admin_export_students', status='completed') }}" class="btn btn-outline-success w-100">
-                        <i class="bi bi-download me-2"></i>导出已完成
-                    </a>
-                </div>
-                <div class="col-md-3 mb-3">
-                    <a href="{{ url_for('admin_export_students', status='incomplete') }}" class="btn btn-outline-warning w-100">
-                        <i class="bi bi-download me-2"></i>导出未完成
-                    </a>
-                </div>
-                <div class="col-md-3 mb-3">
-                    <a href="{{ url_for('admin_export_overview') }}" class="btn btn-outline-secondary w-100">
-                        <i class="bi bi-download me-2"></i>导出整体统计
-                    </a>
-                </div>
-                <div class="col-md-3 mb-3">
-                    <a href="{{ url_for('admin_export_problem_stats') }}" class="btn btn-outline-info w-100">
-                        <i class="bi bi-download me-2"></i>导出题目统计
-                    </a>
                 </div>
             </div>
         </div>
