@@ -21,6 +21,69 @@ body {
     font-weight: 600;
 }
 
+.navbar-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid rgba(255, 255, 255, 0.6);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.avatar-menu:hover .navbar-avatar {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+}
+
+.avatar-menu .dropdown-menu {
+    margin-top: 0.5rem;
+}
+
+.avatar-menu:hover .dropdown-menu {
+    display: block;
+}
+
+.avatar-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 16px;
+}
+
+.avatar-option {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    border-radius: 12px;
+    border: 2px solid transparent;
+    background-color: #f8f9fa;
+    cursor: pointer;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.avatar-option input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.avatar-option img {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.avatar-option input:checked + img {
+    outline: 3px solid var(--secondary-color);
+}
+
+.avatar-option:hover {
+    border-color: var(--secondary-color);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1);
+}
+
 .card {
     border: none;
     border-radius: 10px;

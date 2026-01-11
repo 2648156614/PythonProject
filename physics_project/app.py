@@ -16,8 +16,10 @@ import mysql.connector
 import numpy as np
 import redis
 import sympy as sp
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, abort
+from openpyxl import load_workbook
 from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__, template_folder='templates', static_folder='static', static_url_path='/static')
 app.secret_key = 'your_secret_key_here'
@@ -52,6 +54,12 @@ MAX_FILE_SIZE = 16 * 1024 * 1024  # 16MB
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
+# 头像配置
+AVATAR_FOLDER = 'static/avatars'
+AVATAR_ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.svg'}
+DEFAULT_AVATAR = 'default.svg'
+DEFAULT_PASSWORD = '123456'
+
 
 def allowed_file(filename):
     """检查文件扩展名是否允许"""
@@ -76,6 +84,32 @@ def save_uploaded_file(file):
         file.save(file_path)
         return filename
     return None
+
+
+def get_avatar_choices():
+    avatars_path = os.path.join(app.root_path, AVATAR_FOLDER)
+    if not os.path.isdir(avatars_path):
+        return [DEFAULT_AVATAR]
+    avatars = []
+    for filename in os.listdir(avatars_path):
+        _, ext = os.path.splitext(filename)
+        if ext.lower() in AVATAR_ALLOWED_EXTENSIONS:
+            avatars.append(filename)
+    if DEFAULT_AVATAR not in avatars:
+        avatars.append(DEFAULT_AVATAR)
+    return sorted(set(avatars))
+
+
+def is_password_hash(value):
+    if not value:
+        return False
+    return value.startswith('pbkdf2:') or value.startswith('scrypt:') or value.startswith('argon2:')
+
+
+def get_display_name(user):
+    name = (user.get('name') if isinstance(user, dict) else None) or ''
+    name = str(name).strip()
+    return name or user.get('username')
 
 
 def get_db_connection():
@@ -224,6 +258,22 @@ def login_required(f):
         if 'user_id' not in session:
             flash('请先登录！', 'danger')
             return redirect(url_for('login'))
+        if session.get('username') != 'admin':
+            conn = get_db_connection()
+            if not conn:
+                flash('数据库连接失败', 'danger')
+                return redirect(url_for('login'))
+            cursor = conn.cursor(dictionary=True)
+            try:
+                cursor.execute("SELECT current_session_token FROM users WHERE id = %s", (session['user_id'],))
+                user = cursor.fetchone()
+                if not user or user['current_session_token'] != session.get('session_token'):
+                    session.clear()
+                    flash('账号已在其他设备登录', 'danger')
+                    return redirect(url_for('login'))
+            finally:
+                cursor.close()
+                conn.close()
         return f(*args, **kwargs)
 
     return decorated_function
@@ -957,7 +1007,11 @@ def initialize_database():
     CREATE TABLE IF NOT EXISTS users (
         id INT AUTO_INCREMENT PRIMARY KEY,
         username VARCHAR(50) NOT NULL UNIQUE,
-        password VARCHAR(100) NOT NULL,
+        name VARCHAR(100) DEFAULT NULL,
+        password VARCHAR(255) NOT NULL,
+        avatar_filename VARCHAR(255) DEFAULT 'default.svg',
+        password_changed BOOLEAN DEFAULT TRUE,
+        current_session_token VARCHAR(64) DEFAULT NULL,
         completed_all BOOLEAN DEFAULT FALSE,
         completed_at TIMESTAMP NULL,
         total_score INT DEFAULT 0,
@@ -1237,6 +1291,43 @@ def initialize_database():
     print("✅ 数据库初始化完成，所有题目已添加答案单位")
 
 
+def ensure_user_columns():
+    """确保用户表包含必要字段"""
+    conn = get_db_connection()
+    if not conn:
+        print("用户表检查失败：数据库连接失败")
+        return
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SHOW COLUMNS FROM users")
+        existing_columns = {col['Field'] for col in cursor.fetchall()}
+        cursor.execute("SHOW COLUMNS FROM users LIKE 'password'")
+        password_column = cursor.fetchone()
+        if password_column and 'varchar(255)' not in password_column['Type'].lower():
+            cursor.execute("ALTER TABLE users MODIFY COLUMN password VARCHAR(255) NOT NULL")
+            print("已扩展 password 列长度")
+        if 'name' not in existing_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN name VARCHAR(100) DEFAULT NULL AFTER username")
+            print("已添加 name 列")
+        if 'avatar_filename' not in existing_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN avatar_filename VARCHAR(255) DEFAULT 'default.svg' AFTER password")
+            print("已添加 avatar_filename 列")
+        if 'password_changed' not in existing_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN password_changed BOOLEAN DEFAULT TRUE AFTER avatar_filename")
+            cursor.execute("UPDATE users SET password_changed = TRUE")
+            print("已添加 password_changed 列")
+        if 'current_session_token' not in existing_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN current_session_token VARCHAR(64) DEFAULT NULL AFTER password_changed")
+            print("已添加 current_session_token 列")
+        conn.commit()
+    except mysql.connector.Error as err:
+        print(f"更新用户表失败: {err}")
+        conn.rollback()
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def create_admin_user():
     """创建管理员用户"""
     conn = get_db_connection()
@@ -1247,7 +1338,12 @@ def create_admin_user():
         cursor.execute("SELECT id FROM users WHERE username = 'admin'")
         if not cursor.fetchone():
             # 创建管理员用户
-            cursor.execute("INSERT INTO users (username, password) VALUES ('admin', 'admin123')")
+            admin_password = generate_password_hash('admin123')
+            cursor.execute(
+                "INSERT INTO users (username, name, password, password_changed, avatar_filename) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                ('admin', '管理员', admin_password, True, DEFAULT_AVATAR)
+            )
             conn.commit()
             print("管理员用户创建成功: admin / admin123")
         else:
@@ -1438,7 +1534,7 @@ def get_completion_stats():
 
     # 成绩排名
     cursor.execute("""
-        SELECT username, total_score, total_time, completed_at
+        SELECT username, name, total_score, total_time, completed_at
         FROM users 
         WHERE completed_all = TRUE 
         ORDER BY total_score DESC, total_time ASC
@@ -1462,7 +1558,7 @@ def get_students_by_completion(completed=True, limit=None, offset=0):
     cursor = conn.cursor(dictionary=True)
 
     query = """
-        SELECT id, username, completed_at, total_score, total_time, created_at
+        SELECT id, username, name, completed_at, total_score, total_time, created_at
         FROM users 
         WHERE completed_all = %s
         ORDER BY completed_at DESC, total_score DESC
@@ -1479,6 +1575,41 @@ def get_students_by_completion(completed=True, limit=None, offset=0):
     conn.close()
 
     return students
+
+
+def normalize_import_header(header):
+    return re.sub(r'\s+', '', str(header or '')).lower()
+
+
+def normalize_import_value(value):
+    if value is None:
+        return ''
+    return str(value).strip()
+
+
+def parse_import_rows(uploaded_file):
+    filename = secure_filename(uploaded_file.filename or '')
+    _, ext = os.path.splitext(filename)
+    ext = ext.lower()
+    if ext == '.csv':
+        content = uploaded_file.stream.read().decode('utf-8-sig')
+        reader = csv.DictReader(io.StringIO(content))
+        return list(reader)
+    if ext == '.xlsx':
+        workbook = load_workbook(uploaded_file, data_only=True)
+        sheet = workbook.active
+        rows = list(sheet.iter_rows(values_only=True))
+        if not rows:
+            return []
+        headers = [normalize_import_value(cell) for cell in rows[0]]
+        data_rows = []
+        for row in rows[1:]:
+            row_dict = {}
+            for idx, header in enumerate(headers):
+                row_dict[header] = row[idx] if idx < len(row) else ''
+            data_rows.append(row_dict)
+        return data_rows
+    raise ValueError('不支持的文件格式')
 
 
 def diagnose_database_issue():
@@ -1530,25 +1661,7 @@ def diagnose_database_issue():
 # 用户认证路由
 @app.route('/register', methods=['GET', 'POST'])
 def register():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        try:
-            cursor.execute("INSERT INTO users (username, password) VALUES (%s, %s)", (username, password))
-            conn.commit()
-            flash('注册成功！请登录。', 'success')
-            return redirect(url_for('login'))
-        except mysql.connector.Error as err:
-            flash('用户名已存在！', 'danger')
-        finally:
-            cursor.close()
-            conn.close()
-
-    return render_template('register.html')
+    abort(404)
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -1560,28 +1673,162 @@ def login():
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        cursor.execute("SELECT * FROM users WHERE username = %s AND password = %s", (username, password))
+        cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
         user = cursor.fetchone()
+
+        if user and is_password_hash(user['password']):
+            password_ok = check_password_hash(user['password'], password)
+        else:
+            password_ok = user is not None and user['password'] == password
+
+        if user and password_ok:
+            if not is_password_hash(user['password']):
+                new_hash = generate_password_hash(password)
+                cursor.execute("UPDATE users SET password = %s WHERE id = %s", (new_hash, user['id']))
+                conn.commit()
+                user['password'] = new_hash
+
+            session['user_id'] = user['id']
+            session['username'] = user['username']
+            session['display_name'] = get_display_name(user)
+            session['avatar_filename'] = user.get('avatar_filename') or DEFAULT_AVATAR
+            session['is_admin'] = (user['username'] == 'admin')
+
+            if user['username'] != 'admin':
+                session_token = uuid.uuid4().hex
+                cursor.execute("UPDATE users SET current_session_token = %s WHERE id = %s", (session_token, user['id']))
+                conn.commit()
+                session['session_token'] = session_token
+            else:
+                session.pop('session_token', None)
+
+            if not user.get('password_changed', True):
+                session['show_password_modal'] = True
+
+            flash('登录成功！', 'success')
+            cursor.close()
+            conn.close()
+            return redirect(url_for('dashboard'))
 
         cursor.close()
         conn.close()
-
-        if user:
-            session['user_id'] = user['id']
-            session['username'] = user['username']
-            flash('登录成功！', 'success')
-            return redirect(url_for('dashboard'))
-        else:
-            flash('用户名或密码错误！', 'danger')
+        flash('用户名或密码错误！', 'danger')
 
     return render_template('login.html')
 
 
 @app.route('/logout')
 def logout():
+    if 'user_id' in session and session.get('username') != 'admin':
+        conn = get_db_connection()
+        if conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute("UPDATE users SET current_session_token = NULL WHERE id = %s", (session['user_id'],))
+                conn.commit()
+            finally:
+                cursor.close()
+                conn.close()
     session.clear()
     flash('您已成功退出。', 'success')
     return redirect(url_for('login'))
+
+
+@app.route('/user/password', methods=['POST'])
+@login_required
+def update_password():
+    current_password = request.form.get('current_password', '')
+    new_password = request.form.get('new_password', '')
+    confirm_password = request.form.get('confirm_password', '')
+
+    if not new_password or new_password != confirm_password:
+        flash('新密码与确认密码不一致', 'danger')
+        return redirect(request.referrer or url_for('dashboard'))
+
+    conn = get_db_connection()
+    if not conn:
+        flash('数据库连接失败', 'danger')
+        return redirect(request.referrer or url_for('dashboard'))
+
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT password FROM users WHERE id = %s", (session['user_id'],))
+        user = cursor.fetchone()
+        if not user:
+            flash('用户不存在', 'danger')
+            return redirect(url_for('login'))
+
+        stored_password = user['password']
+        if is_password_hash(stored_password):
+            password_ok = check_password_hash(stored_password, current_password)
+        else:
+            password_ok = stored_password == current_password
+
+        if not password_ok:
+            flash('当前密码不正确', 'danger')
+            return redirect(request.referrer or url_for('dashboard'))
+
+        new_hash = generate_password_hash(new_password)
+        cursor.execute(
+            "UPDATE users SET password = %s, password_changed = TRUE WHERE id = %s",
+            (new_hash, session['user_id'])
+        )
+        conn.commit()
+        session.pop('show_password_modal', None)
+        flash('密码修改成功', 'success')
+        return redirect(request.referrer or url_for('dashboard'))
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@app.route('/user/name', methods=['POST'])
+@login_required
+def update_name():
+    new_name = request.form.get('name', '').strip()
+    if not new_name:
+        flash('姓名不能为空', 'danger')
+        return redirect(request.referrer or url_for('dashboard'))
+
+    conn = get_db_connection()
+    if not conn:
+        flash('数据库连接失败', 'danger')
+        return redirect(request.referrer or url_for('dashboard'))
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE users SET name = %s WHERE id = %s", (new_name, session['user_id']))
+        conn.commit()
+        session['display_name'] = new_name
+        flash('姓名修改成功', 'success')
+        return redirect(request.referrer or url_for('dashboard'))
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@app.route('/user/avatar', methods=['POST'])
+@login_required
+def update_avatar():
+    avatar_filename = request.form.get('avatar_filename', '')
+    available_avatars = get_avatar_choices()
+    if avatar_filename not in available_avatars:
+        flash('请选择有效的头像', 'danger')
+        return redirect(request.referrer or url_for('dashboard'))
+
+    conn = get_db_connection()
+    if not conn:
+        flash('数据库连接失败', 'danger')
+        return redirect(request.referrer or url_for('dashboard'))
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE users SET avatar_filename = %s WHERE id = %s", (avatar_filename, session['user_id']))
+        conn.commit()
+        session['avatar_filename'] = avatar_filename
+        flash('头像已更新', 'success')
+        return redirect(request.referrer or url_for('dashboard'))
+    finally:
+        cursor.close()
+        conn.close()
 
 
 # 主应用路由
@@ -1644,7 +1891,8 @@ def dashboard():
         session.pop('current_problem', None)
 
         return render_template('dashboard.html',
-                               username=session['username'],
+                               display_name=session.get('display_name', session.get('username')),
+                               is_admin=session.get('username') == 'admin',
                                current_problem=current_display_number,  # 使用显示序号
                                completed_count=completed_count,
                                completed_all=completed_all,
@@ -2341,6 +2589,96 @@ def api_submit(problem_id):
 
 
 # 管理员主页
+@app.route('/admin/import-users', methods=['GET', 'POST'])
+@login_required
+def admin_import_users():
+    """批量导入用户账号"""
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    if request.method == 'POST':
+        uploaded_file = request.files.get('file')
+        if not uploaded_file or uploaded_file.filename == '':
+            flash('请上传CSV或Excel文件', 'danger')
+            return redirect(url_for('admin_import_users'))
+
+        try:
+            rows = parse_import_rows(uploaded_file)
+        except ValueError as err:
+            flash(str(err), 'danger')
+            return redirect(url_for('admin_import_users'))
+
+        if not rows:
+            flash('导入文件为空或没有数据', 'danger')
+            return redirect(url_for('admin_import_users'))
+
+        headers = list(rows[0].keys())
+        normalized_headers = {normalize_import_header(header): header for header in headers}
+
+        account_keys = {'账号', '学号', '用户名', 'username', 'account', 'studentid', 'student_id'}
+        name_keys = {'姓名', 'name', 'realname', 'real_name'}
+
+        account_field = None
+        name_field = None
+        for key, original in normalized_headers.items():
+            if key in account_keys and not account_field:
+                account_field = original
+            if key in name_keys and not name_field:
+                name_field = original
+
+        if not account_field or not name_field:
+            flash('请确保表头包含账号（学号）与姓名字段', 'danger')
+            return redirect(url_for('admin_import_users'))
+
+        conn = get_db_connection()
+        if not conn:
+            flash('数据库连接失败', 'danger')
+            return redirect(url_for('admin_import_users'))
+
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute("SELECT username FROM users")
+            existing_usernames = {row['username'] for row in cursor.fetchall()}
+
+            to_insert = []
+            skipped = 0
+            invalid = 0
+            seen = set()
+            default_password_hash = generate_password_hash(DEFAULT_PASSWORD)
+
+            for row in rows:
+                account = normalize_import_value(row.get(account_field))
+                name = normalize_import_value(row.get(name_field))
+                if not account or not name:
+                    invalid += 1
+                    continue
+                if account in existing_usernames or account in seen:
+                    skipped += 1
+                    continue
+                seen.add(account)
+                to_insert.append((account, name, default_password_hash, False, DEFAULT_AVATAR))
+
+            if to_insert:
+                cursor.executemany(
+                    "INSERT INTO users (username, name, password, password_changed, avatar_filename) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    to_insert
+                )
+                conn.commit()
+
+            flash(
+                f'导入完成：新增 {len(to_insert)} 条，重复 {skipped} 条，缺失 {invalid} 条',
+                'success'
+            )
+            return redirect(url_for('admin_import_users'))
+        finally:
+            cursor.close()
+            conn.close()
+
+    return render_template('admin_import_users.html')
+
+
 @app.route('/admin')
 @login_required
 def admin_dashboard():
@@ -2386,7 +2724,8 @@ def admin_export_students(status):
     writer = csv.writer(output)
     writer.writerow([
         '学生ID',
-        '用户名',
+        '账号',
+        '姓名',
         '完成状态',
         '完成题目数',
         '总题目数',
@@ -2402,6 +2741,7 @@ def admin_export_students(status):
         writer.writerow([
             student['id'],
             student['username'],
+            student.get('name') or '',
             status_label,
             student['total_score'] or 0,
             total_problems,
@@ -2910,7 +3250,10 @@ def admin_student_details(user_id):
 
     try:
         # 获取学生基本信息
-        cursor.execute("SELECT username, completed_all, total_score, total_time FROM users WHERE id = %s", (user_id,))
+        cursor.execute(
+            "SELECT username, name, completed_all, total_score, total_time FROM users WHERE id = %s",
+            (user_id,)
+        )
         student = cursor.fetchone()
 
         if not student:
@@ -3153,7 +3496,12 @@ def inject_device_status():
     """向所有模板注入设备状态"""
     return {
         'is_mobile': is_mobile_device(),
-        'is_touch': is_touch_device()
+        'is_touch': is_touch_device(),
+        'display_name': session.get('display_name'),
+        'avatar_filename': session.get('avatar_filename', DEFAULT_AVATAR),
+        'is_admin': session.get('username') == 'admin' if 'username' in session else False,
+        'available_avatars': get_avatar_choices(),
+        'show_password_modal': session.pop('show_password_modal', False)
     }
 
 
@@ -3308,6 +3656,9 @@ if __name__ == '__main__':
 
     # 初始化数据库
     initialize_database()
+
+    # 确保用户表字段完整
+    ensure_user_columns()
 
     # 确保默认图片存在
     ensure_default_images()

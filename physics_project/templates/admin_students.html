@@ -63,7 +63,8 @@
                     <thead class="table-light">
                         <tr>
                             <th>#</th>
-                            <th>用户名</th>
+                            <th>账号</th>
+                            <th>姓名</th>
                             <th>完成状态</th>
                             <th>正确题数</th>
                             <th>总用时</th>
@@ -82,6 +83,7 @@
                                 <span class="badge bg-danger ms-1">管理员</span>
                                 {% endif %}
                             </td>
+                            <td>{{ student.name or '-' }}</td>
                             <td>
                                 {% if student.completed_all %}
                                 <span class="badge bg-success">已完成</span>
