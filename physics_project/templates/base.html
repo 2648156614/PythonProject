@@ -217,9 +217,31 @@
                             </ul>
                         </li>
                         {% endif %}
-
-                        <li class="nav-item d-none d-md-block">
-                            <span class="nav-link">欢迎, {{ session.username }}</span>
+                        <li class="nav-item dropdown avatar-menu">
+                            <a class="nav-link d-flex align-items-center" href="#" id="avatarMenu" role="button"
+                               data-bs-toggle="dropdown" aria-expanded="false">
+                                <img src="{{ url_for('static', filename='avatars/' ~ avatar_filename) }}"
+                                     class="navbar-avatar" alt="avatar">
+                                <span class="ms-2 d-none d-lg-inline">{{ display_name or session.username }}</span>
+                            </a>
+                            <ul class="dropdown-menu dropdown-menu-end shadow" aria-labelledby="avatarMenu">
+                                <li class="dropdown-header">{{ display_name or session.username }}</li>
+                                <li>
+                                    <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#avatarModal">
+                                        <i class="bi bi-person-circle me-1"></i> 切换头像
+                                    </a>
+                                </li>
+                                <li>
+                                    <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#passwordModal">
+                                        <i class="bi bi-key me-1"></i> 修改密码
+                                    </a>
+                                </li>
+                                <li>
+                                    <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#nameModal">
+                                        <i class="bi bi-pencil-square me-1"></i> 修改姓名
+                                    </a>
+                                </li>
+                            </ul>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link {{ 'active' if request.endpoint == 'dashboard' }}" href="{{ url_for('dashboard') }}">
@@ -264,13 +286,6 @@
                                 <span class="d-none-mobile">登录</span>
                             </a>
                         </li>
-                        <li class="nav-item">
-                            <a class="nav-link {{ 'active' if request.endpoint == 'register' }}" href="{{ url_for('register') }}">
-                                <i class="bi bi-person-plus me-1 d-none-mobile"></i>
-                                <span class="d-inline-mobile">注册</span>
-                                <span class="d-none-mobile">注册</span>
-                            </a>
-                        </li>
                     {% endif %}
                 </ul>
             </div>
@@ -291,6 +306,88 @@
 
         {% block content %}{% endblock %}
     </div>
+
+    {% if 'user_id' in session %}
+    <!-- 修改密码弹窗 -->
+    <div class="modal fade" id="passwordModal" tabindex="-1" aria-labelledby="passwordModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <form method="POST" action="{{ url_for('update_password') }}" class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="passwordModalLabel">修改密码</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="current-password" class="form-label">当前密码</label>
+                        <input type="password" class="form-control" id="current-password" name="current_password" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="new-password" class="form-label">新密码</label>
+                        <input type="password" class="form-control" id="new-password" name="new_password" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="confirm-password" class="form-label">确认新密码</label>
+                        <input type="password" class="form-control" id="confirm-password" name="confirm_password" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="submit" class="btn btn-primary">确认修改</button>
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">暂时不修改</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 修改姓名弹窗 -->
+    <div class="modal fade" id="nameModal" tabindex="-1" aria-labelledby="nameModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <form method="POST" action="{{ url_for('update_name') }}" class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="nameModalLabel">修改姓名</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="user-name" class="form-label">姓名</label>
+                        <input type="text" class="form-control" id="user-name" name="name"
+                               value="{{ display_name or '' }}" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="submit" class="btn btn-primary">确认修改</button>
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">暂时不修改</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 切换头像弹窗 -->
+    <div class="modal fade" id="avatarModal" tabindex="-1" aria-labelledby="avatarModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <form method="POST" action="{{ url_for('update_avatar') }}" class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="avatarModalLabel">切换头像</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="avatar-grid">
+                        {% for avatar in available_avatars %}
+                        <label class="avatar-option">
+                            <input type="radio" name="avatar_filename" value="{{ avatar }}"
+                                   {% if avatar == avatar_filename %}checked{% endif %}>
+                            <img src="{{ url_for('static', filename='avatars/' ~ avatar) }}" alt="{{ avatar }}">
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="submit" class="btn btn-primary">确认修改</button>
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">暂时不修改</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    {% endif %}
 
     <!-- 页脚 -->
     <footer class="bg-dark text-white mt-5 py-3 py-md-4">
@@ -431,6 +528,18 @@
             }
         });
     </script>
+
+    {% if show_password_modal %}
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const passwordModal = document.getElementById('passwordModal');
+            if (passwordModal) {
+                const modal = new bootstrap.Modal(passwordModal);
+                modal.show();
+            }
+        });
+    </script>
+    {% endif %}
 
     {% block scripts %}{% endblock %}
 </body>
