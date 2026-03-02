@@ -520,7 +520,7 @@ def generate_problem_from_template(template_id, max_attempts=10):
     if not template:
         return None
 
-    variables = [v.strip() for v in template['variables'].split(',')] if template['variables'] else []
+    variables, configured_ranges = parse_variable_specs(template.get('variables', ''))
 
     # 符号定义
     x, t, h = sp.symbols('x t h')
@@ -532,7 +532,10 @@ def generate_problem_from_template(template_id, max_attempts=10):
     # 内存中的自适应范围（不持久化）
     reasonable_ranges = {}
     for var in variables:
-        reasonable_ranges[var] = get_adaptive_default_range(var)
+        reasonable_ranges[var] = configured_ranges.get(var, get_adaptive_default_range(var))
+
+    answer_units = parse_answer_units(template)
+    answer_constraints = infer_answer_constraints(answer_units)
 
     for attempt in range(max_attempts):
         var_values = {}
@@ -568,7 +571,7 @@ def generate_problem_from_template(template_id, max_attempts=10):
                 correct_answers = [correct_answers[0]] * answer_count
 
             # 动态合理性验证（标准随尝试次数放宽）
-            if is_answer_reasonable_dynamic(correct_answers, var_values, attempt):
+            if is_answer_reasonable_dynamic(correct_answers, var_values, attempt, answer_constraints):
                 # 在内存中更新合理范围（仅本次运行有效）
                 for var, value in var_values.items():
                     current_min, current_max = reasonable_ranges[var]
@@ -576,11 +579,6 @@ def generate_problem_from_template(template_id, max_attempts=10):
                         min(current_min, value * 0.8),  # 稍微扩大下限
                         max(current_max, value * 1.2)  # 稍微扩大上限
                     )
-
-                # 解析答案单位
-                answer_units = []
-                if template.get('answer_units'):
-                    answer_units = [u.strip() for u in template['answer_units'].split(',')]
 
                 # 确保答案单位数量与答案数量匹配
                 answer_count = template.get('answer_count', 1)
@@ -634,39 +632,48 @@ def generate_problem_from_template(template_id, max_attempts=10):
             continue
 
     # 最终回退：使用保守但保证成功的方法
-    return generate_fallback_problem(template, variables, local_vars)
+    return generate_fallback_problem(template, variables, local_vars, reasonable_ranges, answer_units, answer_constraints)
 
 
-def generate_fallback_problem(template, variables, local_vars):
+def generate_fallback_problem(template, variables, local_vars, reasonable_ranges=None, answer_units=None, answer_constraints=None):
     """最终回退方案：使用保守范围生成题目"""
-    var_values = {}
-    for var in variables:
-        # 使用非常保守但保证合理的小范围
-        var_values[var] = round(random.uniform(1.0, 3.0), 2)
+    answer_units = answer_units or parse_answer_units(template)
+    answer_constraints = answer_constraints or infer_answer_constraints(answer_units)
 
-    problem_content = format_problem_text(template['problem_text'], var_values)
+    correct_answers = [0.0] * template.get('answer_count', 1)
+    problem_content = template['problem_text']
 
-    try:
-        current_vars = local_vars.copy()
-        current_vars.update(var_values)
-        correct_answer = eval(template['solution_formula'], {}, current_vars)
+    for attempt in range(5):
+        var_values = {}
+        for var in variables:
+            min_val, max_val = (reasonable_ranges or {}).get(var, (1.0, 3.0))
+            var_values[var] = round(random.uniform(min_val, max_val), 2)
 
-        if isinstance(correct_answer, tuple):
-            correct_answers = [float(a.evalf()) if hasattr(a, 'evalf') else float(a) for a in correct_answer]
-        else:
-            correct_answers = [
-                float(correct_answer.evalf()) if hasattr(correct_answer, 'evalf') else float(correct_answer)]
+        problem_content = format_problem_text(template['problem_text'], var_values)
 
-        answer_count = template.get('answer_count', 1)
-        if len(correct_answers) != answer_count:
-            correct_answers = [correct_answers[0]] * answer_count
-    except:
-        correct_answers = [0.0] * template.get('answer_count', 1)
+        try:
+            current_vars = local_vars.copy()
+            current_vars.update(var_values)
+            correct_answer = eval(template['solution_formula'], {}, current_vars)
 
-    # 解析答案单位（回退方案也处理单位）
-    answer_units = []
-    if template.get('answer_units'):
-        answer_units = [u.strip() for u in template['answer_units'].split(',')]
+            if isinstance(correct_answer, tuple):
+                current_answers = [float(a.evalf()) if hasattr(a, 'evalf') else float(a) for a in correct_answer]
+            else:
+                current_answers = [
+                    float(correct_answer.evalf()) if hasattr(correct_answer, 'evalf') else float(correct_answer)]
+
+            answer_count = template.get('answer_count', 1)
+            if len(current_answers) != answer_count:
+                current_answers = [current_answers[0]] * answer_count
+
+            if is_answer_reasonable_dynamic(current_answers, var_values, attempt, answer_constraints):
+                correct_answers = current_answers
+                break
+        except Exception:
+            continue
+    else:
+        var_values = {var: 1.0 for var in variables}
+        problem_content = format_problem_text(template['problem_text'], var_values)
 
     # 确保答案单位数量与答案数量匹配
     answer_count = template.get('answer_count', 1)
@@ -732,14 +739,22 @@ def get_adaptive_default_range(var_name):
         return (0.5, 20.0)
 
 
-def is_answer_reasonable_dynamic(correct_answers, var_values, attempt_num):
+def is_answer_reasonable_dynamic(correct_answers, var_values, attempt_num, constraints=None):
     """完全动态的合理性验证"""
     if not correct_answers:
         return False
 
+    constraints = constraints or {}
+    min_answer = constraints.get('min_answer')
+    max_answer = constraints.get('max_answer')
+    non_negative = constraints.get('non_negative', False)
+
     for answer in correct_answers:
         # 基础检查：必须是有限实数
         if not isinstance(answer, (int, float)) or not np.isfinite(answer):
+            return False
+
+        if non_negative and answer < 0:
             return False
 
         abs_answer = abs(answer)
@@ -747,6 +762,11 @@ def is_answer_reasonable_dynamic(correct_answers, var_values, attempt_num):
         # 动态阈值：随着尝试次数增加，逐渐放宽标准
         max_threshold = 1e6 * (1 + attempt_num * 0.2)  # 逐渐放宽上限
         min_threshold = 1e-8 / (1 + attempt_num * 0.2)  # 逐渐放宽下限
+
+        if max_answer is not None:
+            max_threshold = min(max_threshold, max_answer)
+        if min_answer is not None:
+            min_threshold = max(min_threshold, min_answer)
 
         if abs_answer > max_threshold or (0 < abs_answer < min_threshold):
             return False
@@ -790,7 +810,6 @@ def check_dynamic_consistency(answer, var_values, attempt_num):
 
 def format_problem_text(problem_text, var_values):
     """格式化问题文本"""
-    import re
     pattern = r'__(\w+)__'
 
     def replace_var(match):
@@ -799,6 +818,70 @@ def format_problem_text(problem_text, var_values):
 
     return re.sub(pattern, replace_var, problem_text)
 
+
+
+def parse_variable_specs(variables_text):
+    """支持 `v[1,5],a[0.1,2],t` 的轻量范围语法；未配置时沿用默认范围。"""
+    if not variables_text:
+        return [], {}
+
+    tokens = []
+    current = []
+    bracket_depth = 0
+    for ch in variables_text:
+        if ch == '[':
+            bracket_depth += 1
+        elif ch == ']':
+            bracket_depth = max(0, bracket_depth - 1)
+
+        if ch == ',' and bracket_depth == 0:
+            token = ''.join(current).strip()
+            if token:
+                tokens.append(token)
+            current = []
+            continue
+
+        current.append(ch)
+
+    tail = ''.join(current).strip()
+    if tail:
+        tokens.append(tail)
+
+    variables = []
+    ranges = {}
+    for token in tokens:
+        match = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]$', token)
+        if match:
+            name = match.group(1)
+            min_val = float(match.group(2))
+            max_val = float(match.group(3))
+            if min_val > max_val:
+                min_val, max_val = max_val, min_val
+            variables.append(name)
+            ranges[name] = (min_val, max_val)
+        else:
+            variables.append(token)
+
+    return variables, ranges
+
+
+def parse_answer_units(template):
+    if template.get('answer_units'):
+        return [u.strip() for u in template['answer_units'].split(',')]
+    return []
+
+
+def infer_answer_constraints(answer_units):
+    """基于单位做基础安全约束，避免明显不合理答案。"""
+    merged_units = ' '.join(answer_units).lower()
+    non_negative_units = ['kg', 'j', 'n', 'pa', 'w', 'hz', 'ω', 'ohm', 'Ω']
+    non_negative = any(unit.lower() in merged_units for unit in non_negative_units)
+
+    return {
+        'non_negative': non_negative,
+        'min_answer': 0 if non_negative else None,
+        'max_answer': 1e7
+    }
 
 def classify_error_type(user_answer, correct_answer, is_correct):
     """根据用户答案与正确答案的差异推断错误类型"""
