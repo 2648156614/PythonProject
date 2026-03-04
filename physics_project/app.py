@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import logging
 import math
 import os
 import random
@@ -22,6 +23,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__, template_folder='templates', static_folder='static', static_url_path='/static')
 app.secret_key = 'your_secret_key_here'
+logger = logging.getLogger(__name__)
 
 # Redis 配置
 redis_url = os.getenv('REDIS_URL', 'redis://172.17.66.87:6379/0')
@@ -280,12 +282,11 @@ def login_required(f):
 
 def is_correct(user_answer, correct_answer):
     """判断答案是否正确（允许1%误差，支持科学计数法范围）"""
-    print(f"[DEBUG is_correct] 用户答案: {user_answer}, 正确答案: {correct_answer}")
-    print(f"[DEBUG is_correct] 类型 - 用户答案: {type(user_answer)}, 正确答案: {type(correct_answer)}")
+    logger.debug("is_correct 输入: user_answer=%r, correct_answer=%r", user_answer, correct_answer)
 
     # 处理None值
     if user_answer is None or correct_answer is None:
-        print(f"[DEBUG is_correct] 答案为空，返回False")
+        logger.debug("is_correct 答案为空，返回 False")
         return False
 
     # 转换为浮点数
@@ -293,21 +294,19 @@ def is_correct(user_answer, correct_answer):
         user_float = float(user_answer)
         correct_float = float(correct_answer)
     except (ValueError, TypeError) as e:
-        print(f"[DEBUG is_correct] 数值转换失败: {e}")
+        logger.debug("is_correct 数值转换失败: %s", e)
         return False
-
-    print(f"[DEBUG is_correct] 转换后 - 用户答案: {user_float}, 正确答案: {correct_float}")
 
     # 处理特殊情况：两个都是0
     if user_float == 0 and correct_float == 0:
-        print(f"[DEBUG is_correct] 两者均为0，返回True")
+        logger.debug("is_correct 两者均为0，返回 True")
         return True
 
     # 处理特殊情况：其中一个为0，另一个不为0
     if user_float == 0 or correct_float == 0:
         # 如果其中一个为0，则要求完全相等（因为0的1%还是0）
         result = user_float == correct_float
-        print(f"[DEBUG is_correct] 有0值，直接比较结果: {result}")
+        logger.debug("is_correct 存在0值，直接比较结果: %s", result)
         return result
 
     # 计算相对误差（百分比）
@@ -328,12 +327,14 @@ def is_correct(user_answer, correct_answer):
     # 检查相对误差
     result = relative_error <= adjusted_tolerance
 
-    print(f"[DEBUG is_correct] 相对误差: {relative_error:.6f}%")
-    print(f"[DEBUG is_correct] 允许误差: {adjusted_tolerance}%")
-    print(f"[DEBUG is_correct] 是否在容错范围内: {result}")
-
-    # 调试信息：显示科学计数法格式
-    print(f"[DEBUG is_correct] 科学计数法 - 用户答案: {user_float:.2e}, 正确答案: {correct_float:.2e}")
+    logger.debug(
+        "is_correct 计算结果: user=%s correct=%s relative_error=%.6f%% tolerance=%s result=%s",
+        f"{user_float:.2e}",
+        f"{correct_float:.2e}",
+        relative_error,
+        adjusted_tolerance,
+        result
+    )
 
     return result
 
@@ -2418,7 +2419,8 @@ def api_submit(problem_id):
     """API接口：提交答案 - 内部将problem_id作为显示序号使用"""
     try:
         data = request.get_json()
-        print(f"[API] 显示序号 {problem_id} 提交数据: {data}")
+        logger.info("提交答案: problem_id=%s", problem_id)
+        logger.debug("提交数据详情: problem_id=%s payload=%s", problem_id, data)
 
         if not data:
             return jsonify({'success': False, 'message': '无效的请求数据'})
@@ -2457,26 +2459,31 @@ def api_submit(problem_id):
                 'already_completed': True
             })
 
-        print(f"[API DEBUG] 用户 {user_id} 提交问题 {problem_id} (实际ID: {actual_id})")
-        print(f"模板ID: {template_id}")
-        print(f"答案数量: {answer_count}")
-        print(f"当前累计尝试次数: {session['current_problem']['total_attempts']}")
-        print(f"答题用时: {time_taken}秒")
-        print(f"正确答案: {correct_answers}")
+        logger.info(
+            "处理提交: user_id=%s problem_id=%s actual_id=%s template_id=%s answer_count=%s attempts=%s time_taken=%.2fs",
+            user_id,
+            problem_id,
+            actual_id,
+            template_id,
+            answer_count,
+            session['current_problem']['total_attempts'],
+            time_taken,
+        )
+        logger.debug("正确答案详情: %s", correct_answers)
 
         # 验证答题时间的合理性
         if time_taken < 0:
-            print(f"[API WARNING] 无效的答题时间: {time_taken}秒，重置为0")
+            logger.warning("无效的答题时间: %.2fs，重置为0", time_taken)
             time_taken = 0
         elif time_taken > 86400:  # 超过24小时
-            print(f"[API WARNING] 答题时间异常长: {time_taken}秒，限制为3600秒")
+            logger.warning("答题时间异常长: %.2fs，限制为3600秒", time_taken)
             time_taken = 3600
         elif time_taken < 1:  # 少于1秒（可能有问题）
-            print(f"[API WARNING] 答题时间过短: {time_taken}秒，可能计时器有问题")
+            logger.warning("答题时间过短: %.2fs，可能计时器有问题", time_taken)
         elif time_taken > 3600:  # 超过1小时
-            print(f"[API INFO] 答题时间较长: {time_taken}秒")
+            logger.info("答题时间较长: %.2fs", time_taken)
 
-        print(f"[API] 最终记录用时: {time_taken:.2f}秒")
+        logger.info("最终记录用时: %.2fs", time_taken)
 
         # 获取用户答案
         user_answers = []
@@ -2488,7 +2495,7 @@ def api_submit(problem_id):
                 user_answer = float(data.get(f'answer{i + 1}', 0))
                 user_answers.append(user_answer)
 
-        print(f"用户答案: {user_answers}")
+        logger.debug("用户答案详情: %s", user_answers)
 
         # 验证每个答案
         is_correct_list = []
@@ -2500,8 +2507,13 @@ def api_submit(problem_id):
             is_correct_list.append(answer_is_correct)
             if not answer_is_correct:
                 all_correct = False
-            print(
-                f"答案{i + 1}: {user_answer} (正确: {correct_answer}, 结果: {'正确' if answer_is_correct else '错误'})")
+            logger.debug(
+                "答案校验: index=%s user=%s correct=%s result=%s",
+                i + 1,
+                user_answer,
+                correct_answer,
+                answer_is_correct,
+            )
 
         error_types = [
             classify_error_type(user_answer, correct_answer, is_correct)
@@ -2519,7 +2531,7 @@ def api_submit(problem_id):
         )
 
         if not save_success:
-            print(f"[API ERROR] 保存答题记录失败")
+            logger.error("保存答题记录失败: user_id=%s template_id=%s", user_id, template_id)
             # 即使保存失败，也继续处理，但记录警告
             session['current_problem']['save_failed'] = True
 
@@ -2592,8 +2604,12 @@ def api_submit(problem_id):
                     'token': new_token
                 })
 
-                print(f"[API] 生成新题目参数: {new_problem_data['var_values']}")
-                print(f"[API] 生成新正确答案: {new_problem_data['correct_answers']}")
+                logger.info("已生成新题目: problem_id=%s actual_id=%s", problem_id, actual_id)
+                logger.debug(
+                    "新题目详情: var_values=%s correct_answers=%s",
+                    new_problem_data['var_values'],
+                    new_problem_data['correct_answers']
+                )
             else:
                 # 题目生成失败
                 message = f'❌ 答案不正确！{correct_answer_message}。题目刷新失败，请重试。'
@@ -2619,19 +2635,25 @@ def api_submit(problem_id):
             'actual_id': actual_id
         })
 
-        print(f"[API RESPONSE] 返回数据: {response_data}")
+        logger.info(
+            "提交处理完成: user_id=%s problem_id=%s actual_id=%s correct=%s total_attempts=%s",
+            user_id,
+            problem_id,
+            actual_id,
+            response_data.get('correct'),
+            response_data.get('total_attempts'),
+        )
+        logger.debug("返回数据详情: %s", response_data)
         return jsonify(response_data)
 
     except ValueError as e:
-        print(f"[API ERROR] 数值转换错误: {str(e)}")
+        logger.error("数值转换错误: %s", e)
         return jsonify({'success': False, 'message': '请输入有效的数字格式'})
     except KeyError as e:
-        print(f"[API ERROR] 缺少必要字段: {str(e)}")
+        logger.error("缺少必要字段: %s", e)
         return jsonify({'success': False, 'message': f'缺少必要字段: {str(e)}'})
     except Exception as e:
-        print(f"[API ERROR] 服务器错误: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.exception("服务器错误: %s", e)
         return jsonify({'success': False, 'message': f'服务器错误: {str(e)}'})
 
 
