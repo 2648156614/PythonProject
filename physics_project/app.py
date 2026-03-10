@@ -1720,47 +1720,58 @@ def login():
 
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
+            user = cursor.fetchone()
 
-        cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
-        user = cursor.fetchone()
-
-        if user and is_password_hash(user['password']):
-            password_ok = check_password_hash(user['password'], password)
-        else:
-            password_ok = user is not None and user['password'] == password
-
-        if user and password_ok:
-            if not is_password_hash(user['password']):
-                new_hash = generate_password_hash(password)
-                cursor.execute("UPDATE users SET password = %s WHERE id = %s", (new_hash, user['id']))
-                conn.commit()
-                user['password'] = new_hash
-
-            session['user_id'] = user['id']
-            session['username'] = user['username']
-            session['display_name'] = get_display_name(user)
-            session['avatar_filename'] = user.get('avatar_filename') or DEFAULT_AVATAR
-            session['is_admin'] = (user['username'] == 'admin')
-
-            if user['username'] != 'admin':
-                session_token = uuid.uuid4().hex
-                cursor.execute("UPDATE users SET current_session_token = %s WHERE id = %s", (session_token, user['id']))
-                conn.commit()
-                session['session_token'] = session_token
+            if user and is_password_hash(user['password']):
+                password_ok = check_password_hash(user['password'], password)
             else:
-                session.pop('session_token', None)
+                password_ok = user is not None and user['password'] == password
 
-            if not user.get('password_changed', True):
-                session['show_password_modal'] = True
+            if user and password_ok:
+                if not is_password_hash(user['password']):
+                    new_hash = generate_password_hash(password)
+                    try:
+                        cursor.execute("UPDATE users SET password = %s WHERE id = %s", (new_hash, user['id']))
+                        conn.commit()
+                        user['password'] = new_hash
+                    except mysql.connector.Error as err:
+                        conn.rollback()
+                        app.logger.warning(
+                            "登录时升级密码哈希失败 user_id=%s, error=%s",
+                            user['id'],
+                            err,
+                        )
 
-            flash('登录成功！', 'success')
+                session['user_id'] = user['id']
+                session['username'] = user['username']
+                session['display_name'] = get_display_name(user)
+                session['avatar_filename'] = user.get('avatar_filename') or DEFAULT_AVATAR
+                session['is_admin'] = (user['username'] == 'admin')
+
+                if user['username'] != 'admin':
+                    session_token = uuid.uuid4().hex
+                    cursor.execute("UPDATE users SET current_session_token = %s WHERE id = %s", (session_token, user['id']))
+                    conn.commit()
+                    session['session_token'] = session_token
+                else:
+                    session.pop('session_token', None)
+
+                if not user.get('password_changed', True):
+                    session['show_password_modal'] = True
+
+                flash('登录成功！', 'success')
+                return redirect(url_for('dashboard'))
+
+            flash('用户名或密码错误！', 'danger')
+        except mysql.connector.Error as err:
+            conn.rollback()
+            app.logger.error("登录流程数据库错误: %s", err)
+            flash('登录失败，请稍后重试。', 'danger')
+        finally:
             cursor.close()
             conn.close()
-            return redirect(url_for('dashboard'))
-
-        cursor.close()
-        conn.close()
-        flash('用户名或密码错误！', 'danger')
 
     return render_template('login.html')
 
