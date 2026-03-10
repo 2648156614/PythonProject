@@ -28,6 +28,30 @@
         </div>
     </div>
 
+    <div class="card mb-4 border-primary">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0"><i class="bi bi-file-earmark-arrow-up me-2"></i>批量导入学生</h5>
+        </div>
+        <div class="card-body">
+            <form method="post" action="{{ url_for('admin_import_students') }}" enctype="multipart/form-data" class="row g-3 align-items-end">
+                <div class="col-lg-7">
+                    <label for="students_file" class="form-label">上传 xlsx 文件</label>
+                    <input class="form-control" type="file" id="students_file" name="students_file" accept=".xlsx" required>
+                    <div class="form-text">格式要求：第 1 列为学号，第 2 列为姓名；可包含表头。</div>
+                </div>
+                <div class="col-lg-5 text-lg-end">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-upload me-1"></i> 开始导入
+                    </button>
+                </div>
+            </form>
+            <hr>
+            <p class="mb-0 text-muted">
+                导入时会将学生密码重置为 <code>123456</code>，并标记为首次登录需修改密码。
+            </p>
+        </div>
+    </div>
+
     <!-- 总体统计 -->
     <div class="row mb-4">
         <div class="col-xl-3 col-md-6 mb-3">

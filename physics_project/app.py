@@ -18,6 +18,7 @@ import numpy as np
 import redis
 import sympy as sp
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, abort
+from openpyxl import load_workbook
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -66,6 +67,11 @@ def allowed_file(filename):
     """检查文件扩展名是否允许"""
     return '.' in filename and \
         filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def allowed_excel_file(filename):
+    """检查是否为支持的 Excel 文件"""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() == 'xlsx'
 
 
 def save_uploaded_file(file):
@@ -2691,6 +2697,113 @@ def admin_dashboard():
                            recent_completions=recent_completions,
                            incomplete_students=incomplete_students,
                            total_problems=total_problems)
+
+
+@app.route('/admin/import/students', methods=['POST'])
+@login_required
+def admin_import_students():
+    """管理员批量导入学生（xlsx：第一列学号，第二列姓名）"""
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    upload_file = request.files.get('students_file')
+    if not upload_file or upload_file.filename == '':
+        flash('请先选择要导入的 xlsx 文件', 'danger')
+        return redirect(url_for('admin_dashboard'))
+
+    if not allowed_excel_file(upload_file.filename):
+        flash('文件格式错误，仅支持 .xlsx', 'danger')
+        return redirect(url_for('admin_dashboard'))
+
+    try:
+        workbook = load_workbook(upload_file, read_only=True, data_only=True)
+        sheet = workbook.active
+
+        raw_rows = []
+        for row in sheet.iter_rows(values_only=True):
+            student_id = str(row[0]).strip() if len(row) > 0 and row[0] is not None else ''
+            student_name = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ''
+            if not student_id and not student_name:
+                continue
+            raw_rows.append((student_id, student_name))
+    except Exception as e:
+        flash(f'读取 xlsx 失败：{e}', 'danger')
+        return redirect(url_for('admin_dashboard'))
+
+    if not raw_rows:
+        flash('未读取到有效数据，请检查文件内容', 'warning')
+        return redirect(url_for('admin_dashboard'))
+
+    normalized_rows = raw_rows
+    first_id, first_name = raw_rows[0]
+    if first_id.lower() in {'学号', 'student_id', 'studentid', 'id', '账号', '用户名'}:
+        if first_name.lower() in {'姓名', 'name', '学生姓名'} or not first_name:
+            normalized_rows = raw_rows[1:]
+
+    valid_rows = []
+    skipped_rows = 0
+    for student_id, student_name in normalized_rows:
+        if not student_id:
+            skipped_rows += 1
+            continue
+        valid_rows.append((student_id, student_name or None))
+
+    if not valid_rows:
+        flash('未找到可导入的学号数据', 'warning')
+        return redirect(url_for('admin_dashboard'))
+
+    conn = get_db_connection()
+    if not conn:
+        flash('数据库连接失败', 'danger')
+        return redirect(url_for('admin_dashboard'))
+
+    inserted_count = 0
+    updated_count = 0
+    cursor = None
+    try:
+        cursor = conn.cursor()
+        default_password_hash = generate_password_hash(DEFAULT_PASSWORD)
+        for student_id, student_name in valid_rows:
+            cursor.execute("SELECT id FROM users WHERE username = %s", (student_id,))
+            existing = cursor.fetchone()
+            if existing:
+                cursor.execute(
+                    """
+                    UPDATE users
+                    SET name = %s,
+                        password = %s,
+                        password_changed = FALSE
+                    WHERE username = %s
+                    """,
+                    (student_name, default_password_hash, student_id)
+                )
+                updated_count += 1
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO users (username, name, password, password_changed, avatar_filename)
+                    VALUES (%s, %s, %s, FALSE, %s)
+                    """,
+                    (student_id, student_name, default_password_hash, DEFAULT_AVATAR)
+                )
+                inserted_count += 1
+
+        conn.commit()
+        flash(
+            f'导入完成：新增 {inserted_count} 人，更新 {updated_count} 人，跳过 {skipped_rows} 行。'
+            f'初始密码统一为 {DEFAULT_PASSWORD}。',
+            'success'
+        )
+    except Exception as e:
+        conn.rollback()
+        flash(f'导入失败：{e}', 'danger')
+    finally:
+        if cursor:
+            cursor.close()
+        conn.close()
+
+    return redirect(url_for('admin_dashboard'))
 
 
 @app.route('/admin/export/students/<status>')
