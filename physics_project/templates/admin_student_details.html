@@ -48,11 +48,11 @@
             <div class="card text-white bg-warning">
                 <div class="card-body text-center">
                     <h5 class="card-title">
-                        {% if overall_stats.overall_avg_time %}
-                            {{ "%.1f"|format(overall_stats.overall_avg_time) }}秒
+                        {% if student.total_time %}
+                            {{ "%.1f"|format(student.total_time) }}秒
                         {% else %}-{% endif %}
                     </h5>
-                    <p class="card-text">平均用时</p>
+                    <p class="card-text">累计用时(已完成题)</p>
                 </div>
             </div>
         </div>
@@ -70,13 +70,12 @@
                         <tr>
                             <th>序号</th>
                             <th>题目名称</th>
-                            <th>答题次数</th>
-                            <th>正确次数</th>
-                            <th>正确率</th>
-                            <th>最佳用时</th>
-                            <th>平均用时</th>
-                            <th>最后答题时间</th>
                             <th>状态</th>
+                            <th>总答题次数</th>
+                            <th>总累计时长</th>
+                            <th>答对所需次数</th>
+                            <th>答对累计时长</th>
+                            <th>最后答题时间</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -85,34 +84,32 @@
                             <td>{{ get_display_number(stat.template_id) }}</td>
                             <td>{{ stat.template_name }}</td>
                             <td>
+                                {% if stat.is_completed and stat.is_completed > 0 %}
+                                <span class="badge bg-success">已答对</span>
+                                {% else %}
+                                <span class="badge bg-warning">未答对</span>
+                                {% endif %}
+                            </td>
+                            <td>
                                 <span class="fw-bold">{{ stat.total_attempts or 0 }}</span>
                             </td>
                             <td>
-                                {% if stat.correct_attempts %}
-                                <span class="text-success fw-bold">{{ stat.correct_attempts }}</span>
-                                {% else %}
-                                <span class="text-muted">0</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% if stat.total_attempts and stat.total_attempts > 0 %}
-                                <span class="badge bg-{{ 'success' if (stat.correct_attempts/stat.total_attempts*100) >= 50 else 'warning' }}">
-                                    {{ "%.1f"|format((stat.correct_attempts/stat.total_attempts*100)) }}%
-                                </span>
-                                {% else %}
-                                <span class="badge bg-secondary">-</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% if stat.best_time %}
-                                <span class="text-primary">{{ "%.1f"|format(stat.best_time) }}秒</span>
+                                {% if stat.total_time_spent %}
+                                <span class="text-info">{{ "%.1f"|format(stat.total_time_spent) }}秒</span>
                                 {% else %}
                                 <span class="text-muted">-</span>
                                 {% endif %}
                             </td>
                             <td>
-                                {% if stat.avg_time %}
-                                <span class="text-info">{{ "%.1f"|format(stat.avg_time) }}秒</span>
+                                {% if stat.is_completed and stat.attempts_to_correct %}
+                                <span class="text-success fw-bold">{{ stat.attempts_to_correct }}</span>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if stat.is_completed and stat.cumulative_time_to_correct %}
+                                <span class="text-primary">{{ "%.1f"|format(stat.cumulative_time_to_correct) }}秒</span>
                                 {% else %}
                                 <span class="text-muted">-</span>
                                 {% endif %}
@@ -122,13 +119,6 @@
                                 <small>{{ stat.last_attempt_time.strftime('%m-%d %H:%M') }}</small>
                                 {% else %}
                                 <span class="text-muted">-</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% if stat.correct_attempts and stat.correct_attempts > 0 %}
-                                <span class="badge bg-success">已完成</span>
-                                {% else %}
-                                <span class="badge bg-warning">未完成</span>
                                 {% endif %}
                             </td>
                         </tr>

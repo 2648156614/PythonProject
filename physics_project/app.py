@@ -3194,7 +3194,7 @@ def admin_student_details(user_id):
         # 获取题目总数
         total_problems = get_total_problem_count()
 
-        # 基于提交次数的统计（按 attempt_count 聚合）
+        # 每题作答状态：是否答对；答对时展示达到答对所需次数与累计时长
         cursor.execute("""
             WITH attempt_summary AS (
                 SELECT
@@ -3203,22 +3203,40 @@ def admin_student_details(user_id):
                     COUNT(*) AS total_answers,
                     SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) AS correct_answers,
                     MAX(time_taken) AS time_taken,
-                    MAX(response_time) AS last_response_time
+                    MAX(response_time) AS last_response_time,
+                    CASE WHEN SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*) THEN 1 ELSE 0 END AS is_fully_correct
                 FROM user_responses
                 WHERE user_id = %s
                 GROUP BY template_id, attempt_count
+            ),
+            progress AS (
+                SELECT
+                    template_id,
+                    COUNT(*) AS total_attempts,
+                    SUM(time_taken) AS total_time_spent,
+                    MAX(last_response_time) AS last_attempt_time,
+                    MAX(is_fully_correct) AS is_completed,
+                    MIN(CASE WHEN is_fully_correct = 1 THEN attempt_count ELSE NULL END) AS attempts_to_correct
+                FROM attempt_summary
+                GROUP BY template_id
             )
             SELECT
-                t.id as template_id,
+                t.id AS template_id,
                 t.template_name,
-                COUNT(a.attempt_count) as total_attempts,
-                SUM(CASE WHEN a.correct_answers = a.total_answers THEN 1 ELSE 0 END) as correct_attempts,
-                MIN(CASE WHEN a.correct_answers = a.total_answers THEN a.time_taken ELSE NULL END) as best_time,
-                AVG(a.time_taken) as avg_time,
-                MAX(a.last_response_time) as last_attempt_time
+                COALESCE(p.total_attempts, 0) AS total_attempts,
+                COALESCE(p.total_time_spent, 0) AS total_time_spent,
+                p.last_attempt_time,
+                COALESCE(p.is_completed, 0) AS is_completed,
+                p.attempts_to_correct,
+                (
+                    SELECT SUM(a2.time_taken)
+                    FROM attempt_summary a2
+                    WHERE a2.template_id = t.id
+                      AND p.attempts_to_correct IS NOT NULL
+                      AND a2.attempt_count <= p.attempts_to_correct
+                ) AS cumulative_time_to_correct
             FROM problem_templates t
-            LEFT JOIN attempt_summary a ON t.id = a.template_id
-            GROUP BY t.id, t.template_name
+            LEFT JOIN progress p ON t.id = p.template_id
             ORDER BY t.id
         """, (user_id,))
 
@@ -3244,7 +3262,10 @@ def admin_student_details(user_id):
             FROM attempt_summary
         """, (user_id,))
 
-        overall_stats = cursor.fetchone()
+        overall_stats = cursor.fetchone() or {}
+        overall_stats.setdefault('total_attempts', 0)
+        overall_stats.setdefault('total_correct', 0)
+        overall_stats.setdefault('overall_avg_time', 0)
 
         return render_template('admin_student_details.html',
                                student=student,
@@ -3278,7 +3299,7 @@ def admin_all_problems_stats():
     cursor = conn.cursor(dictionary=True)
 
     try:
-        # 题目层级统计（按提交次数统计）
+        # 题目层级统计（首次正确率、总答题次数、最终答对人数、平均正确时长）
         cursor.execute("""
             WITH attempt_summary AS (
                 SELECT
@@ -3287,52 +3308,67 @@ def admin_all_problems_stats():
                     ur.attempt_count,
                     COUNT(*) AS total_answers,
                     SUM(CASE WHEN ur.is_correct THEN 1 ELSE 0 END) AS correct_answers,
-                    MAX(ur.time_taken) AS time_taken
+                    MAX(ur.time_taken) AS time_taken,
+                    CASE WHEN SUM(CASE WHEN ur.is_correct THEN 1 ELSE 0 END) = COUNT(*) THEN 1 ELSE 0 END AS is_fully_correct
                 FROM user_responses ur
                 JOIN users u ON ur.user_id = u.id
                 WHERE u.username != 'admin'
                 GROUP BY ur.user_id, ur.template_id, ur.attempt_count
+            ),
+            user_problem_stats AS (
+                SELECT
+                    user_id,
+                    template_id,
+                    COUNT(*) AS attempt_count,
+                    MIN(attempt_count) AS first_attempt_no,
+                    MIN(CASE WHEN is_fully_correct = 1 THEN attempt_count ELSE NULL END) AS first_correct_attempt_no,
+                    MAX(is_fully_correct) AS final_is_correct
+                FROM attempt_summary
+                GROUP BY user_id, template_id
             )
             SELECT
                 t.id as template_id,
                 t.template_name,
-                COUNT(a.attempt_count) as total_attempts,
-                SUM(CASE WHEN a.correct_answers = a.total_answers THEN 1 ELSE 0 END) as correct_attempts,
-                COUNT(DISTINCT CASE WHEN a.correct_answers = a.total_answers THEN a.user_id END) as completed_students,
-                COUNT(DISTINCT a.user_id) as participant_students,
-                AVG(a.time_taken) as avg_time,
-                AVG(CASE WHEN a.correct_answers = a.total_answers THEN a.time_taken ELSE NULL END) as avg_correct_time,
-                SUM(a.time_taken) as total_time_spent,
-                COALESCE((
-                    SELECT error_type
-                    FROM user_responses ur2
-                    JOIN users u2 ON ur2.user_id = u2.id
-                    WHERE ur2.template_id = t.id AND u2.username != 'admin' AND ur2.is_correct = FALSE
-                    GROUP BY error_type
-                    ORDER BY COUNT(*) DESC
-                    LIMIT 1
-                ), '暂无数据') as top_error_type
+                COUNT(DISTINCT ups.user_id) as participant_students,
+                COALESCE(SUM(ups.attempt_count), 0) as total_attempts,
+                SUM(CASE WHEN first_attempt.is_fully_correct = 1 THEN 1 ELSE 0 END) as first_correct_students,
+                SUM(CASE WHEN ups.final_is_correct = 1 THEN 1 ELSE 0 END) as final_correct_students,
+                AVG(CASE
+                    WHEN ups.first_correct_attempt_no IS NOT NULL AND correct_attempt.attempt_count = ups.first_correct_attempt_no
+                    THEN correct_attempt.time_taken
+                    ELSE NULL
+                END) as avg_correct_time
             FROM problem_templates t
-            LEFT JOIN attempt_summary a ON t.id = a.template_id
+            LEFT JOIN user_problem_stats ups ON t.id = ups.template_id
+            LEFT JOIN attempt_summary first_attempt
+                ON first_attempt.user_id = ups.user_id
+               AND first_attempt.template_id = ups.template_id
+               AND first_attempt.attempt_count = ups.first_attempt_no
+            LEFT JOIN attempt_summary correct_attempt
+                ON correct_attempt.user_id = ups.user_id
+               AND correct_attempt.template_id = ups.template_id
+               AND correct_attempt.attempt_count = ups.first_correct_attempt_no
             GROUP BY t.id, t.template_name
             ORDER BY t.id
         """)
 
         problem_stats = cursor.fetchall()
 
-        # 计算正确率
+        # 计算首次正确率
         for stat in problem_stats:
-            if stat['total_attempts'] and stat['total_attempts'] > 0:
-                stat['correct_rate'] = round((stat['correct_attempts'] / stat['total_attempts']) * 100, 1)
+            participants = stat.get('participant_students') or 0
+            first_correct_students = stat.get('first_correct_students') or 0
+            if participants > 0:
+                stat['first_correct_rate'] = round((first_correct_students / participants) * 100, 1)
             else:
-                stat['correct_rate'] = 0
+                stat['first_correct_rate'] = 0
 
         # 获取学生总数（排除管理员）
         cursor.execute("SELECT COUNT(*) as total FROM users WHERE username != 'admin'")
         total_students_result = cursor.fetchone()
         total_students = total_students_result['total'] if total_students_result else 0
 
-        # 汇总总用时和分布
+        # 汇总统计
         cursor.execute("""
             WITH attempt_summary AS (
                 SELECT
@@ -3341,60 +3377,57 @@ def admin_all_problems_stats():
                     ur.attempt_count,
                     COUNT(*) AS total_answers,
                     SUM(CASE WHEN ur.is_correct THEN 1 ELSE 0 END) AS correct_answers,
-                    MAX(ur.time_taken) AS time_taken
+                    MAX(ur.time_taken) AS time_taken,
+                    CASE WHEN SUM(CASE WHEN ur.is_correct THEN 1 ELSE 0 END) = COUNT(*) THEN 1 ELSE 0 END AS is_fully_correct
                 FROM user_responses ur
                 JOIN users u ON ur.user_id = u.id
                 WHERE u.username != 'admin'
                 GROUP BY ur.user_id, ur.template_id, ur.attempt_count
+            ),
+            user_problem_stats AS (
+                SELECT
+                    user_id,
+                    template_id,
+                    COUNT(*) AS attempt_count,
+                    MIN(attempt_count) AS first_attempt_no,
+                    MIN(CASE WHEN is_fully_correct = 1 THEN attempt_count ELSE NULL END) AS first_correct_attempt_no,
+                    MAX(is_fully_correct) AS final_is_correct
+                FROM attempt_summary
+                GROUP BY user_id, template_id
             )
             SELECT
-                COUNT(*) as total_attempts,
-                SUM(time_taken) as total_time,
-                AVG(time_taken) as avg_time,
-                AVG(CASE WHEN correct_answers = total_answers THEN time_taken ELSE NULL END) as avg_correct_time
-            FROM attempt_summary
+                COALESCE(SUM(ups.attempt_count), 0) as total_attempts,
+                SUM(CASE WHEN first_attempt.is_fully_correct = 1 THEN 1 ELSE 0 END) as first_correct_students,
+                SUM(CASE WHEN ups.final_is_correct = 1 THEN 1 ELSE 0 END) as final_correct_students,
+                AVG(CASE
+                    WHEN ups.first_correct_attempt_no IS NOT NULL AND correct_attempt.attempt_count = ups.first_correct_attempt_no
+                    THEN correct_attempt.time_taken
+                    ELSE NULL
+                END) as avg_correct_time
+            FROM user_problem_stats ups
+            LEFT JOIN attempt_summary first_attempt
+                ON first_attempt.user_id = ups.user_id
+               AND first_attempt.template_id = ups.template_id
+               AND first_attempt.attempt_count = ups.first_attempt_no
+            LEFT JOIN attempt_summary correct_attempt
+                ON correct_attempt.user_id = ups.user_id
+               AND correct_attempt.template_id = ups.template_id
+               AND correct_attempt.attempt_count = ups.first_correct_attempt_no
         """)
         overall_stats = cursor.fetchone() or {}
         overall_stats.setdefault('total_attempts', 0)
-        overall_stats.setdefault('total_time', 0)
-        overall_stats.setdefault('avg_time', 0)
+        overall_stats.setdefault('first_correct_students', 0)
+        overall_stats.setdefault('final_correct_students', 0)
         overall_stats.setdefault('avg_correct_time', 0)
 
-        cursor.execute("""
-            WITH attempt_summary AS (
-                SELECT
-                    ur.user_id,
-                    ur.template_id,
-                    ur.attempt_count,
-                    HOUR(MAX(ur.response_time)) as hour_slot
-                FROM user_responses ur
-                JOIN users u ON ur.user_id = u.id
-                WHERE u.username != 'admin'
-                GROUP BY ur.user_id, ur.template_id, ur.attempt_count
-            )
-            SELECT hour_slot, COUNT(*) as attempts
-            FROM attempt_summary
-            GROUP BY hour_slot
-            ORDER BY hour_slot
-        """)
-        time_distribution = cursor.fetchall()
-
-        cursor.execute("""
-            SELECT error_type, COUNT(*) as count
-            FROM user_responses ur
-            JOIN users u ON ur.user_id = u.id
-            WHERE u.username != 'admin' AND ur.is_correct = FALSE
-            GROUP BY error_type
-            ORDER BY count DESC
-        """)
-        error_breakdown = cursor.fetchall()
+        total_participants = sum((stat.get('participant_students') or 0) for stat in problem_stats)
+        total_first_correct = sum((stat.get('first_correct_students') or 0) for stat in problem_stats)
+        overall_stats['first_correct_rate'] = round((total_first_correct / total_participants) * 100, 1) if total_participants else 0
 
         return render_template('admin_all_problems_stats.html',
                                problem_stats=problem_stats,
                                total_students=total_students,
                                overall_stats=overall_stats,
-                               time_distribution=time_distribution,
-                               error_breakdown=error_breakdown,
                                username=session['username'])
 
     except Exception as e:
