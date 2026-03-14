@@ -1411,7 +1411,10 @@ def ensure_user_columns():
         existing_columns = {col['Field'] for col in cursor.fetchall()}
         cursor.execute("SHOW COLUMNS FROM users LIKE 'password'")
         password_column = cursor.fetchone()
-        if password_column and 'varchar(255)' not in password_column['Type'].lower():
+        password_column_type = password_column['Type'] if password_column else ''
+        if isinstance(password_column_type, bytes):
+            password_column_type = password_column_type.decode('utf-8', errors='ignore')
+        if password_column and 'varchar(255)' not in password_column_type.lower():
             cursor.execute("ALTER TABLE users MODIFY COLUMN password VARCHAR(255) NOT NULL")
             print("已扩展 password 列长度")
         if 'name' not in existing_columns:
