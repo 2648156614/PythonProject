@@ -3272,6 +3272,7 @@ def admin_student_details(user_id):
                 SELECT
                     template_id,
                     COUNT(*) AS total_attempts,
+                    SUM(is_fully_correct) AS correct_attempts,
                     SUM(time_taken) AS total_time_spent,
                     MAX(last_response_time) AS last_attempt_time,
                     MAX(is_fully_correct) AS is_completed,
@@ -3283,6 +3284,7 @@ def admin_student_details(user_id):
                 t.id AS template_id,
                 t.template_name,
                 COALESCE(p.total_attempts, 0) AS total_attempts,
+                COALESCE(p.correct_attempts, 0) AS correct_attempts,
                 COALESCE(p.total_time_spent, 0) AS total_time_spent,
                 p.last_attempt_time,
                 COALESCE(p.is_completed, 0) AS is_completed,
@@ -3300,6 +3302,7 @@ def admin_student_details(user_id):
         """, (user_id,))
 
         problem_stats = cursor.fetchall()
+        completed_problems_count = sum(1 for stat in problem_stats if stat.get('is_completed'))
 
         # 计算总体统计
         cursor.execute("""
@@ -3330,6 +3333,7 @@ def admin_student_details(user_id):
                                student=student,
                                problem_stats=problem_stats,
                                overall_stats=overall_stats,
+                               completed_problems_count=completed_problems_count,
                                total_problems=total_problems,
                                username=session['username'],
                                get_display_number=get_display_number)  # 传递函数到模板
