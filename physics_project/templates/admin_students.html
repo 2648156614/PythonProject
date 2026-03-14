@@ -25,7 +25,6 @@
         </div>
     </div>
 
-    <!-- 统计卡片 -->
     <div class="row mb-4">
         <div class="col-md-3">
             <div class="card text-white bg-primary">
@@ -51,7 +50,6 @@
         </div>
     </div>
 
-    <!-- 学生列表 -->
     <div class="card">
         <div class="card-header">
             <h5 class="mb-0"><i class="bi bi-people me-2"></i>学生列表</h5>
@@ -65,6 +63,7 @@
                             <th>#</th>
                             <th>账号</th>
                             <th>姓名</th>
+                            <th>班级</th>
                             <th>完成状态</th>
                             <th>正确题数</th>
                             <th>总用时</th>
@@ -84,6 +83,7 @@
                                 {% endif %}
                             </td>
                             <td>{{ student.name or '-' }}</td>
+                            <td>{{ student.class_name or '未分班' }}</td>
                             <td>
                                 {% if student.completed_all %}
                                 <span class="badge bg-success">已完成</span>
@@ -129,6 +129,44 @@
                 <h4 class="text-muted mt-3">暂无{{ status_text }}学生</h4>
                 <p class="text-muted">当前没有{{ status_text }}的学生记录</p>
             </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card mt-4">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-bar-chart-steps me-2"></i>班级对比分析</h5>
+        </div>
+        <div class="card-body">
+            {% if class_stats %}
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead class="table-light">
+                        <tr>
+                            <th>班级</th>
+                            <th>学生数</th>
+                            <th>已完成</th>
+                            <th>完成率</th>
+                            <th>平均得分</th>
+                            <th>平均用时(秒)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for cls in class_stats %}
+                        <tr>
+                            <td><strong>{{ cls.class_name }}</strong></td>
+                            <td>{{ cls.student_count }}</td>
+                            <td>{{ cls.completed_count }}</td>
+                            <td>{{ cls.completion_rate or 0 }}%</td>
+                            <td>{{ cls.avg_score or 0 }}</td>
+                            <td>{{ cls.avg_time or 0 }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted mb-0">暂无可分析的班级数据。</p>
             {% endif %}
         </div>
     </div>
