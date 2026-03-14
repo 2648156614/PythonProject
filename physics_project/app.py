@@ -514,6 +514,24 @@ def is_problem_completed(user_id, template_id):
         conn.close()
 
 
+def get_latest_attempt_count(user_id, template_id):
+    """获取用户在某题上的最大 attempt_count，避免会话重置导致编号冲突"""
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        cursor.execute("""
+            SELECT COALESCE(MAX(attempt_count), 0) AS latest_attempt_count
+            FROM user_responses
+            WHERE user_id = %s AND template_id = %s
+        """, (user_id, template_id))
+        row = cursor.fetchone() or {}
+        return int(row.get('latest_attempt_count') or 0)
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def get_total_problem_count():
     """动态获取题目总数"""
     mapping = get_problem_display_info()
@@ -2570,9 +2588,10 @@ def api_submit(problem_id):
             for user_answer, correct_answer, is_correct in zip(user_answers, correct_answers, is_correct_list)
         ]
 
-        # 增加累计尝试次数
-        session['current_problem']['total_attempts'] += 1
-        total_attempts = session['current_problem']['total_attempts']
+        # 计算 attempt_count：基于数据库最大值递增，避免会话重置导致 attempt_count 重复
+        latest_attempt_count = get_latest_attempt_count(user_id, template_id)
+        total_attempts = latest_attempt_count + 1
+        session['current_problem']['total_attempts'] = total_attempts
 
         # 保存答题记录 - 使用更新后的累计尝试次数
         save_success = save_user_response(
