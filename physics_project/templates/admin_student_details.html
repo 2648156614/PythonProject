@@ -6,7 +6,7 @@
 <div class="container">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h2 class="mb-0">学生答题详情 - {{ student.name or student.username }}</h2>
-        <small class="text-muted">账号: {{ student.username }}</small>
+        <small class="text-muted">账号: {{ student.username }} | 班级: {{ student.class_name or "未分班" }}</small>
         <div>
             <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-secondary">
                 <i class="bi bi-arrow-left"></i> 返回管理后台
@@ -19,8 +19,8 @@
         <div class="col-md-3">
             <div class="card text-white bg-primary">
                 <div class="card-body text-center">
-                    <h5 class="card-title">{{ student.total_score or 0 }}/{{ total_problems }}</h5>
-                    <p class="card-text">完成题目</p>
+                    <h5 class="card-title">{{ completed_problems_count }}/{{ total_problems }}</h5>
+                    <p class="card-text">已完成题目</p>
                 </div>
             </div>
         </div>
@@ -73,7 +73,7 @@
                             <th>状态</th>
                             <th>总答题次数</th>
                             <th>总累计时长</th>
-                            <th>答对所需次数</th>
+                            <th>答对次数</th>
                             <th>答对累计时长</th>
                             <th>最后答题时间</th>
                         </tr>
@@ -102,7 +102,7 @@
                             </td>
                             <td>
                                 {% if stat.is_completed and stat.attempts_to_correct %}
-                                <span class="text-success fw-bold">{{ stat.attempts_to_correct }}</span>
+                                <span class="text-success fw-bold">{{ stat.correct_attempts or 0 }}</span>
                                 {% else %}
                                 <span class="text-muted">-</span>
                                 {% endif %}
