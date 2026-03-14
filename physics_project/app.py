@@ -1097,6 +1097,7 @@ def initialize_database():
         id INT AUTO_INCREMENT PRIMARY KEY,
         username VARCHAR(50) NOT NULL UNIQUE,
         name VARCHAR(100) DEFAULT NULL,
+        class_name VARCHAR(100) DEFAULT NULL,
         password VARCHAR(255) NOT NULL,
         avatar_filename VARCHAR(255) DEFAULT 'default.svg',
         password_changed BOOLEAN DEFAULT TRUE,
@@ -1398,6 +1399,9 @@ def ensure_user_columns():
         if 'name' not in existing_columns:
             cursor.execute("ALTER TABLE users ADD COLUMN name VARCHAR(100) DEFAULT NULL AFTER username")
             print("已添加 name 列")
+        if 'class_name' not in existing_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN class_name VARCHAR(100) DEFAULT NULL AFTER name")
+            print("已添加 class_name 列")
         if 'avatar_filename' not in existing_columns:
             cursor.execute("ALTER TABLE users ADD COLUMN avatar_filename VARCHAR(255) DEFAULT 'default.svg' AFTER password")
             print("已添加 avatar_filename 列")
@@ -1647,7 +1651,7 @@ def get_students_by_completion(completed=True, limit=None, offset=0):
     cursor = conn.cursor(dictionary=True)
 
     query = """
-        SELECT id, username, name, completed_at, total_score, total_time, created_at
+        SELECT id, username, name, class_name, completed_all, completed_at, total_score, total_time, created_at
         FROM users 
         WHERE completed_all = %s
         ORDER BY completed_at DESC, total_score DESC
@@ -1664,6 +1668,35 @@ def get_students_by_completion(completed=True, limit=None, offset=0):
     conn.close()
 
     return students
+
+
+def get_class_comparison_stats():
+    """获取班级对比统计数据（用于管理端分析）"""
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute("""
+        SELECT
+            COALESCE(NULLIF(TRIM(class_name), ''), '未分班') AS class_name,
+            COUNT(*) AS student_count,
+            SUM(CASE WHEN completed_all = TRUE THEN 1 ELSE 0 END) AS completed_count,
+            ROUND(
+                SUM(CASE WHEN completed_all = TRUE THEN 1 ELSE 0 END) / COUNT(*) * 100,
+                1
+            ) AS completion_rate,
+            ROUND(AVG(total_score), 1) AS avg_score,
+            ROUND(AVG(total_time), 1) AS avg_time
+        FROM users
+        WHERE username != 'admin'
+        GROUP BY COALESCE(NULLIF(TRIM(class_name), ''), '未分班')
+        ORDER BY completion_rate DESC, avg_score DESC
+    """)
+    class_stats = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    return class_stats
 
 
 def diagnose_database_issue():
@@ -2702,7 +2735,7 @@ def admin_dashboard():
 @app.route('/admin/import/students', methods=['POST'])
 @login_required
 def admin_import_students():
-    """管理员批量导入学生（xlsx：第一列学号，第二列姓名）"""
+    """管理员批量导入学生（xlsx：第1列学号，第2列姓名，第3列班级可选）"""
     if session.get('username') != 'admin':
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
@@ -2724,9 +2757,10 @@ def admin_import_students():
         for row in sheet.iter_rows(values_only=True):
             student_id = str(row[0]).strip() if len(row) > 0 and row[0] is not None else ''
             student_name = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ''
-            if not student_id and not student_name:
+            class_name = str(row[2]).strip() if len(row) > 2 and row[2] is not None else ''
+            if not student_id and not student_name and not class_name:
                 continue
-            raw_rows.append((student_id, student_name))
+            raw_rows.append((student_id, student_name, class_name))
     except Exception as e:
         flash(f'读取 xlsx 失败：{e}', 'danger')
         return redirect(url_for('admin_dashboard'))
@@ -2736,18 +2770,19 @@ def admin_import_students():
         return redirect(url_for('admin_dashboard'))
 
     normalized_rows = raw_rows
-    first_id, first_name = raw_rows[0]
+    first_id, first_name, first_class = raw_rows[0]
     if first_id.lower() in {'学号', 'student_id', 'studentid', 'id', '账号', '用户名'}:
-        if first_name.lower() in {'姓名', 'name', '学生姓名'} or not first_name:
+        if (first_name.lower() in {'姓名', 'name', '学生姓名'} or not first_name) and \
+                (first_class.lower() in {'班级', 'class', 'class_name'} or not first_class):
             normalized_rows = raw_rows[1:]
 
     valid_rows = []
     skipped_rows = 0
-    for student_id, student_name in normalized_rows:
+    for student_id, student_name, class_name in normalized_rows:
         if not student_id:
             skipped_rows += 1
             continue
-        valid_rows.append((student_id, student_name or None))
+        valid_rows.append((student_id, student_name or None, class_name or None))
 
     if not valid_rows:
         flash('未找到可导入的学号数据', 'warning')
@@ -2764,7 +2799,7 @@ def admin_import_students():
     try:
         cursor = conn.cursor()
         default_password_hash = generate_password_hash(DEFAULT_PASSWORD)
-        for student_id, student_name in valid_rows:
+        for student_id, student_name, class_name in valid_rows:
             cursor.execute("SELECT id FROM users WHERE username = %s", (student_id,))
             existing = cursor.fetchone()
             if existing:
@@ -2772,20 +2807,21 @@ def admin_import_students():
                     """
                     UPDATE users
                     SET name = %s,
+                        class_name = %s,
                         password = %s,
                         password_changed = FALSE
                     WHERE username = %s
                     """,
-                    (student_name, default_password_hash, student_id)
+                    (student_name, class_name, default_password_hash, student_id)
                 )
                 updated_count += 1
             else:
                 cursor.execute(
                     """
-                    INSERT INTO users (username, name, password, password_changed, avatar_filename)
-                    VALUES (%s, %s, %s, FALSE, %s)
+                    INSERT INTO users (username, name, class_name, password, password_changed, avatar_filename)
+                    VALUES (%s, %s, %s, %s, FALSE, %s)
                     """,
-                    (student_id, student_name, default_password_hash, DEFAULT_AVATAR)
+                    (student_id, student_name, class_name, default_password_hash, DEFAULT_AVATAR)
                 )
                 inserted_count += 1
 
@@ -2828,6 +2864,7 @@ def admin_export_students(status):
         '学生ID',
         '账号',
         '姓名',
+        '班级',
         '完成状态',
         '完成题目数',
         '总题目数',
@@ -2844,6 +2881,7 @@ def admin_export_students(status):
             student['id'],
             student['username'],
             student.get('name') or '',
+            student.get('class_name') or '',
             status_label,
             student['total_score'] or 0,
             total_problems,
@@ -3152,6 +3190,7 @@ def admin_students_by_status(status):
     students = get_students_by_completion(completed=completed)
     total_problems = get_total_problem_count()
     completion_stats = get_completion_stats()
+    class_stats = get_class_comparison_stats()
     total_students = completion_stats['stats']['total_students'] or 0
     completed_students = completion_stats['stats']['completed_count'] or 0
 
@@ -3164,6 +3203,7 @@ def admin_students_by_status(status):
                            total_problems=total_problems,
                            total_students=total_students,
                            completed_students=completed_students,
+                           class_stats=class_stats,
                            username=session['username'])
 
 
@@ -3182,7 +3222,7 @@ def admin_student_details(user_id):
     try:
         # 获取学生基本信息
         cursor.execute(
-            "SELECT username, name, completed_all, total_score, total_time FROM users WHERE id = %s",
+            "SELECT username, name, class_name, completed_all, total_score, total_time FROM users WHERE id = %s",
             (user_id,)
         )
         student = cursor.fetchone()
