@@ -1115,6 +1115,7 @@ def initialize_database():
         id INT AUTO_INCREMENT PRIMARY KEY,
         username VARCHAR(50) NOT NULL UNIQUE,
         name VARCHAR(100) DEFAULT NULL,
+        major VARCHAR(100) DEFAULT NULL,
         class_name VARCHAR(100) DEFAULT NULL,
         password VARCHAR(255) NOT NULL,
         avatar_filename VARCHAR(255) DEFAULT 'default.svg',
@@ -1417,8 +1418,11 @@ def ensure_user_columns():
         if 'name' not in existing_columns:
             cursor.execute("ALTER TABLE users ADD COLUMN name VARCHAR(100) DEFAULT NULL AFTER username")
             print("已添加 name 列")
+        if 'major' not in existing_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN major VARCHAR(100) DEFAULT NULL AFTER name")
+            print("已添加 major 列")
         if 'class_name' not in existing_columns:
-            cursor.execute("ALTER TABLE users ADD COLUMN class_name VARCHAR(100) DEFAULT NULL AFTER name")
+            cursor.execute("ALTER TABLE users ADD COLUMN class_name VARCHAR(100) DEFAULT NULL AFTER major")
             print("已添加 class_name 列")
         if 'avatar_filename' not in existing_columns:
             cursor.execute("ALTER TABLE users ADD COLUMN avatar_filename VARCHAR(255) DEFAULT 'default.svg' AFTER password")
@@ -1669,7 +1673,7 @@ def get_students_by_completion(completed=True, limit=None, offset=0):
     cursor = conn.cursor(dictionary=True)
 
     query = """
-        SELECT id, username, name, class_name, completed_all, completed_at, total_score, total_time, created_at
+        SELECT id, username, name, major, class_name, completed_all, completed_at, total_score, total_time, created_at
         FROM users 
         WHERE completed_all = %s
         ORDER BY completed_at DESC, total_score DESC
@@ -2754,7 +2758,7 @@ def admin_dashboard():
 @app.route('/admin/import/students', methods=['POST'])
 @login_required
 def admin_import_students():
-    """管理员批量导入学生（xlsx：第1列学号，第2列姓名，第3列班级可选）"""
+    """管理员批量导入学生（xlsx：第1列学号，第2列姓名，第3列专业，第4列班级）"""
     if session.get('username') != 'admin':
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
@@ -2776,10 +2780,11 @@ def admin_import_students():
         for row in sheet.iter_rows(values_only=True):
             student_id = str(row[0]).strip() if len(row) > 0 and row[0] is not None else ''
             student_name = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ''
-            class_name = str(row[2]).strip() if len(row) > 2 and row[2] is not None else ''
-            if not student_id and not student_name and not class_name:
+            major = str(row[2]).strip() if len(row) > 2 and row[2] is not None else ''
+            class_name = str(row[3]).strip() if len(row) > 3 and row[3] is not None else ''
+            if not student_id and not student_name and not major and not class_name:
                 continue
-            raw_rows.append((student_id, student_name, class_name))
+            raw_rows.append((student_id, student_name, major, class_name))
     except Exception as e:
         flash(f'读取 xlsx 失败：{e}', 'danger')
         return redirect(url_for('admin_dashboard'))
@@ -2789,19 +2794,20 @@ def admin_import_students():
         return redirect(url_for('admin_dashboard'))
 
     normalized_rows = raw_rows
-    first_id, first_name, first_class = raw_rows[0]
+    first_id, first_name, first_major, first_class = raw_rows[0]
     if first_id.lower() in {'学号', 'student_id', 'studentid', 'id', '账号', '用户名'}:
         if (first_name.lower() in {'姓名', 'name', '学生姓名'} or not first_name) and \
+                (first_major.lower() in {'专业', 'major', 'major_name'} or not first_major) and \
                 (first_class.lower() in {'班级', 'class', 'class_name'} or not first_class):
             normalized_rows = raw_rows[1:]
 
     valid_rows = []
     skipped_rows = 0
-    for student_id, student_name, class_name in normalized_rows:
+    for student_id, student_name, major, class_name in normalized_rows:
         if not student_id:
             skipped_rows += 1
             continue
-        valid_rows.append((student_id, student_name or None, class_name or None))
+        valid_rows.append((student_id, student_name or None, major or None, class_name or None))
 
     if not valid_rows:
         flash('未找到可导入的学号数据', 'warning')
@@ -2818,7 +2824,7 @@ def admin_import_students():
     try:
         cursor = conn.cursor()
         default_password_hash = generate_password_hash(DEFAULT_PASSWORD)
-        for student_id, student_name, class_name in valid_rows:
+        for student_id, student_name, major, class_name in valid_rows:
             cursor.execute("SELECT id FROM users WHERE username = %s", (student_id,))
             existing = cursor.fetchone()
             if existing:
@@ -2826,21 +2832,22 @@ def admin_import_students():
                     """
                     UPDATE users
                     SET name = %s,
+                        major = %s,
                         class_name = %s,
                         password = %s,
                         password_changed = FALSE
                     WHERE username = %s
                     """,
-                    (student_name, class_name, default_password_hash, student_id)
+                    (student_name, major, class_name, default_password_hash, student_id)
                 )
                 updated_count += 1
             else:
                 cursor.execute(
                     """
-                    INSERT INTO users (username, name, class_name, password, password_changed, avatar_filename)
-                    VALUES (%s, %s, %s, %s, FALSE, %s)
+                    INSERT INTO users (username, name, major, class_name, password, password_changed, avatar_filename)
+                    VALUES (%s, %s, %s, %s, %s, FALSE, %s)
                     """,
-                    (student_id, student_name, class_name, default_password_hash, DEFAULT_AVATAR)
+                    (student_id, student_name, major, class_name, default_password_hash, DEFAULT_AVATAR)
                 )
                 inserted_count += 1
 
@@ -2883,6 +2890,7 @@ def admin_export_students(status):
         '学生ID',
         '账号',
         '姓名',
+        '专业',
         '班级',
         '完成状态',
         '完成题目数',
@@ -2900,6 +2908,7 @@ def admin_export_students(status):
             student['id'],
             student['username'],
             student.get('name') or '',
+            student.get('major') or '',
             student.get('class_name') or '',
             status_label,
             student['total_score'] or 0,
@@ -3363,7 +3372,7 @@ def admin_all_problems_stats():
 
     try:
         selected_class_name = (request.args.get('class_name') or '').strip()
-        selected_date = (request.args.get('date') or '').strip()
+        selected_major = (request.args.get('major') or '').strip()
 
         # 加载班级筛选选项
         cursor.execute("""
@@ -3373,6 +3382,14 @@ def admin_all_problems_stats():
             ORDER BY class_name
         """)
         class_options = [row['class_name'] for row in cursor.fetchall()]
+
+        cursor.execute("""
+            SELECT DISTINCT COALESCE(NULLIF(TRIM(major), ''), '未设置专业') AS major
+            FROM users
+            WHERE username != 'admin'
+            ORDER BY major
+        """)
+        major_options = [row['major'] for row in cursor.fetchall()]
 
         filters = ["u.username != 'admin'"]
         params = []
@@ -3384,14 +3401,12 @@ def admin_all_problems_stats():
                 filters.append("u.class_name = %s")
                 params.append(selected_class_name)
 
-        if selected_date:
-            try:
-                datetime.strptime(selected_date, '%Y-%m-%d')
-                filters.append("DATE(ur.response_time) = %s")
-                params.append(selected_date)
-            except ValueError:
-                flash('日期格式无效，已忽略日期筛选', 'warning')
-                selected_date = ''
+        if selected_major:
+            if selected_major == '未设置专业':
+                filters.append("(u.major IS NULL OR TRIM(u.major) = '')")
+            else:
+                filters.append("u.major = %s")
+                params.append(selected_major)
 
         filter_clause = ' AND '.join(filters)
 
@@ -3468,25 +3483,41 @@ def admin_all_problems_stats():
             else:
                 student_filters.append("u.class_name = %s")
                 student_params.append(selected_class_name)
+        if selected_major:
+            if selected_major == '未设置专业':
+                student_filters.append("(u.major IS NULL OR TRIM(u.major) = '')")
+            else:
+                student_filters.append("u.major = %s")
+                student_params.append(selected_major)
 
-        if selected_date:
-            cursor.execute(
-                f"""
-                    SELECT COUNT(DISTINCT u.id) as total
-                    FROM users u
-                    JOIN user_responses ur ON ur.user_id = u.id
-                    WHERE {' AND '.join(student_filters)} AND DATE(ur.response_time) = %s
-                """,
-                student_params + [selected_date]
-            )
-        else:
-            cursor.execute(
-                f"SELECT COUNT(*) as total FROM users u WHERE {' AND '.join(student_filters)}",
-                student_params
-            )
+        cursor.execute(
+            f"SELECT COUNT(*) as total FROM users u WHERE {' AND '.join(student_filters)}",
+            student_params
+        )
 
         total_students_result = cursor.fetchone()
         total_students = total_students_result['total'] if total_students_result else 0
+
+        cursor.execute(
+            f"""
+            SELECT
+                u.id,
+                u.username,
+                u.name,
+                COALESCE(NULLIF(TRIM(u.major), ''), '未设置专业') AS major,
+                COALESCE(NULLIF(TRIM(u.class_name), ''), '未分班') AS class_name,
+                u.completed_all,
+                u.total_score,
+                u.total_time,
+                u.created_at,
+                u.completed_at
+            FROM users u
+            WHERE {' AND '.join(student_filters)}
+            ORDER BY u.class_name ASC, u.username ASC
+            """,
+            student_params
+        )
+        filtered_students = cursor.fetchall()
 
         # 汇总统计
         cursor.execute(f"""
@@ -3548,9 +3579,11 @@ def admin_all_problems_stats():
                                problem_stats=problem_stats,
                                total_students=total_students,
                                overall_stats=overall_stats,
+                               filtered_students=filtered_students,
                                class_options=class_options,
+                               major_options=major_options,
                                selected_class_name=selected_class_name,
-                               selected_date=selected_date,
+                               selected_major=selected_major,
                                username=session['username'])
 
     except Exception as e:

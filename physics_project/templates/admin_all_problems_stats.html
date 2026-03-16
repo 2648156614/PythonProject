@@ -26,8 +26,13 @@
                     </select>
                 </div>
                 <div class="col-md-4">
-                    <label for="date" class="form-label">按日期筛选</label>
-                    <input type="date" id="date" name="date" class="form-control" value="{{ selected_date }}">
+                    <label for="major" class="form-label">按专业筛选</label>
+                    <select id="major" name="major" class="form-select">
+                        <option value="">全部专业</option>
+                        {% for major in major_options %}
+                            <option value="{{ major }}" {% if selected_major == major %}selected{% endif %}>{{ major }}</option>
+                        {% endfor %}
+                    </select>
                 </div>
                 <div class="col-md-4 d-flex gap-2">
                     <button type="submit" class="btn btn-primary">
@@ -149,6 +154,56 @@
                                 <span class="text-success">{{ "%.1f"|format(stat.avg_correct_time) }}秒</span>
                                 {% else %}
                                 <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mt-4">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-table me-2"></i>学生列表（筛选结果）</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>#</th>
+                            <th>账号</th>
+                            <th>姓名</th>
+                            <th>专业</th>
+                            <th>班级</th>
+                            <th>完成状态</th>
+                            <th>正确题数</th>
+                            <th>总用时</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for student in filtered_students %}
+                        <tr>
+                            <td>{{ loop.index }}</td>
+                            <td>{{ student.username }}</td>
+                            <td>{{ student.name or '-' }}</td>
+                            <td>{{ student.major }}</td>
+                            <td>{{ student.class_name }}</td>
+                            <td>
+                                {% if student.completed_all %}
+                                <span class="badge bg-success">已完成</span>
+                                {% else %}
+                                <span class="badge bg-warning">未完成</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ student.total_score or 0 }}</td>
+                            <td>
+                                {% if student.total_time %}
+                                {{ "%.1f"|format(student.total_time) }}秒
+                                {% else %}
+                                -
                                 {% endif %}
                             </td>
                         </tr>
