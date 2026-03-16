@@ -13,6 +13,34 @@
         </div>
     </div>
 
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label for="class_name" class="form-label">按班级筛选</label>
+                    <select id="class_name" name="class_name" class="form-select">
+                        <option value="">全部班级</option>
+                        {% for class_name in class_options %}
+                            <option value="{{ class_name }}" {% if selected_class_name == class_name %}selected{% endif %}>{{ class_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label for="date" class="form-label">按日期筛选</label>
+                    <input type="date" id="date" name="date" class="form-control" value="{{ selected_date }}">
+                </div>
+                <div class="col-md-4 d-flex gap-2">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-funnel"></i> 应用筛选
+                    </button>
+                    <a href="{{ url_for('admin_all_problems_stats') }}" class="btn btn-outline-secondary">
+                        重置
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- 总体统计 -->
     <div class="row mb-4 g-3">
         <div class="col-md-3">
