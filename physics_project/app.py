@@ -3362,8 +3362,41 @@ def admin_all_problems_stats():
     cursor = conn.cursor(dictionary=True)
 
     try:
-        # 题目层级统计（首次正确率、总答题次数、最终答对人数、平均正确时长）
+        selected_class_name = (request.args.get('class_name') or '').strip()
+        selected_date = (request.args.get('date') or '').strip()
+
+        # 加载班级筛选选项
         cursor.execute("""
+            SELECT DISTINCT COALESCE(NULLIF(TRIM(class_name), ''), '未分班') AS class_name
+            FROM users
+            WHERE username != 'admin'
+            ORDER BY class_name
+        """)
+        class_options = [row['class_name'] for row in cursor.fetchall()]
+
+        filters = ["u.username != 'admin'"]
+        params = []
+
+        if selected_class_name:
+            if selected_class_name == '未分班':
+                filters.append("(u.class_name IS NULL OR TRIM(u.class_name) = '')")
+            else:
+                filters.append("u.class_name = %s")
+                params.append(selected_class_name)
+
+        if selected_date:
+            try:
+                datetime.strptime(selected_date, '%Y-%m-%d')
+                filters.append("DATE(ur.response_time) = %s")
+                params.append(selected_date)
+            except ValueError:
+                flash('日期格式无效，已忽略日期筛选', 'warning')
+                selected_date = ''
+
+        filter_clause = ' AND '.join(filters)
+
+        # 题目层级统计（首次正确率、总答题次数、最终答对人数、平均正确时长）
+        cursor.execute(f"""
             WITH attempt_summary AS (
                 SELECT
                     ur.user_id,
@@ -3375,7 +3408,7 @@ def admin_all_problems_stats():
                     CASE WHEN SUM(CASE WHEN ur.is_correct THEN 1 ELSE 0 END) = COUNT(*) THEN 1 ELSE 0 END AS is_fully_correct
                 FROM user_responses ur
                 JOIN users u ON ur.user_id = u.id
-                WHERE u.username != 'admin'
+                WHERE {filter_clause}
                 GROUP BY ur.user_id, ur.template_id, ur.attempt_count
             ),
             user_problem_stats AS (
@@ -3413,7 +3446,7 @@ def admin_all_problems_stats():
                AND correct_attempt.attempt_count = ups.first_correct_attempt_no
             GROUP BY t.id, t.template_name
             ORDER BY t.id
-        """)
+        """, params)
 
         problem_stats = cursor.fetchall()
 
@@ -3426,13 +3459,37 @@ def admin_all_problems_stats():
             else:
                 stat['first_correct_rate'] = 0
 
-        # 获取学生总数（排除管理员）
-        cursor.execute("SELECT COUNT(*) as total FROM users WHERE username != 'admin'")
+        # 获取筛选后的学生总数（排除管理员）
+        student_filters = ["u.username != 'admin'"]
+        student_params = []
+        if selected_class_name:
+            if selected_class_name == '未分班':
+                student_filters.append("(u.class_name IS NULL OR TRIM(u.class_name) = '')")
+            else:
+                student_filters.append("u.class_name = %s")
+                student_params.append(selected_class_name)
+
+        if selected_date:
+            cursor.execute(
+                f"""
+                    SELECT COUNT(DISTINCT u.id) as total
+                    FROM users u
+                    JOIN user_responses ur ON ur.user_id = u.id
+                    WHERE {' AND '.join(student_filters)} AND DATE(ur.response_time) = %s
+                """,
+                student_params + [selected_date]
+            )
+        else:
+            cursor.execute(
+                f"SELECT COUNT(*) as total FROM users u WHERE {' AND '.join(student_filters)}",
+                student_params
+            )
+
         total_students_result = cursor.fetchone()
         total_students = total_students_result['total'] if total_students_result else 0
 
         # 汇总统计
-        cursor.execute("""
+        cursor.execute(f"""
             WITH attempt_summary AS (
                 SELECT
                     ur.user_id,
@@ -3444,7 +3501,7 @@ def admin_all_problems_stats():
                     CASE WHEN SUM(CASE WHEN ur.is_correct THEN 1 ELSE 0 END) = COUNT(*) THEN 1 ELSE 0 END AS is_fully_correct
                 FROM user_responses ur
                 JOIN users u ON ur.user_id = u.id
-                WHERE u.username != 'admin'
+                WHERE {filter_clause}
                 GROUP BY ur.user_id, ur.template_id, ur.attempt_count
             ),
             user_problem_stats AS (
@@ -3476,7 +3533,7 @@ def admin_all_problems_stats():
                 ON correct_attempt.user_id = ups.user_id
                AND correct_attempt.template_id = ups.template_id
                AND correct_attempt.attempt_count = ups.first_correct_attempt_no
-        """)
+        """, params)
         overall_stats = cursor.fetchone() or {}
         overall_stats.setdefault('total_attempts', 0)
         overall_stats.setdefault('first_correct_students', 0)
@@ -3491,6 +3548,9 @@ def admin_all_problems_stats():
                                problem_stats=problem_stats,
                                total_students=total_students,
                                overall_stats=overall_stats,
+                               class_options=class_options,
+                               selected_class_name=selected_class_name,
+                               selected_date=selected_date,
                                username=session['username'])
 
     except Exception as e:
