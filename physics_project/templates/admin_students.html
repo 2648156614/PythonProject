@@ -63,6 +63,7 @@
                             <th>#</th>
                             <th>账号</th>
                             <th>姓名</th>
+                            <th>专业</th>
                             <th>班级</th>
                             <th>完成状态</th>
                             <th>正确题数</th>
@@ -83,6 +84,7 @@
                                 {% endif %}
                             </td>
                             <td>{{ student.name or '-' }}</td>
+                            <td>{{ student.major_name or '未设置专业' }}</td>
                             <td>{{ student.class_name or '未分班' }}</td>
                             <td>
                                 {% if student.completed_all %}
