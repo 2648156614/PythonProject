@@ -72,9 +72,6 @@
                     <a href="{{ url_for('dashboard') }}" class="list-group-item list-group-item-action active">
                         <i class="bi bi-speedometer2 me-2"></i>学习仪表盘
                     </a>
-                    <a href="{{ url_for('all_problems') }}" class="list-group-item list-group-item-action">
-                        <i class="bi bi-journal-text me-2"></i>所有题目
-                    </a>
                     <a href="{{ url_for('history') }}" class="list-group-item list-group-item-action">
                         <i class="bi bi-clock-history me-2"></i>答题历史
                     </a>
@@ -190,9 +187,6 @@
                 <div class="d-flex justify-content-between align-items-center">
                     {% if completed_all %}
                         <p class="mb-0">🎉 恭喜！您已经完成了所有{{ total_problems }}道题目！</p>
-                        <a href="{{ url_for('all_problems') }}" class="btn btn-success">
-                            <i class="bi bi-trophy me-1"></i>查看成绩
-                        </a>
                     {% else %}
                         <p class="mb-0" id="progress-text">
                             {% if completed_count > 0 %}
