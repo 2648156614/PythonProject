@@ -2266,88 +2266,6 @@ def debug_history():
     })
 
 
-@app.route('/all_problems')
-@login_required
-def all_problems():
-    """展示所有题目列表 - 使用显示序号"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        # 获取题目显示映射
-        display_mapping = get_problem_display_info()
-
-        # 获取所有题目模板按实际ID排序
-        cursor.execute(
-            "SELECT id, template_name, problem_text, variables, difficulty, image_filename FROM problem_templates ORDER BY id")
-        templates = cursor.fetchall()
-
-        problems = []
-
-        for template in templates:
-            # 获取显示序号
-            display_number = get_display_number(template['id'])
-
-            # 生成变量值
-            variables = [v.strip() for v in template['variables'].split(',')] if template['variables'] else []
-            var_values = {}
-
-            for var in variables:
-                var_values[var] = round(random.uniform(0, 20.0), 2)
-
-            # 使用正则表达式格式化模板
-            import re
-            problem_text = template['problem_text']
-            pattern = r'__(\w+)__'
-
-            def replace_var(match):
-                var_name = match.group(1)
-                if var_name in var_values:
-                    return str(var_values[var_name])
-                else:
-                    return match.group(0)
-
-            problem_content = re.sub(pattern, replace_var, problem_text)
-
-            # 检查题目是否已完成
-            completed = has_full_correct_attempt(cursor, session['user_id'], template['id'])
-
-            # 获取答题统计（如果已完成）
-            stats = None
-            if completed:
-                stats_result = get_latest_full_correct_attempt(cursor, session['user_id'], template['id'])
-                if stats_result:
-                    stats = {
-                        'time_taken': round(stats_result['time_taken'], 1),
-                        'attempt_count': stats_result['attempt_count'],
-                        'score': stats_result['score']
-                    }
-
-            problems.append({
-                'id': template['id'],
-                'display_number': display_number,  # 添加显示序号
-                'name': template['template_name'],
-                'content': problem_content,
-                'var_values': var_values,
-                'completed': completed,
-                'stats': stats,
-                'difficulty': template.get('difficulty', 'medium'),
-                'image_filename': template.get('image_filename')
-            })
-
-        return render_template('all_problem.html',
-                               problems=problems,
-                               username=session['username'])
-
-    except Exception as e:
-        print(f"获取题目列表失败: {str(e)}")
-        flash('获取题目列表失败', 'danger')
-        return redirect(url_for('dashboard'))
-    finally:
-        if conn and conn.is_connected():
-            conn.close()
-
-
 @app.route('/refresh_problem/<int:problem_id>', methods=['POST'])
 @login_required
 def refresh_problem(problem_id):
@@ -2376,18 +2294,6 @@ def refresh_problem(problem_id):
             })
 
         return jsonify({'success': True, 'message': '题目刷新成功', 'token': token})
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
-
-
-@app.route('/refresh_all_problems', methods=['POST'])
-@login_required
-def refresh_all_problems():
-    """刷新所有题目"""
-    try:
-        # 清除当前题目session，下次访问时会重新生成
-        session.pop('current_problem', None)
-        return jsonify({'success': True, 'message': '所有题目已刷新'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
 

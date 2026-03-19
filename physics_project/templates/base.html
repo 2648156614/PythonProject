@@ -251,13 +251,6 @@
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link {{ 'active' if request.endpoint == 'all_problems' }}" href="{{ url_for('all_problems') }}">
-                                <i class="bi bi-list me-1 d-none-mobile"></i>
-                                <span class="d-inline-mobile">题目</span>
-                                <span class="d-none-mobile">所有题目</span>
-                            </a>
-                        </li>
-                        <li class="nav-item">
                             <a class="nav-link {{ 'active' if request.endpoint == 'history' }}" href="{{ url_for('history') }}">
                                 <i class="bi bi-clock-history me-1 d-none-mobile"></i>
                                 <span class="d-inline-mobile">历史</span>
