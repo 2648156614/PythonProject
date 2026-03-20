@@ -3122,21 +3122,27 @@ def admin_students_by_status(status):
 
     completed = (status == 'completed')
     students = get_students_by_completion(completed=completed)
+    counterpart_students = get_students_by_completion(completed=not completed)
     total_problems = get_total_problem_count()
     completion_stats = get_completion_stats()
     class_stats = get_class_comparison_stats()
     total_students = completion_stats['stats']['total_students'] or 0
     completed_students = completion_stats['stats']['completed_count'] or 0
+    incomplete_students = max(total_students - completed_students, 0)
 
     status_text = '已完成' if completed else '未完成'
+    counterpart_status_text = '未完成' if completed else '已完成'
 
     return render_template('admin_students.html',
                            students=students,
+                           counterpart_students=counterpart_students,
                            status=status,
                            status_text=status_text,
+                           counterpart_status_text=counterpart_status_text,
                            total_problems=total_problems,
                            total_students=total_students,
                            completed_students=completed_students,
+                           incomplete_students=incomplete_students,
                            class_stats=class_stats,
                            username=session['username'])
 
