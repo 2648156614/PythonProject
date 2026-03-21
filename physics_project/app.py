@@ -1671,11 +1671,16 @@ def get_students_by_completion(completed=True, limit=None, offset=0):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
-    query = """
+    if completed:
+        order_clause = "ORDER BY completed_at DESC, total_score DESC, total_time ASC"
+    else:
+        order_clause = "ORDER BY total_score DESC, total_time ASC, created_at ASC"
+
+    query = f"""
         SELECT id, username, name, major, class_name, completed_all, completed_at, total_score, total_time, created_at
         FROM users 
         WHERE completed_all = %s
-        ORDER BY completed_at DESC, total_score DESC
+        {order_clause}
     """
     params = [completed]
 
@@ -2647,11 +2652,11 @@ def admin_dashboard():
     stats = get_completion_stats()
     total_problems = get_total_problem_count()
 
-    # 获取最近完成的学生
-    recent_completions = get_students_by_completion(completed=True, limit=10)
+    # 获取最近完成的学生（按最新完成时间排序，展示全部，前端默认显示 5 位）
+    recent_completions = get_students_by_completion(completed=True)
 
-    # 获取需要督促的学生
-    incomplete_students = get_students_by_completion(completed=False, limit=10)
+    # 获取需要督促的学生（优先展示完成度最高、同进度下用时更短的学生）
+    incomplete_students = get_students_by_completion(completed=False)
 
     return render_template('admin_dashboard.html',
                            stats=stats,
