@@ -8,6 +8,7 @@ import random
 import re
 import time
 import uuid
+from decimal import Decimal
 from datetime import datetime
 from functools import wraps
 from math import pi, log
@@ -3373,16 +3374,23 @@ def admin_all_problems_stats():
             ORDER BY t.id
         """, params)
 
-        problem_stats = cursor.fetchall()
+        problem_stats_result = cursor.fetchall()
+        problem_stats = []
 
-        # 计算首次正确率
-        for stat in problem_stats:
+        # 转换problem_stats中的Decimal类型，避免模板中tojson序列化失败
+        for raw_stat in problem_stats_result:
+            stat = dict(raw_stat)
+            for key, value in stat.items():
+                if isinstance(value, Decimal):
+                    stat[key] = float(value)
+
             participants = stat.get('participant_students') or 0
             first_correct_students = stat.get('first_correct_students') or 0
             if participants > 0:
                 stat['first_correct_rate'] = round((first_correct_students / participants) * 100, 1)
             else:
                 stat['first_correct_rate'] = 0
+            problem_stats.append(stat)
 
         # 获取筛选后的学生总数（排除管理员）
         student_filters = ["u.username != 'admin'"]
@@ -3476,6 +3484,9 @@ def admin_all_problems_stats():
                AND correct_attempt.attempt_count = ups.first_correct_attempt_no
         """, params)
         overall_stats = cursor.fetchone() or {}
+        for key, value in list(overall_stats.items()):
+            if isinstance(value, Decimal):
+                overall_stats[key] = float(value)
         overall_stats.setdefault('total_attempts', 0)
         overall_stats.setdefault('first_correct_students', 0)
         overall_stats.setdefault('final_correct_students', 0)
