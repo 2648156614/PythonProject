@@ -117,39 +117,22 @@
     </div>
 
     <div class="row student-panel-row align-items-stretch">
-        <!-- 最近完成的学生 -->
         <div class="col-lg-6 mb-4 d-flex">
             <div class="card student-hover-card student-hover-card-success flex-fill">
                 <div class="card-header bg-success text-white d-flex justify-content-between align-items-center gap-3">
                     <div>
                         <h5 class="mb-0"><i class="bi bi-trophy me-2"></i>最近完成的学生</h5>
-                        <small class="student-panel-tip">默认展示 5 位，悬停后可滚动查看更多并点击跳转</small>
+                        <small class="student-panel-tip">仅首屏展示最新 5 位，横向滑动可查看全部完成学生</small>
                     </div>
                     <span class="badge text-bg-light text-success student-panel-badge">{{ recent_completions|length }} 人</span>
                 </div>
                 <div class="card-body student-hover-card-body">
                     {% if recent_completions %}
-                    <div class="student-preview-list">
-                        {% for student in recent_completions[:5] %}
-                        <a href="{{ url_for('admin_student_details', user_id=student.id) }}" class="student-preview-item text-decoration-none">
-                            <span class="student-preview-name">{{ student.name or student.username }}</span>
-                            <span class="student-preview-meta">{{ student.completed_at.strftime('%m-%d %H:%M') }}</span>
-                        </a>
-                        {% endfor %}
-                    </div>
-                    <div class="student-scroll-list custom-scrollbar">
+                    <div class="student-compact-strip student-compact-strip-success custom-scrollbar" aria-label="最近完成学生列表">
                         {% for student in recent_completions %}
-                        <a href="{{ url_for('admin_student_details', user_id=student.id) }}" class="student-list-item text-decoration-none">
-                            <div>
-                                <h6 class="mb-1">{{ student.name or student.username }}</h6>
-                                <small class="text-muted">账号: {{ student.username }}</small><br>
-                                <small class="text-muted">完成时间: {{ student.completed_at.strftime('%m-%d %H:%M') }}</small>
-                            </div>
-                            <div class="text-end flex-shrink-0 ms-3">
-                                <span class="badge bg-primary rounded-pill">{{ student.total_score }}题</span>
-                                <br>
-                                <small class="text-muted">{{ "%.1f"|format(student.total_time) }}秒</small>
-                            </div>
+                        <a href="{{ url_for('admin_student_details', user_id=student.id) }}" class="student-compact-item student-compact-item-success text-decoration-none">
+                            <span class="student-compact-name">{{ student.name or student.username }}</span>
+                            <span class="student-compact-meta">{{ student.completed_at.strftime('%m-%d %H:%M') }}</span>
                         </a>
                         {% endfor %}
                     </div>
@@ -163,39 +146,33 @@
             </div>
         </div>
 
-        <!-- 需要督促的学生 -->
         <div class="col-lg-6 mb-4 d-flex">
             <div class="card student-hover-card student-hover-card-warning flex-fill">
                 <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center gap-3">
                     <div>
                         <h5 class="mb-0"><i class="bi bi-exclamation-triangle me-2"></i>需要督促的学生</h5>
-                        <small class="student-panel-tip text-dark">默认展示 5 位，悬停后可滚动查看更多并点击跳转</small>
+                        <small class="student-panel-tip text-dark">按完成度排序，同进度优先展示用时更短的学生，横向滑动可查看全部</small>
                     </div>
                     <span class="badge text-bg-light text-warning-emphasis student-panel-badge">{{ incomplete_students|length }} 人</span>
                 </div>
                 <div class="card-body student-hover-card-body">
                     {% if incomplete_students %}
-                    <div class="student-preview-list">
-                        {% for student in incomplete_students[:5] %}
-                        <a href="{{ url_for('admin_student_details', user_id=student.id) }}" class="student-preview-item text-decoration-none student-preview-item-warning">
-                            <span class="student-preview-name">{{ student.name or student.username }}</span>
-                            <span class="student-preview-meta">{{ (student.total_score or 0) }}/{{ total_problems }}</span>
+                    <div class="student-compact-strip student-compact-strip-warning custom-scrollbar" aria-label="需要督促学生列表">
+                        {% for student in incomplete_students %}
+                        <a href="{{ url_for('admin_student_details', user_id=student.id) }}" class="student-compact-item student-compact-item-warning text-decoration-none">
+                            <span class="student-compact-name">{{ student.name or student.username }}</span>
+                            <span class="student-compact-meta">{{ student.total_score or 0 }}/{{ total_problems }}</span>
                         </a>
                         {% endfor %}
                     </div>
-                    <div class="student-scroll-list custom-scrollbar">
-                        {% for student in incomplete_students %}
-                        <a href="{{ url_for('admin_student_details', user_id=student.id) }}" class="student-list-item text-decoration-none student-list-item-warning">
-                            <div>
-                                <h6 class="mb-1">{{ student.name or student.username }}</h6>
-                                <small class="text-muted">账号: {{ student.username }}</small><br>
-                                <small class="text-muted">注册时间: {{ student.created_at.strftime('%m-%d %H:%M') }}</small>
+                    <div class="student-priority-list mt-3">
+                        {% for student in incomplete_students[:5] %}
+                        <a href="{{ url_for('admin_student_details', user_id=student.id) }}" class="student-priority-card text-decoration-none">
+                            <div class="student-priority-main">
+                                <div class="student-priority-name">{{ student.name or student.username }}</div>
+                                <div class="student-priority-major">{{ student.major or '未设置专业' }}</div>
                             </div>
-                            <div class="text-end flex-shrink-0 ms-3">
-                                <span class="badge bg-warning text-dark rounded-pill">{{ student.total_score or 0 }}/{{ total_problems }}</span>
-                                <br>
-                                <small class="text-primary mt-1 d-inline-block">查看答题情况</small>
-                            </div>
+                            <div class="student-priority-progress">{{ student.total_score or 0 }}/{{ total_problems }}</div>
                         </a>
                         {% endfor %}
                     </div>
@@ -258,166 +235,18 @@
                     <div class="p-3">
                         <i class="bi bi-person-check display-4 text-info"></i>
                         <h5 class="mt-2">{{ stats.stats.completed_count or 0 }}</h5>
-                        <p class="text-muted mb-0">总完成人数</p>
+                        <p class="text-muted mb-0">累计完成</p>
                     </div>
                 </div>
                 <div class="col-md-3">
                     <div class="p-3">
-                        <i class="bi bi-speedometer2 display-4 text-warning"></i>
-                        <h5 class="mt-2">{{ "%.1f"|format(stats.stats.avg_time or 0) }}s</h5>
-                        <p class="text-muted mb-0">平均用时</p>
+                        <i class="bi bi-percent display-4 text-warning"></i>
+                        <h5 class="mt-2">{{ stats.stats.completion_rate or 0 }}%</h5>
+                        <p class="text-muted mb-0">完成率</p>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 </div>
-
-<style>
-.stat-icon {
-    opacity: 0.8;
-}
-.dashboard-card,
-.student-hover-card {
-    transition: transform 0.25s ease, box-shadow 0.25s ease;
-}
-.dashboard-card:hover,
-.student-hover-card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 1rem 2rem rgba(15, 23, 42, 0.12);
-}
-.student-panel-row {
-    overflow: visible;
-}
-.student-hover-card {
-    min-height: 100%;
-    position: relative;
-    z-index: 1;
-}
-.student-hover-card:hover {
-    transform: translateY(-6px) scale(1.03);
-    z-index: 10;
-}
-.student-hover-card-body {
-    display: flex;
-    flex-direction: column;
-    min-height: 320px;
-    gap: 1rem;
-}
-.student-preview-list {
-    display: grid;
-    gap: 0.75rem;
-}
-.student-preview-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 0.9rem 1rem;
-    border-radius: 0.85rem;
-    background: rgba(25, 135, 84, 0.08);
-    color: #146c43;
-    transition: transform 0.2s ease, background-color 0.2s ease;
-}
-.student-preview-item-warning {
-    background: rgba(255, 193, 7, 0.16);
-    color: #8a6d00;
-}
-.student-preview-item:hover {
-    transform: translateX(4px);
-    background: rgba(25, 135, 84, 0.16);
-}
-.student-preview-item-warning:hover {
-    background: rgba(255, 193, 7, 0.26);
-}
-.student-preview-name {
-    font-weight: 600;
-    color: inherit;
-}
-.student-preview-meta {
-    font-size: 0.875rem;
-    color: inherit;
-    opacity: 0.85;
-}
-.student-scroll-list {
-    max-height: 0;
-    overflow: hidden;
-    opacity: 0;
-    transition: max-height 0.35s ease, opacity 0.25s ease;
-}
-.student-hover-card:hover .student-scroll-list,
-.student-hover-card:focus-within .student-scroll-list {
-    max-height: 320px;
-    overflow-y: auto;
-    opacity: 1;
-}
-.student-list-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.95rem 0;
-    border-top: 1px solid rgba(15, 23, 42, 0.08);
-    color: inherit;
-    transition: padding-left 0.2s ease, background-color 0.2s ease;
-}
-.student-list-item:hover {
-    padding-left: 0.35rem;
-    background-color: rgba(13, 110, 253, 0.03);
-}
-.student-list-item-warning:hover {
-    background-color: rgba(255, 193, 7, 0.08);
-}
-.student-panel-tip {
-    opacity: 0.85;
-}
-.student-panel-badge {
-    white-space: nowrap;
-}
-.empty-state-panel {
-    min-height: 100%;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-}
-.custom-scrollbar::-webkit-scrollbar {
-    width: 8px;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-    background: rgba(108, 117, 125, 0.45);
-    border-radius: 999px;
-}
-.list-group-item {
-    border: none;
-    padding: 1rem 0;
-}
-.btn-group .btn {
-    margin-bottom: 0.5rem;
-}
-@media (max-width: 991.98px) {
-    .student-hover-card:hover {
-        transform: translateY(-4px) scale(1.01);
-    }
-    .student-hover-card-body {
-        min-height: auto;
-    }
-}
-@media (max-width: 768px) {
-    .btn-group {
-        flex-direction: column;
-    }
-    .btn-group .btn {
-        margin-bottom: 0.5rem;
-        border-radius: 0.375rem !important;
-    }
-    .student-preview-item,
-    .student-list-item {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-    .student-hover-card:hover .student-scroll-list,
-    .student-hover-card:focus-within .student-scroll-list {
-        max-height: 260px;
-    }
-}
-</style>
 {% endblock %}
