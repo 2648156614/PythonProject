@@ -116,13 +116,7 @@
         margin-bottom: 0;
     }
 
-    .admin-stats-page .analytics-grid {
-        display: grid;
-        grid-template-columns: 1.45fr 1fr;
-        gap: 1rem;
-        align-items: stretch;
-    }
-
+    .admin-stats-page .analytics-grid,
     .admin-stats-page .chart-stack,
     .admin-stats-page .table-stack {
         display: grid;
@@ -131,7 +125,12 @@
     }
 
     .admin-stats-page .chart-stack {
-        grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        align-items: stretch;
+    }
+
+    .admin-stats-page .table-stack {
+        grid-template-columns: 1fr;
     }
 
     .admin-stats-page .panel-header {
@@ -179,8 +178,8 @@
     }
 
     .admin-stats-page .chart-canvas {
-        height: 360px;
-        min-height: 360px;
+        height: clamp(320px, 46vw, 420px);
+        min-height: 320px;
         width: 100%;
     }
 
@@ -269,26 +268,14 @@
         background: #22c55e;
     }
 
-    @media (min-width: 1200px) {
-        body:has(.admin-stats-page) {
-            overflow: hidden;
-        }
-
-        .admin-stats-page {
-            min-height: calc(100vh - 210px);
-        }
-    }
-
     @media (max-width: 1399px) {
         .admin-stats-page .stats-grid,
-        .admin-stats-page .filter-form,
-        .admin-stats-page .analytics-grid,
-        .admin-stats-page .chart-stack {
+        .admin-stats-page .filter-form {
             grid-template-columns: repeat(2, minmax(0, 1fr));
         }
 
-        .admin-stats-page .analytics-grid {
-            grid-template-columns: 1fr;
+        .admin-stats-page .chart-stack {
+            grid-template-columns: minmax(0, 1fr);
         }
     }
 
@@ -307,9 +294,6 @@
             min-height: 320px;
         }
 
-        body:has(.admin-stats-page) {
-            overflow: auto;
-        }
     }
 </style>
 
@@ -408,12 +392,14 @@
                 </article>
             </div>
 
-            <div class="table-stack">
-                <article class="glass-panel table-panel problem-table-panel">
+        </section>
+
+        <section class="table-stack">
+            <article class="glass-panel table-panel problem-table-panel">
                     <div class="panel-header">
                         <div>
                             <h5 class="panel-title"><i class="bi bi-table me-2"></i>题目详细统计</h5>
-                            <p class="panel-subtitle">保留结构化明细，用于核查各题参与、正确率、时长等关键指标。</p>
+                            <p class="panel-subtitle">明细表单独放到图表下方，避免和图表抢占首屏空间，查看时也更自然。</p>
                         </div>
                         <span class="panel-tag"><i class="bi bi-list-columns"></i> Detail Grid</span>
                     </div>
@@ -455,11 +441,11 @@
                     </div>
                 </article>
 
-                <article class="glass-panel table-panel">
+            <article class="glass-panel table-panel">
                     <div class="panel-header">
                         <div>
                             <h5 class="panel-title"><i class="bi bi-people me-2"></i>学生列表（固定高度滚动）</h5>
-                            <p class="panel-subtitle">筛选结果区域固定高度，不再无限拉长；可在表格内部滚动查看全部学生。</p>
+                            <p class="panel-subtitle">学生清单保留内部滚动，但不再挤压上方图表区域，整体布局会随屏幕宽度自适应。</p>
                         </div>
                         <span class="panel-tag"><i class="bi bi-mouse"></i> Scroll Within</span>
                     </div>
@@ -510,8 +496,7 @@
                             </tbody>
                         </table>
                     </div>
-                </article>
-            </div>
+            </article>
         </section>
     </div>
 </div>
@@ -540,7 +525,8 @@
         }));
 
         barChart.setOption({
-            animationDuration: 1300,
+            animationDuration: 1500,
+            animationDelay: function (idx) { return idx * 80; },
             animationEasing: 'cubicOut',
             tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
             grid: { left: 40, right: 24, top: 24, bottom: 70, containLabel: true },
@@ -581,7 +567,9 @@
         });
 
         pieChart.setOption({
-            animationDuration: 1400,
+            animationType: 'scale',
+            animationDuration: 1500,
+            animationDelay: function (idx) { return idx * 60; },
             animationEasing: 'cubicOut',
             tooltip: { trigger: 'item', formatter: '{b}<br/>答题次数：{c}<br/>占比：{d}%' },
             legend: { bottom: 0, left: 'center', textStyle: { color: textColor } },
