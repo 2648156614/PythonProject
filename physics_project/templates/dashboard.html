@@ -78,7 +78,7 @@
                     {% else %}
                         {% set progress = (completed_count / total_problems * 100) if total_problems else 0 %}
                     {% endif %}
-                    <div class="progress-circle mx-auto mb-3" data-progress="{{ progress }}">
+                    <div class="progress-circle mx-auto mb-3" data-progress="{{ progress }}" style="--progress: {{ progress }};">
                         <span class="progress-value">{{ "%.0f"|format(progress) }}%</span>
                     </div>
                     <h6 class="text-muted">学习进度</h6>
@@ -426,7 +426,7 @@ document.addEventListener('DOMContentLoaded', function() {
     width: 80px;
     height: 80px;
     border-radius: 50%;
-    background: conic-gradient(#4e73df 0% {{ completed_count / total_problems * 100 }}%, #eaecf4 {{ completed_count / total_problems * 100 }}% 100%);
+    background: conic-gradient(#4e73df 0% calc(var(--progress, 0) * 1%), #eaecf4 calc(var(--progress, 0) * 1%) 100%);
     display: flex;
     align-items: center;
     justify-content: center;
