@@ -323,6 +323,9 @@
                     <div class="panel-tag bg-white text-primary mb-3"><i class="bi bi-stars"></i> 升级版数据驾驶舱</div>
                     <h2 class="hero-title">题目统计 · 全量学生答题总览</h2>
                     <p class="hero-subtitle">筛选结果、核心指标、动态图表与学生清单集中展示，提升分析效率并减少页面滚动。</p>
+                    {% if not problem_stats %}
+                    <div class="alert alert-light text-dark mt-3 mb-0">当前没有已开启题库的题目，暂无题目可统计。</div>
+                    {% endif %}
                 </div>
                 <a href="{{ url_for('admin_dashboard', paper_id=selected_paper_id) }}" class="btn btn-light align-self-start">
                     <i class="bi bi-arrow-left"></i> 返回管理后台
@@ -483,7 +486,7 @@
                             </thead>
                             <tbody>
                                 {% for student in filtered_students %}
-                                <tr onclick="window.location='{{ url_for('admin_student_details', user_id=student.id) }}'" style="cursor:pointer;">
+                                <tr onclick="window.location='{{ url_for('admin_student_details', user_id=student.id, paper_id=selected_paper_id) }}'" style="cursor:pointer;">
                                     <td class="student-link-cell">{{ loop.index }}</td>
                                     <td class="student-link-cell">{{ student.username }}</td>
                                     <td>{{ student.name or '-' }}</td>
