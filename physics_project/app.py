@@ -157,6 +157,27 @@ def get_selected_exam_paper(include_disabled_for_admin=False):
     return get_exam_paper_by_id(paper_id)
 
 
+def get_enabled_exam_paper_ids():
+    """返回所有已开启题库 ID。"""
+    return [paper['id'] for paper in get_enabled_exam_papers()]
+
+
+def build_enabled_paper_filter(alias, selected_paper_id=None):
+    """构建仅统计已开启题库的 SQL 过滤条件。"""
+    enabled_paper_ids = get_enabled_exam_paper_ids()
+
+    if selected_paper_id is not None:
+        if selected_paper_id in enabled_paper_ids:
+            return f" AND {alias}.paper_id = %s", [selected_paper_id]
+        return " AND 1 = 0", []
+
+    if not enabled_paper_ids:
+        return " AND 1 = 0", []
+
+    placeholders = ', '.join(['%s'] * len(enabled_paper_ids))
+    return f" AND {alias}.paper_id IN ({placeholders})", enabled_paper_ids
+
+
 def get_exam_paper_stats(paper_id):
     conn = get_db_connection()
     if not conn:
@@ -681,9 +702,28 @@ def get_latest_attempt_count(user_id, template_id, paper_id=None):
 
 
 def get_total_problem_count(paper_id=None):
-    """动态获取题目总数"""
-    mapping = get_problem_display_info(paper_id)
-    return len(mapping)
+    """动态获取题目总数（仅统计已开启题库）。"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        enabled_paper_ids = get_enabled_exam_paper_ids()
+        if paper_id is not None:
+            if paper_id not in enabled_paper_ids:
+                return 0
+            cursor.execute("SELECT COUNT(*) FROM problem_templates WHERE paper_id = %s", (paper_id,))
+        else:
+            if not enabled_paper_ids:
+                return 0
+            placeholders = ', '.join(['%s'] * len(enabled_paper_ids))
+            cursor.execute(
+                f"SELECT COUNT(*) FROM problem_templates WHERE paper_id IN ({placeholders})",
+                enabled_paper_ids
+            )
+        row = cursor.fetchone()
+        return int(row[0] if row else 0)
+    finally:
+        cursor.close()
+        conn.close()
 
 
 def generate_problem_from_template(template_id, max_attempts=10):
@@ -1825,16 +1865,12 @@ def update_all_users_completion_status():
 
 
 def get_completion_stats(paper_id=None):
-    """获取完成情况统计"""
+    """获取完成情况统计（仅统计已开启题库）。"""
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
-    filters = ["u.username != 'admin'"]
-    params = []
-    response_filter = ""
-    response_params = []
-    if paper_id is not None:
-        response_filter = " AND ur.paper_id = %s"
-        response_params.append(paper_id)
+    total_problems = get_total_problem_count(paper_id)
+    response_filter, response_params = build_enabled_paper_filter('ur', paper_id)
+    response_filter_ur2, response_params_ur2 = build_enabled_paper_filter('ur2', paper_id)
 
     cursor.execute(f"""
         WITH completed AS (
@@ -1844,7 +1880,7 @@ def get_completion_stats(paper_id=None):
               AND (ur.user_id, ur.template_id, ur.attempt_count) IN (
                 SELECT user_id, template_id, attempt_count
                 FROM user_responses ur2
-                WHERE ur2.is_correct IN (TRUE, FALSE) {response_filter.replace('ur.', 'ur2.')}
+                WHERE ur2.is_correct IN (TRUE, FALSE) {response_filter_ur2}
                 GROUP BY user_id, template_id, attempt_count
                 HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
               )
@@ -1858,9 +1894,9 @@ def get_completion_stats(paper_id=None):
             AVG(COALESCE(c.total_time, 0)) AS avg_time
         FROM users u
         LEFT JOIN completed c ON c.user_id = u.id
-        WHERE {' AND '.join(filters)}
-    """, response_params + response_params + [get_total_problem_count(paper_id), get_total_problem_count(paper_id)])
-    stats = cursor.fetchone()
+        WHERE u.username != 'admin'
+    """, response_params + response_params_ur2 + [total_problems, total_problems])
+    stats = cursor.fetchone() or {}
 
     cursor.execute(f"""
         WITH completed AS (
@@ -1870,7 +1906,7 @@ def get_completion_stats(paper_id=None):
               AND (ur.user_id, ur.template_id, ur.attempt_count) IN (
                 SELECT user_id, template_id, attempt_count
                 FROM user_responses ur2
-                WHERE ur2.is_correct IN (TRUE, FALSE) {response_filter.replace('ur.', 'ur2.')}
+                WHERE ur2.is_correct IN (TRUE, FALSE) {response_filter_ur2}
                 GROUP BY user_id, template_id, attempt_count
                 HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
               )
@@ -1880,21 +1916,20 @@ def get_completion_stats(paper_id=None):
         FROM users u
         LEFT JOIN completed c ON c.user_id = u.id
         WHERE u.username != 'admin' AND COALESCE(c.completed_count, 0) >= %s AND DATE(u.completed_at) = CURDATE()
-    """, response_params + response_params + [get_total_problem_count(paper_id)])
-    today_stats = cursor.fetchone()
+    """, response_params + response_params_ur2 + [total_problems])
+    today_stats = cursor.fetchone() or {}
     cursor.close()
     conn.close()
     return {'stats': stats, 'today_stats': today_stats, 'top_students': []}
+
+
 def get_students_by_completion(completed=True, limit=None, offset=0, paper_id=None):
-    """按完成状态获取学生列表"""
+    """按完成状态获取学生列表（仅统计已开启题库）。"""
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     total_problems = get_total_problem_count(paper_id)
-    response_filter = ""
-    params = []
-    if paper_id is not None:
-        response_filter = " AND ur.paper_id = %s"
-        params.append(paper_id)
+    response_filter, response_params = build_enabled_paper_filter('ur', paper_id)
+    response_filter_ur2, response_params_ur2 = build_enabled_paper_filter('ur2', paper_id)
     query = f"""
         WITH completed AS (
             SELECT user_id, COUNT(DISTINCT template_id) AS total_score, COALESCE(SUM(time_taken), 0) AS total_time
@@ -1903,7 +1938,7 @@ def get_students_by_completion(completed=True, limit=None, offset=0, paper_id=No
               AND (ur.user_id, ur.template_id, ur.attempt_count) IN (
                 SELECT user_id, template_id, attempt_count
                 FROM user_responses ur2
-                WHERE 1=1 {response_filter.replace('ur.', 'ur2.')}
+                WHERE 1=1 {response_filter_ur2}
                 GROUP BY user_id, template_id, attempt_count
                 HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
               )
@@ -1918,7 +1953,7 @@ def get_students_by_completion(completed=True, limit=None, offset=0, paper_id=No
         HAVING completed_all = %s
         ORDER BY total_score DESC, total_time ASC, created_at ASC
     """
-    full_params = params + params + [total_problems, total_problems, completed]
+    full_params = response_params + response_params_ur2 + [total_problems, total_problems, completed]
     if limit:
         query += " LIMIT %s OFFSET %s"
         full_params.extend([limit, offset])
@@ -2920,8 +2955,7 @@ def admin_dashboard():
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
-    selected_paper_id = request.args.get('paper_id', type=int)
-    selected_paper_id = resolve_selected_exam_paper_id(selected_paper_id, include_disabled_for_admin=True)
+    selected_paper_id = resolve_selected_exam_paper_id(request.args.get('paper_id', type=int))
     selected_paper = get_exam_paper_by_id(selected_paper_id) if selected_paper_id else None
     stats = get_completion_stats(selected_paper_id)
     total_problems = get_total_problem_count(selected_paper_id)
@@ -3064,8 +3098,9 @@ def admin_export_students(status):
         return redirect(url_for('admin_dashboard'))
 
     completed = (status == 'completed')
-    students = get_students_by_completion(completed=completed)
-    total_problems = get_total_problem_count()
+    selected_paper_id = resolve_selected_exam_paper_id(request.args.get('paper_id', type=int))
+    students = get_students_by_completion(completed=completed, paper_id=selected_paper_id)
+    total_problems = get_total_problem_count(selected_paper_id)
 
     output = io.StringIO()
     writer = csv.writer(output)
@@ -3534,7 +3569,7 @@ def admin_student_details(user_id):
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
-    selected_paper_id = request.args.get('paper_id', type=int)
+    selected_paper_id = resolve_selected_exam_paper_id(request.args.get('paper_id', type=int))
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
@@ -3552,9 +3587,11 @@ def admin_student_details(user_id):
 
         # 获取题目总数
         total_problems = get_total_problem_count(selected_paper_id)
+        problem_template_filter, problem_template_params = build_enabled_paper_filter('t', selected_paper_id)
+        response_filter, response_params = build_enabled_paper_filter('ur', selected_paper_id)
 
         # 每题作答状态：是否答对；答对时展示达到答对所需次数与累计时长
-        cursor.execute("""
+        cursor.execute(f"""
             WITH attempt_summary AS (
                 SELECT
                     template_id,
@@ -3564,8 +3601,8 @@ def admin_student_details(user_id):
                     MAX(time_taken) AS time_taken,
                     MAX(response_time) AS last_response_time,
                     CASE WHEN SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*) THEN 1 ELSE 0 END AS is_fully_correct
-                FROM user_responses
-                WHERE user_id = %s AND paper_id = %s
+                FROM user_responses ur
+                WHERE user_id = %s {response_filter}
                 GROUP BY template_id, attempt_count
             ),
             progress AS (
@@ -3598,8 +3635,9 @@ def admin_student_details(user_id):
                 ) AS cumulative_time_to_correct
             FROM problem_templates t
             LEFT JOIN progress p ON t.id = p.template_id
+            WHERE 1 = 1 {problem_template_filter}
             ORDER BY t.id
-        """, (user_id, selected_paper_id))
+        """, [user_id] + response_params + problem_template_params)
 
         problem_stats = cursor.fetchall()
         for stat in problem_stats:
@@ -3608,7 +3646,7 @@ def admin_student_details(user_id):
         completed_problems_count = sum(1 for stat in problem_stats if stat.get('is_completed'))
 
         # 计算总体统计
-        cursor.execute("""
+        cursor.execute(f"""
             WITH attempt_summary AS (
                 SELECT
                     template_id,
@@ -3616,8 +3654,8 @@ def admin_student_details(user_id):
                     COUNT(*) AS total_answers,
                     SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) AS correct_answers,
                     MAX(time_taken) AS time_taken
-                FROM user_responses
-                WHERE user_id = %s AND paper_id = %s
+                FROM user_responses ur
+                WHERE user_id = %s {response_filter}
                 GROUP BY template_id, attempt_count
             )
             SELECT
@@ -3625,7 +3663,7 @@ def admin_student_details(user_id):
                 SUM(CASE WHEN correct_answers = total_answers THEN 1 ELSE 0 END) as total_correct,
                 AVG(time_taken) as overall_avg_time
             FROM attempt_summary
-        """, (user_id, selected_paper_id))
+        """, [user_id] + response_params)
 
         overall_stats = cursor.fetchone() or {}
         overall_stats.setdefault('total_attempts', 0)
@@ -3677,16 +3715,16 @@ def admin_student_details(user_id):
             knowledge_stats.append(item)
         knowledge_stats.sort(key=lambda item: (-item['correct_rate'], -item['completed_templates'], item['label']))
 
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT COALESCE(NULLIF(TRIM(error_type), ''), '未知') AS error_type, COUNT(*) AS count
-            FROM user_responses
-            WHERE user_id = %s AND is_correct = FALSE
+            FROM user_responses ur
+            WHERE user_id = %s AND is_correct = FALSE {response_filter}
             GROUP BY COALESCE(NULLIF(TRIM(error_type), ''), '未知')
             ORDER BY count DESC, error_type ASC
-        """, (user_id,))
+        """, [user_id] + response_params)
         error_type_stats = cursor.fetchall()
 
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT
                 t.id AS template_id,
                 t.template_name,
@@ -3697,11 +3735,11 @@ def admin_student_details(user_id):
                 SUM(CASE WHEN ur.error_type = '格式错误' THEN 1 ELSE 0 END) AS format_error_count
             FROM user_responses ur
             JOIN problem_templates t ON t.id = ur.template_id
-            WHERE ur.user_id = %s AND ur.is_correct = FALSE
+            WHERE ur.user_id = %s AND ur.is_correct = FALSE {response_filter}
             GROUP BY t.id, t.template_name
             ORDER BY wrong_count DESC, t.id ASC
             LIMIT 6
-        """, (user_id,))
+        """, [user_id] + response_params)
         wrong_problem_stats = cursor.fetchall()
         for item in wrong_problem_stats:
             item['knowledge_label'] = infer_knowledge_label(item.get('template_name'))
@@ -3746,9 +3784,12 @@ def admin_all_problems_stats():
     cursor = conn.cursor(dictionary=True)
 
     try:
-        selected_paper_id = request.args.get('paper_id', type=int)
+        selected_paper_id = resolve_selected_exam_paper_id(request.args.get('paper_id', type=int))
         selected_class_name = (request.args.get('class_name') or '').strip()
         selected_major = (request.args.get('major') or '').strip()
+        problem_filter, problem_filter_params = build_enabled_paper_filter('t', selected_paper_id)
+        response_filter, response_params = build_enabled_paper_filter('ur', selected_paper_id)
+        response_filter_ur2, response_params_ur2 = build_enabled_paper_filter('ur2', selected_paper_id)
 
         # 加载班级筛选选项
         cursor.execute("""
@@ -3769,9 +3810,6 @@ def admin_all_problems_stats():
 
         filters = ["u.username != 'admin'"]
         params = []
-        if selected_paper_id:
-            filters.append("ur.paper_id = %s")
-            params.append(selected_paper_id)
 
         if selected_class_name:
             if selected_class_name == '未分班':
@@ -3802,7 +3840,7 @@ def admin_all_problems_stats():
                     CASE WHEN SUM(CASE WHEN ur.is_correct THEN 1 ELSE 0 END) = COUNT(*) THEN 1 ELSE 0 END AS is_fully_correct
                 FROM user_responses ur
                 JOIN users u ON ur.user_id = u.id
-                WHERE {filter_clause}
+                WHERE {filter_clause} {response_filter}
                 GROUP BY ur.user_id, ur.template_id, ur.attempt_count
             ),
             user_problem_stats AS (
@@ -3838,9 +3876,10 @@ def admin_all_problems_stats():
                 ON correct_attempt.user_id = ups.user_id
                AND correct_attempt.template_id = ups.template_id
                AND correct_attempt.attempt_count = ups.first_correct_attempt_no
+            WHERE 1 = 1 {problem_filter}
             GROUP BY t.id, t.template_name
             ORDER BY t.id
-        """, params)
+        """, params + response_params + problem_filter_params)
 
         problem_stats_result = cursor.fetchall()
         problem_stats = []
@@ -3886,22 +3925,36 @@ def admin_all_problems_stats():
 
         cursor.execute(
             f"""
+            WITH completed AS (
+                SELECT user_id, COUNT(DISTINCT template_id) AS total_score, COALESCE(SUM(time_taken), 0) AS total_time
+                FROM user_responses ur
+                WHERE ur.is_correct = TRUE {response_filter}
+                  AND (ur.user_id, ur.template_id, ur.attempt_count) IN (
+                    SELECT user_id, template_id, attempt_count
+                    FROM user_responses ur2
+                    WHERE 1 = 1 {response_filter_ur2}
+                    GROUP BY user_id, template_id, attempt_count
+                    HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+                  )
+                GROUP BY user_id
+            )
             SELECT
                 u.id,
                 u.username,
                 u.name,
                 COALESCE(NULLIF(TRIM(u.major), ''), '未设置专业') AS major,
                 COALESCE(NULLIF(TRIM(u.class_name), ''), '未分班') AS class_name,
-                u.completed_all,
-                u.total_score,
-                u.total_time,
+                CASE WHEN COALESCE(c.total_score, 0) >= %s AND %s > 0 THEN TRUE ELSE FALSE END AS completed_all,
+                COALESCE(c.total_score, 0) AS total_score,
+                COALESCE(c.total_time, 0) AS total_time,
                 u.created_at,
                 u.completed_at
             FROM users u
+            LEFT JOIN completed c ON c.user_id = u.id
             WHERE {' AND '.join(student_filters)}
             ORDER BY u.class_name ASC, u.username ASC
             """,
-            student_params
+            response_params + response_params_ur2 + [get_total_problem_count(selected_paper_id), get_total_problem_count(selected_paper_id)] + student_params
         )
         filtered_students = cursor.fetchall()
 
@@ -3918,7 +3971,7 @@ def admin_all_problems_stats():
                     CASE WHEN SUM(CASE WHEN ur.is_correct THEN 1 ELSE 0 END) = COUNT(*) THEN 1 ELSE 0 END AS is_fully_correct
                 FROM user_responses ur
                 JOIN users u ON ur.user_id = u.id
-                WHERE {filter_clause}
+                WHERE {filter_clause} {response_filter}
                 GROUP BY ur.user_id, ur.template_id, ur.attempt_count
             ),
             user_problem_stats AS (
@@ -3950,7 +4003,7 @@ def admin_all_problems_stats():
                 ON correct_attempt.user_id = ups.user_id
                AND correct_attempt.template_id = ups.template_id
                AND correct_attempt.attempt_count = ups.first_correct_attempt_no
-        """, params)
+        """, params + response_params)
         overall_stats = cursor.fetchone() or {}
         for key, value in list(overall_stats.items()):
             if isinstance(value, Decimal):
