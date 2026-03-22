@@ -22,6 +22,15 @@
                 <div class="card-body">
                     <form method="POST" enctype="multipart/form-data">
                         <div class="mb-3">
+                            <label for="paper_id" class="form-label">所属题库</label>
+                            <select class="form-select" id="paper_id" name="paper_id" required>
+                                {% for paper in exam_papers %}
+                                <option value="{{ paper.id }}" {% if template is defined and template.paper_id == paper.id %}selected{% endif %}>{{ paper.name }} {% if paper.is_enabled %}(已开启){% else %}(已关闭){% endif %}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
                             <label for="template_name" class="form-label">题目名称</label>
                             <input type="text" class="form-control" id="template_name" name="template_name"
                                    value="{{ template.template_name }}" required>

@@ -28,6 +28,69 @@
         </div>
     </div>
 
+
+    <div class="card mb-4 border-info">
+        <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-collection me-2"></i>题库管理</h5>
+            {% if selected_paper %}<span class="badge bg-light text-info">当前统计题库：{{ selected_paper.name }}</span>{% endif %}
+        </div>
+        <div class="card-body">
+            <form method="get" action="{{ url_for('admin_dashboard') }}" class="row g-3 align-items-end mb-4">
+                <div class="col-md-6">
+                    <label class="form-label">查看题库统计</label>
+                    <select class="form-select" name="paper_id">
+                        {% for paper in exam_papers %}
+                        <option value="{{ paper.id }}" {% if selected_paper_id == paper.id %}selected{% endif %}>{{ paper.name }} · {% if paper.is_enabled %}已开启{% else %}已关闭{% endif %}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-info w-100">切换统计</button>
+                </div>
+            </form>
+            <form method="post" action="{{ url_for('admin_create_exam_paper') }}" class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label">新题库名称</label>
+                    <input class="form-control" name="name" required>
+                </div>
+                <div class="col-md-5">
+                    <label class="form-label">说明</label>
+                    <input class="form-control" name="description">
+                </div>
+                <div class="col-md-1">
+                    <div class="form-check mt-4 pt-2">
+                        <input class="form-check-input" type="checkbox" name="is_enabled" value="1" checked id="paperEnabled">
+                        <label class="form-check-label" for="paperEnabled">开启</label>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary w-100">新建题库</button>
+                </div>
+            </form>
+            <div class="table-responsive mt-4">
+                <table class="table table-sm align-middle">
+                    <thead><tr><th>题库</th><th>说明</th><th>状态</th><th>操作</th></tr></thead>
+                    <tbody>
+                        {% for paper in exam_papers %}
+                        <tr>
+                            <td>{{ paper.name }}</td>
+                            <td>{{ paper.description or '—' }}</td>
+                            <td>{% if paper.is_enabled %}<span class="badge bg-success">已开启</span>{% else %}<span class="badge bg-secondary">已关闭</span>{% endif %}</td>
+                            <td>
+                                <form method="post" action="{{ url_for('admin_toggle_exam_paper', paper_id=paper.id) }}">
+                                    <button type="submit" class="btn btn-sm {% if paper.is_enabled %}btn-outline-secondary{% else %}btn-outline-success{% endif %}">
+                                        {% if paper.is_enabled %}关闭{% else %}开启{% endif %}
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <div class="card mb-4 border-primary">
         <div class="card-header bg-primary text-white">
             <h5 class="mb-0"><i class="bi bi-file-earmark-arrow-up me-2"></i>批量导入学生</h5>
