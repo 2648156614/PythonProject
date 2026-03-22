@@ -238,6 +238,19 @@
     .admin-stats-page .metric-pill-cyan { background: rgba(8, 145, 178, 0.12); color: #0f766e; }
     .admin-stats-page .metric-pill-amber { background: rgba(245, 158, 11, 0.16); color: #b45309; }
 
+
+    .admin-stats-page .student-row-link {
+        color: inherit;
+        text-decoration: none;
+        display: block;
+        width: 100%;
+    }
+
+    .admin-stats-page .student-link-cell {
+        color: #2563eb;
+        font-weight: 700;
+    }
+
     .admin-stats-page .student-summary {
         display: flex;
         gap: 0.5rem;
@@ -470,9 +483,9 @@
                             </thead>
                             <tbody>
                                 {% for student in filtered_students %}
-                                <tr>
-                                    <td>{{ loop.index }}</td>
-                                    <td>{{ student.username }}</td>
+                                <tr onclick="window.location='{{ url_for('admin_student_details', user_id=student.id) }}'" style="cursor:pointer;">
+                                    <td class="student-link-cell">{{ loop.index }}</td>
+                                    <td class="student-link-cell">{{ student.username }}</td>
                                     <td>{{ student.name or '-' }}</td>
                                     <td>{{ student.major }}</td>
                                     <td>{{ student.class_name }}</td>
