@@ -8,6 +8,7 @@ import random
 import re
 import time
 import uuid
+from decimal import Decimal
 from datetime import datetime
 from functools import wraps
 from math import pi, log
@@ -1671,11 +1672,16 @@ def get_students_by_completion(completed=True, limit=None, offset=0):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
-    query = """
+    if completed:
+        order_clause = "ORDER BY completed_at DESC, total_score DESC, total_time ASC"
+    else:
+        order_clause = "ORDER BY total_score DESC, total_time ASC, created_at ASC"
+
+    query = f"""
         SELECT id, username, name, major, class_name, completed_all, completed_at, total_score, total_time, created_at
         FROM users 
         WHERE completed_all = %s
-        ORDER BY completed_at DESC, total_score DESC
+        {order_clause}
     """
     params = [completed]
 
@@ -2647,11 +2653,11 @@ def admin_dashboard():
     stats = get_completion_stats()
     total_problems = get_total_problem_count()
 
-    # 获取最近完成的学生
-    recent_completions = get_students_by_completion(completed=True, limit=10)
+    # 获取最近完成的学生（按最新完成时间排序，展示全部，前端默认显示 5 位）
+    recent_completions = get_students_by_completion(completed=True)
 
-    # 获取需要督促的学生
-    incomplete_students = get_students_by_completion(completed=False, limit=10)
+    # 获取需要督促的学生（优先展示完成度最高、同进度下用时更短的学生）
+    incomplete_students = get_students_by_completion(completed=False)
 
     return render_template('admin_dashboard.html',
                            stats=stats,
@@ -3141,6 +3147,50 @@ def admin_students_by_status(status):
 
 
 # 管理员功能 - 学生详细答题情况
+def infer_knowledge_label(template_name):
+    """根据题目名称推断知识点标签。"""
+    name = (template_name or '').strip()
+    rules = [
+        ('电磁学', ['电磁', '磁场', '磁铁', '感应', '线圈', '电流', '电压', '电阻', '电荷', '安培', '法拉第']),
+        ('力学', ['力学', '受力', '牛顿', '加速度', '速度', '位移', '动量', '机械', '弹簧', '摩擦', '圆周', '功', '能量']),
+        ('热学', ['热', '温度', '内能', '热量', '压强', '气体']),
+        ('光学', ['光', '透镜', '折射', '反射', '干涉', '衍射']),
+        ('振动与波', ['波', '振动', '频率', '波长', '声', '共振']),
+    ]
+    for label, keywords in rules:
+        if any(keyword in name for keyword in keywords):
+            return label
+    return '综合分析'
+
+
+def build_student_insight_summary(problem_stats, knowledge_stats, error_type_stats):
+    """生成学生表现自动结论。"""
+    solved = [stat for stat in problem_stats if stat.get('is_completed')]
+    total = len(problem_stats)
+    solved_count = len(solved)
+
+    summary = []
+    if total:
+        summary.append(f'共完成 {solved_count}/{total} 道题，整体完成率 {round(solved_count / total * 100, 1)}%。')
+
+    comparable = [item for item in knowledge_stats if item.get('attempted_templates')]
+    if comparable:
+        best = max(comparable, key=lambda item: (item.get('correct_rate', 0), item.get('avg_attempts', 999) * -1))
+        weakest = min(comparable, key=lambda item: (item.get('correct_rate', 0), -(item.get('avg_attempts', 0))))
+        if best.get('label') == weakest.get('label'):
+            summary.append(f"当前题库主要集中在{best['label']}，该知识点正确率为 {best.get('correct_rate', 0):.1f}%。")
+        else:
+            summary.append(f"你在 {best['label']} 题上表现最好，正确率 {best.get('correct_rate', 0):.1f}%；{weakest['label']} 仍是当前薄弱点，正确率 {weakest.get('correct_rate', 0):.1f}%。")
+
+    top_error = next((item for item in error_type_stats if item.get('error_type') and item.get('error_type') != '正确'), None)
+    if top_error and top_error.get('count'):
+        summary.append(f"最近错题主要集中在“{top_error['error_type']}”类型，共出现 {top_error['count']} 次，建议优先复盘对应步骤。")
+
+    if not summary:
+        summary.append('当前作答数据较少，继续完成更多题目后可生成更稳定的学习结论。')
+
+    return ' '.join(summary)
+
 @app.route('/admin/student/<int:user_id>/details')
 @login_required
 def admin_student_details(user_id):
@@ -3216,6 +3266,9 @@ def admin_student_details(user_id):
         """, (user_id,))
 
         problem_stats = cursor.fetchall()
+        for stat in problem_stats:
+            stat['knowledge_label'] = infer_knowledge_label(stat.get('template_name'))
+            stat['correct_rate'] = 100.0 if stat.get('is_completed') else 0.0
         completed_problems_count = sum(1 for stat in problem_stats if stat.get('is_completed'))
 
         # 计算总体统计
@@ -3242,6 +3295,82 @@ def admin_student_details(user_id):
         overall_stats.setdefault('total_attempts', 0)
         overall_stats.setdefault('total_correct', 0)
         overall_stats.setdefault('overall_avg_time', 0)
+        if isinstance(overall_stats.get('overall_avg_time'), Decimal):
+            overall_stats['overall_avg_time'] = float(overall_stats['overall_avg_time'])
+
+        trend_points = []
+        cumulative_correct = 0
+        for index, stat in enumerate(problem_stats, start=1):
+            cumulative_correct += 1 if stat.get('is_completed') else 0
+            trend_points.append({
+                'label': f"第{get_display_number(stat.get('template_id'))}题",
+                'short_label': str(get_display_number(stat.get('template_id'))),
+                'correct_rate': round((cumulative_correct / index) * 100, 1),
+                'attempts': stat.get('total_attempts') or 0,
+                'completed': bool(stat.get('is_completed'))
+            })
+
+        knowledge_map = {}
+        for stat in problem_stats:
+            label = stat['knowledge_label']
+            bucket = knowledge_map.setdefault(label, {
+                'label': label,
+                'total_templates': 0,
+                'attempted_templates': 0,
+                'completed_templates': 0,
+                'total_attempts': 0,
+                'sum_attempts_to_correct': 0,
+                'attempts_to_correct_count': 0,
+            })
+            bucket['total_templates'] += 1
+            if (stat.get('total_attempts') or 0) > 0:
+                bucket['attempted_templates'] += 1
+            if stat.get('is_completed'):
+                bucket['completed_templates'] += 1
+            bucket['total_attempts'] += stat.get('total_attempts') or 0
+            if stat.get('attempts_to_correct'):
+                bucket['sum_attempts_to_correct'] += stat['attempts_to_correct']
+                bucket['attempts_to_correct_count'] += 1
+
+        knowledge_stats = []
+        for item in knowledge_map.values():
+            attempted = item['attempted_templates']
+            completed = item['completed_templates']
+            item['correct_rate'] = round((completed / attempted) * 100, 1) if attempted else 0
+            item['avg_attempts'] = round(item['sum_attempts_to_correct'] / item['attempts_to_correct_count'], 1) if item['attempts_to_correct_count'] else None
+            knowledge_stats.append(item)
+        knowledge_stats.sort(key=lambda item: (-item['correct_rate'], -item['completed_templates'], item['label']))
+
+        cursor.execute("""
+            SELECT COALESCE(NULLIF(TRIM(error_type), ''), '未知') AS error_type, COUNT(*) AS count
+            FROM user_responses
+            WHERE user_id = %s AND is_correct = FALSE
+            GROUP BY COALESCE(NULLIF(TRIM(error_type), ''), '未知')
+            ORDER BY count DESC, error_type ASC
+        """, (user_id,))
+        error_type_stats = cursor.fetchall()
+
+        cursor.execute("""
+            SELECT
+                t.id AS template_id,
+                t.template_name,
+                COUNT(*) AS wrong_count,
+                MAX(ur.response_time) AS last_wrong_time,
+                SUM(CASE WHEN ur.error_type = '计算误差' THEN 1 ELSE 0 END) AS calc_error_count,
+                SUM(CASE WHEN ur.error_type = '单位错误' THEN 1 ELSE 0 END) AS unit_error_count,
+                SUM(CASE WHEN ur.error_type = '格式错误' THEN 1 ELSE 0 END) AS format_error_count
+            FROM user_responses ur
+            JOIN problem_templates t ON t.id = ur.template_id
+            WHERE ur.user_id = %s AND ur.is_correct = FALSE
+            GROUP BY t.id, t.template_name
+            ORDER BY wrong_count DESC, t.id ASC
+            LIMIT 6
+        """, (user_id,))
+        wrong_problem_stats = cursor.fetchall()
+        for item in wrong_problem_stats:
+            item['knowledge_label'] = infer_knowledge_label(item.get('template_name'))
+
+        insight_summary = build_student_insight_summary(problem_stats, knowledge_stats, error_type_stats)
 
         return render_template('admin_student_details.html',
                                student=student,
@@ -3249,9 +3378,13 @@ def admin_student_details(user_id):
                                overall_stats=overall_stats,
                                completed_problems_count=completed_problems_count,
                                total_problems=total_problems,
+                               trend_points=trend_points,
+                               knowledge_stats=knowledge_stats,
+                               error_type_stats=error_type_stats,
+                               wrong_problem_stats=wrong_problem_stats,
+                               insight_summary=insight_summary,
                                username=session['username'],
                                get_display_number=get_display_number)  # 传递函数到模板
-
     except Exception as e:
         print(f"获取学生详情失败: {str(e)}")
         import traceback
@@ -3368,16 +3501,23 @@ def admin_all_problems_stats():
             ORDER BY t.id
         """, params)
 
-        problem_stats = cursor.fetchall()
+        problem_stats_result = cursor.fetchall()
+        problem_stats = []
 
-        # 计算首次正确率
-        for stat in problem_stats:
+        # 转换problem_stats中的Decimal类型，避免模板中tojson序列化失败
+        for raw_stat in problem_stats_result:
+            stat = dict(raw_stat)
+            for key, value in stat.items():
+                if isinstance(value, Decimal):
+                    stat[key] = float(value)
+
             participants = stat.get('participant_students') or 0
             first_correct_students = stat.get('first_correct_students') or 0
             if participants > 0:
                 stat['first_correct_rate'] = round((first_correct_students / participants) * 100, 1)
             else:
                 stat['first_correct_rate'] = 0
+            problem_stats.append(stat)
 
         # 获取筛选后的学生总数（排除管理员）
         student_filters = ["u.username != 'admin'"]
@@ -3471,6 +3611,9 @@ def admin_all_problems_stats():
                AND correct_attempt.attempt_count = ups.first_correct_attempt_no
         """, params)
         overall_stats = cursor.fetchone() or {}
+        for key, value in list(overall_stats.items()):
+            if isinstance(value, Decimal):
+                overall_stats[key] = float(value)
         overall_stats.setdefault('total_attempts', 0)
         overall_stats.setdefault('first_correct_students', 0)
         overall_stats.setdefault('final_correct_students', 0)
