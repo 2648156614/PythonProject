@@ -324,7 +324,7 @@
                     <h2 class="hero-title">题目统计 · 全量学生答题总览</h2>
                     <p class="hero-subtitle">筛选结果、核心指标、动态图表与学生清单集中展示，提升分析效率并减少页面滚动。</p>
                 </div>
-                <a href="{{ url_for('admin_dashboard') }}" class="btn btn-light align-self-start">
+                <a href="{{ url_for('admin_dashboard', paper_id=selected_paper_id) }}" class="btn btn-light align-self-start">
                     <i class="bi bi-arrow-left"></i> 返回管理后台
                 </a>
             </div>
@@ -351,7 +351,7 @@
                     <label class="form-label">筛选操作</label>
                     <div class="filter-actions">
                         <button type="submit" class="btn btn-primary"><i class="bi bi-funnel"></i> 应用筛选</button>
-                        <a href="{{ url_for('admin_all_problems_stats') }}" class="btn btn-outline-light">重置</a>
+                        <a href="{{ url_for('admin_all_problems_stats', paper_id=selected_paper_id) }}" class="btn btn-outline-light">重置</a>
                     </div>
                 </div>
             </form>
