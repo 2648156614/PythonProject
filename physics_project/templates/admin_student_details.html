@@ -145,8 +145,8 @@
             </div>
         </div>
         <div class="d-flex gap-2 flex-wrap align-self-start">
-            <a href="{{ url_for('admin_all_problems_stats') }}" class="btn btn-light"><i class="bi bi-people"></i> 返回学生统计</a>
-            <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-light"><i class="bi bi-arrow-left"></i> 返回后台</a>
+            <a href="{{ url_for('admin_all_problems_stats', paper_id=selected_paper_id) }}" class="btn btn-light"><i class="bi bi-people"></i> 返回学生统计</a>
+            <a href="{{ url_for('admin_dashboard', paper_id=selected_paper_id) }}" class="btn btn-outline-light"><i class="bi bi-arrow-left"></i> 返回后台</a>
         </div>
     </section>
 

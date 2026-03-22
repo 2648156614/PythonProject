@@ -63,6 +63,187 @@ DEFAULT_AVATAR = 'default.svg'
 DEFAULT_PASSWORD = '123456'
 
 
+DEFAULT_EXAM_PAPER_NAME = '默认题库'
+
+
+def get_or_create_default_exam_paper(cursor):
+    """获取或创建默认题库。"""
+    cursor.execute("SELECT id FROM exam_papers WHERE name = %s LIMIT 1", (DEFAULT_EXAM_PAPER_NAME,))
+    row = cursor.fetchone()
+    if row:
+        return row['id'] if isinstance(row, dict) else row[0]
+
+    cursor.execute(
+        """
+        INSERT INTO exam_papers (name, description, is_enabled)
+        VALUES (%s, %s, TRUE)
+        """,
+        (DEFAULT_EXAM_PAPER_NAME, '系统默认题库')
+    )
+    return cursor.lastrowid
+
+
+def get_exam_papers(include_disabled=True):
+    conn = get_db_connection()
+    if not conn:
+        return []
+    cursor = conn.cursor(dictionary=True)
+    try:
+        query = "SELECT id, name, description, is_enabled, created_at FROM exam_papers"
+        params = []
+        if not include_disabled:
+            query += " WHERE is_enabled = TRUE"
+        query += " ORDER BY created_at DESC, id DESC"
+        cursor.execute(query, params)
+        return cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def get_enabled_exam_papers():
+    return get_exam_papers(include_disabled=False)
+
+
+def get_exam_paper_by_id(paper_id):
+    if not paper_id:
+        return None
+    conn = get_db_connection()
+    if not conn:
+        return None
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT id, name, description, is_enabled, created_at FROM exam_papers WHERE id = %s", (paper_id,))
+        return cursor.fetchone()
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def resolve_selected_exam_paper_id(preferred_paper_id=None, include_disabled_for_admin=False):
+    """解析当前用户选中的题库。"""
+    enabled_papers = get_enabled_exam_papers()
+    enabled_ids = {paper['id'] for paper in enabled_papers}
+    paper_id = preferred_paper_id or session.get('selected_exam_paper_id')
+
+    if paper_id:
+        try:
+            paper_id = int(paper_id)
+        except (TypeError, ValueError):
+            paper_id = None
+
+    if paper_id and paper_id in enabled_ids:
+        session['selected_exam_paper_id'] = paper_id
+        return paper_id
+
+    if paper_id and include_disabled_for_admin and session.get('username') == 'admin':
+        paper = get_exam_paper_by_id(paper_id)
+        if paper:
+            session['selected_exam_paper_id'] = paper['id']
+            return paper['id']
+
+    if enabled_papers:
+        session['selected_exam_paper_id'] = enabled_papers[0]['id']
+        return enabled_papers[0]['id']
+
+    session.pop('selected_exam_paper_id', None)
+    return None
+
+
+def get_selected_exam_paper(include_disabled_for_admin=False):
+    paper_id = resolve_selected_exam_paper_id(include_disabled_for_admin=include_disabled_for_admin)
+    if not paper_id:
+        return None
+    return get_exam_paper_by_id(paper_id)
+
+
+def get_problem_templates_by_paper(paper_id=None, enabled_only=True):
+    """获取题目模板列表，可按题库和启用状态过滤。"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    cursor = conn.cursor(dictionary=True)
+    try:
+        query = ["SELECT id, template_name, paper_id FROM problem_templates"]
+        conditions = []
+        params = []
+
+        if paper_id is not None:
+            conditions.append("paper_id = %s")
+            params.append(paper_id)
+        elif enabled_only:
+            enabled_paper_ids = get_enabled_exam_paper_ids()
+            if not enabled_paper_ids:
+                return []
+            placeholders = ', '.join(['%s'] * len(enabled_paper_ids))
+            conditions.append(f"paper_id IN ({placeholders})")
+            params.extend(enabled_paper_ids)
+
+        if conditions:
+            query.append("WHERE " + " AND ".join(conditions))
+        query.append("ORDER BY id")
+        cursor.execute(" ".join(query), params)
+        return cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def get_enabled_exam_paper_ids():
+    """返回所有已开启题库 ID。"""
+    return [paper['id'] for paper in get_enabled_exam_papers()]
+
+
+def build_enabled_paper_filter(alias, selected_paper_id=None):
+    """构建仅统计已开启题库的 SQL 过滤条件。"""
+    enabled_paper_ids = get_enabled_exam_paper_ids()
+
+    if selected_paper_id is not None:
+        if selected_paper_id in enabled_paper_ids:
+            return f" AND {alias}.paper_id = %s", [selected_paper_id]
+        return " AND 1 = 0", []
+
+    if not enabled_paper_ids:
+        return " AND 1 = 0", []
+
+    placeholders = ', '.join(['%s'] * len(enabled_paper_ids))
+    return f" AND {alias}.paper_id IN ({placeholders})", enabled_paper_ids
+
+
+def get_exam_paper_stats(paper_id):
+    conn = get_db_connection()
+    if not conn:
+        return {'completed_count': 0, 'completed_all': False, 'total_time': 0}
+    cursor = conn.cursor(dictionary=True)
+    try:
+        total_problems = get_total_problem_count(paper_id)
+        cursor.execute(
+            """
+            SELECT COUNT(DISTINCT template_id) AS completed_count, COALESCE(SUM(time_taken), 0) AS total_time
+            FROM user_responses
+            WHERE user_id = %s AND paper_id = %s AND is_correct = TRUE
+              AND (template_id, attempt_count) IN (
+                  SELECT template_id, attempt_count
+                  FROM user_responses
+                  WHERE user_id = %s AND paper_id = %s
+                  GROUP BY template_id, attempt_count
+                  HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+              )
+            """,
+            (session['user_id'], paper_id, session['user_id'], paper_id)
+        )
+        row = cursor.fetchone() or {}
+        completed_count = int(row.get('completed_count') or 0)
+        return {
+            'completed_count': completed_count,
+            'completed_all': total_problems > 0 and completed_count >= total_problems,
+            'total_time': float(row.get('total_time') or 0),
+        }
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def allowed_file(filename):
     """检查文件扩展名是否允许"""
     return '.' in filename and \
@@ -410,32 +591,25 @@ def get_scientific_hint(correct_answers):
         return f"正确答案: {', '.join(parts)}"
 
 
-def get_problem_display_info():
-    """获取题目的显示信息（处理删除后的序号不连续问题）"""
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+def get_problem_display_info(paper_id=None, enabled_only=True):
+    """获取题目的显示信息（支持按题库隔离显示序号）。"""
+    templates = get_problem_templates_by_paper(paper_id=paper_id, enabled_only=enabled_only)
 
-    # 获取所有有效的题目模板，按ID排序
-    cursor.execute("SELECT id, template_name FROM problem_templates ORDER BY id")
-    templates = cursor.fetchall()
-
-    # 创建显示序号映射
     display_mapping = {}
     for display_number, template in enumerate(templates, 1):
         display_mapping[template['id']] = {
             'display_number': display_number,
             'template_name': template['template_name'],
-            'actual_id': template['id']
+            'actual_id': template['id'],
+            'paper_id': template.get('paper_id')
         }
 
-    cursor.close()
-    conn.close()
     return display_mapping
 
 
-def build_display_to_actual_map():
+def build_display_to_actual_map(paper_id=None):
     """生成显示序号到实际ID的映射，便于前端查找"""
-    mapping = get_problem_display_info()
+    mapping = get_problem_display_info(paper_id)
     display_to_actual = {}
 
     for actual_id, info in mapping.items():
@@ -445,17 +619,17 @@ def build_display_to_actual_map():
     return display_to_actual
 
 
-def get_display_number(actual_id):
+def get_display_number(actual_id, paper_id=None):
     """根据实际ID获取显示序号"""
-    mapping = get_problem_display_info()
+    mapping = get_problem_display_info(paper_id)
     if actual_id in mapping:
         return mapping[actual_id]['display_number']
     return actual_id  # 回退到实际ID
 
 
-def get_actual_id(display_number):
+def get_actual_id(display_number, paper_id=None):
     """根据显示序号获取实际ID"""
-    mapping = get_problem_display_info()
+    mapping = get_problem_display_info(paper_id)
     for actual_id, info in mapping.items():
         if info['display_number'] == display_number:
             return actual_id
@@ -502,29 +676,44 @@ def get_latest_full_correct_attempt(cursor, user_id, template_id):
     return cursor.fetchone()
 
 
-def is_problem_completed(user_id, template_id):
+def is_problem_completed(user_id, template_id, paper_id=None):
     """检查指定题目是否已被用户正确完成"""
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
     try:
-        return has_full_correct_attempt(cursor, user_id, template_id)
+        if paper_id is None:
+            return has_full_correct_attempt(cursor, user_id, template_id)
+        cursor.execute("""
+            SELECT attempt_count
+            FROM user_responses
+            WHERE user_id = %s AND template_id = %s AND paper_id = %s
+            GROUP BY attempt_count
+            HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+            LIMIT 1
+        """, (user_id, template_id, paper_id))
+        return cursor.fetchone() is not None
     finally:
         cursor.close()
         conn.close()
 
 
-def get_latest_attempt_count(user_id, template_id):
+def get_latest_attempt_count(user_id, template_id, paper_id=None):
     """获取用户在某题上的最大 attempt_count，避免会话重置导致编号冲突"""
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
     try:
-        cursor.execute("""
+        query = """
             SELECT COALESCE(MAX(attempt_count), 0) AS latest_attempt_count
             FROM user_responses
             WHERE user_id = %s AND template_id = %s
-        """, (user_id, template_id))
+        """
+        params = [user_id, template_id]
+        if paper_id is not None:
+            query += " AND paper_id = %s"
+            params.append(paper_id)
+        cursor.execute(query, params)
         row = cursor.fetchone() or {}
         return int(row.get('latest_attempt_count') or 0)
     finally:
@@ -532,10 +721,29 @@ def get_latest_attempt_count(user_id, template_id):
         conn.close()
 
 
-def get_total_problem_count():
-    """动态获取题目总数"""
-    mapping = get_problem_display_info()
-    return len(mapping)
+def get_total_problem_count(paper_id=None):
+    """动态获取题目总数（仅统计已开启题库）。"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        enabled_paper_ids = get_enabled_exam_paper_ids()
+        if paper_id is not None:
+            if paper_id not in enabled_paper_ids:
+                return 0
+            cursor.execute("SELECT COUNT(*) FROM problem_templates WHERE paper_id = %s", (paper_id,))
+        else:
+            if not enabled_paper_ids:
+                return 0
+            placeholders = ', '.join(['%s'] * len(enabled_paper_ids))
+            cursor.execute(
+                f"SELECT COUNT(*) FROM problem_templates WHERE paper_id IN ({placeholders})",
+                enabled_paper_ids
+            )
+        row = cursor.fetchone()
+        return int(row[0] if row else 0)
+    finally:
+        cursor.close()
+        conn.close()
 
 
 def generate_problem_from_template(template_id, max_attempts=10):
@@ -934,7 +1142,7 @@ def classify_error_type(user_answer, correct_answer, is_correct):
     return '精度或单位偏差'
 
 
-def save_user_response(user_id, template_id, problem_text, user_answers, correct_answers, is_correct_list,
+def save_user_response(user_id, template_id, paper_id, problem_text, user_answers, correct_answers, is_correct_list,
                        attempt_count, time_taken, error_types=None):
     """保存用户答题记录（支持多答案）"""
     print(f"\n=== 保存答题记录开始 ===")
@@ -1063,6 +1271,41 @@ def repair_database():
             cursor.execute("ALTER TABLE user_responses ADD COLUMN template_id INT NOT NULL AFTER user_id")
             print("已添加 template_id 列")
 
+        cursor.execute("SHOW TABLES LIKE 'exam_papers'")
+        if not cursor.fetchone():
+            cursor.execute("""
+                CREATE TABLE exam_papers (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    name VARCHAR(100) NOT NULL UNIQUE,
+                    description TEXT DEFAULT NULL,
+                    is_enabled BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            print("已创建 exam_papers 表")
+
+        cursor = conn.cursor(dictionary=True)
+        default_paper_id = get_or_create_default_exam_paper(cursor)
+        cursor.close()
+        cursor = conn.cursor()
+
+        cursor.execute("SHOW COLUMNS FROM problem_templates LIKE 'paper_id'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE problem_templates ADD COLUMN paper_id INT DEFAULT NULL")
+            print("已添加 problem_templates.paper_id 列")
+        cursor.execute("UPDATE problem_templates SET paper_id = %s WHERE paper_id IS NULL", (default_paper_id,))
+
+        cursor.execute("SHOW COLUMNS FROM user_responses LIKE 'paper_id'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE user_responses ADD COLUMN paper_id INT DEFAULT NULL AFTER answer_index")
+            print("已添加 user_responses.paper_id 列")
+        cursor.execute("""
+            UPDATE user_responses ur
+            JOIN problem_templates pt ON pt.id = ur.template_id
+            SET ur.paper_id = pt.paper_id
+            WHERE ur.paper_id IS NULL
+        """)
+
         cursor.execute("SHOW COLUMNS FROM user_responses LIKE 'error_type'")
         if not cursor.fetchone():
             cursor.execute("ALTER TABLE user_responses ADD COLUMN error_type VARCHAR(50) DEFAULT '未知' AFTER is_correct")
@@ -1129,6 +1372,18 @@ def initialize_database():
     )
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS exam_papers (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL UNIQUE,
+        description TEXT DEFAULT NULL,
+        is_enabled BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    default_paper_id = get_or_create_default_exam_paper(cursor)
+
     # 创建问题模板表（如果不存在）- 添加图片文件名字段和答案单位字段
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS problem_templates (
@@ -1140,7 +1395,9 @@ def initialize_database():
         answer_count INT DEFAULT 1,
         answer_units TEXT,  -- 新增：答案单位字段
         difficulty VARCHAR(20) DEFAULT 'medium',
-        image_filename VARCHAR(255) NULL
+        image_filename VARCHAR(255) NULL,
+        paper_id INT DEFAULT NULL,
+        FOREIGN KEY (paper_id) REFERENCES exam_papers(id)
     )
     """)
 
@@ -1159,8 +1416,10 @@ def initialize_database():
         time_taken FLOAT NOT NULL,
         response_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         answer_index INT DEFAULT 0,
+        paper_id INT DEFAULT NULL,
         FOREIGN KEY (user_id) REFERENCES users(id),
-        FOREIGN KEY (template_id) REFERENCES problem_templates(id)
+        FOREIGN KEY (template_id) REFERENCES problem_templates(id),
+        FOREIGN KEY (paper_id) REFERENCES exam_papers(id)
     )
     """)
 
@@ -1380,8 +1639,8 @@ def initialize_database():
             cursor.execute("""
                 INSERT INTO problem_templates 
                 (template_name, problem_text, variables, solution_formula, 
-                 answer_count, answer_units, image_filename)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                 answer_count, answer_units, image_filename, paper_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 template['name'],
                 problem_text,
@@ -1389,7 +1648,8 @@ def initialize_database():
                 template['formula'],
                 template['answer_count'],
                 template.get('answer_units', ''),
-                template.get('image_filename')
+                template.get('image_filename'),
+                default_paper_id
             ))
             print(f"✅ 插入题目: {template['name']}, 答案单位: {template.get('answer_units', '无')}")
 
@@ -1434,6 +1694,9 @@ def ensure_user_columns():
         if 'current_session_token' not in existing_columns:
             cursor.execute("ALTER TABLE users ADD COLUMN current_session_token VARCHAR(64) DEFAULT NULL AFTER password_changed")
             print("已添加 current_session_token 列")
+        if 'selected_paper_id' not in existing_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN selected_paper_id INT DEFAULT NULL AFTER current_session_token")
+            print("已添加 selected_paper_id 列")
         conn.commit()
     except mysql.connector.Error as err:
         print(f"更新用户表失败: {err}")
@@ -1538,7 +1801,7 @@ def update_user_completion_status(user_id):
 
     try:
         # 动态获取题目总数
-        total_problems = get_total_problem_count()
+        total_problems = get_total_problem_count(selected_paper_id)
 
         # 检查是否完成所有题目
         cursor.execute("""
@@ -1546,11 +1809,11 @@ def update_user_completion_status(user_id):
             FROM (
                 SELECT template_id, attempt_count
                 FROM user_responses
-                WHERE user_id = %s
+                WHERE user_id = %s AND paper_id = %s
                 GROUP BY template_id, attempt_count
                 HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
             ) as completed_attempts
-        """, (user_id,))
+        """, (user_id, selected_paper_id))
         completed_count = cursor.fetchone()['completed_count']
 
         # 计算总分和总用时（仅统计完全正确的尝试）
@@ -1562,12 +1825,12 @@ def update_user_completion_status(user_id):
             WHERE (user_id, template_id, attempt_count) IN (
                 SELECT user_id, template_id, attempt_count
                 FROM user_responses
-                WHERE user_id = %s
+                WHERE user_id = %s AND paper_id = %s
                 GROUP BY template_id, attempt_count
                 HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
             )
             AND is_correct = TRUE
-        """, (user_id,))
+        """, (user_id, selected_paper_id))
         stats = cursor.fetchone()
 
         completed_all = completed_count >= total_problems  # 使用动态总数
@@ -1621,111 +1884,144 @@ def update_all_users_completion_status():
     return len(users)
 
 
-def get_completion_stats():
-    """获取完成情况统计"""
+def get_completion_stats(paper_id=None):
+    """获取完成情况统计（仅统计已开启题库）。"""
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
+    total_problems = get_total_problem_count(paper_id)
+    response_filter, response_params = build_enabled_paper_filter('ur', paper_id)
+    response_filter_ur2, response_params_ur2 = build_enabled_paper_filter('ur2', paper_id)
 
-    # 基础统计
-    cursor.execute("""
-        SELECT 
-            COUNT(*) as total_students,
-            SUM(completed_all) as completed_count,
-            ROUND(SUM(completed_all) / COUNT(*) * 100, 1) as completion_rate,
-            AVG(total_score) as avg_score,
-            AVG(total_time) as avg_time
-        FROM users
-    """)
-    stats = cursor.fetchone()
+    cursor.execute(f"""
+        WITH completed AS (
+            SELECT user_id, COUNT(DISTINCT template_id) AS completed_count, COALESCE(SUM(time_taken), 0) AS total_time
+            FROM user_responses ur
+            WHERE ur.is_correct = TRUE {response_filter}
+              AND (ur.user_id, ur.template_id, ur.attempt_count) IN (
+                SELECT user_id, template_id, attempt_count
+                FROM user_responses ur2
+                WHERE ur2.is_correct IN (TRUE, FALSE) {response_filter_ur2}
+                GROUP BY user_id, template_id, attempt_count
+                HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+              )
+            GROUP BY user_id
+        )
+        SELECT
+            COUNT(*) AS total_students,
+            SUM(CASE WHEN COALESCE(c.completed_count, 0) >= %s THEN 1 ELSE 0 END) AS completed_count,
+            ROUND(SUM(CASE WHEN COALESCE(c.completed_count, 0) >= %s THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) AS completion_rate,
+            AVG(COALESCE(c.completed_count, 0)) AS avg_score,
+            AVG(COALESCE(c.total_time, 0)) AS avg_time
+        FROM users u
+        LEFT JOIN completed c ON c.user_id = u.id
+        WHERE u.username != 'admin'
+    """, response_params + response_params_ur2 + [total_problems, total_problems])
+    stats = cursor.fetchone() or {}
 
-    # 今日完成情况
-    cursor.execute("""
-        SELECT COUNT(*) as today_completions
-        FROM users 
-        WHERE completed_all = TRUE 
-        AND DATE(completed_at) = CURDATE()
-    """)
-    today_stats = cursor.fetchone()
-
-    # 成绩排名
-    cursor.execute("""
-        SELECT username, name, total_score, total_time, completed_at
-        FROM users 
-        WHERE completed_all = TRUE 
-        ORDER BY total_score DESC, total_time ASC
-        LIMIT 10
-    """)
-    top_students = cursor.fetchall()
-
+    cursor.execute(f"""
+        WITH completed AS (
+            SELECT user_id, COUNT(DISTINCT template_id) AS completed_count
+            FROM user_responses ur
+            WHERE ur.is_correct = TRUE {response_filter}
+              AND (ur.user_id, ur.template_id, ur.attempt_count) IN (
+                SELECT user_id, template_id, attempt_count
+                FROM user_responses ur2
+                WHERE ur2.is_correct IN (TRUE, FALSE) {response_filter_ur2}
+                GROUP BY user_id, template_id, attempt_count
+                HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+              )
+            GROUP BY user_id
+        )
+        SELECT COUNT(*) AS today_completions
+        FROM users u
+        LEFT JOIN completed c ON c.user_id = u.id
+        WHERE u.username != 'admin' AND COALESCE(c.completed_count, 0) >= %s AND DATE(u.completed_at) = CURDATE()
+    """, response_params + response_params_ur2 + [total_problems])
+    today_stats = cursor.fetchone() or {}
     cursor.close()
     conn.close()
-
-    return {
-        'stats': stats,
-        'today_stats': today_stats,
-        'top_students': top_students
-    }
+    return {'stats': stats, 'today_stats': today_stats, 'top_students': []}
 
 
-def get_students_by_completion(completed=True, limit=None, offset=0):
-    """按完成状态获取学生列表"""
+def get_students_by_completion(completed=True, limit=None, offset=0, paper_id=None):
+    """按完成状态获取学生列表（仅统计已开启题库）。"""
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
-
-    if completed:
-        order_clause = "ORDER BY completed_at DESC, total_score DESC, total_time ASC"
-    else:
-        order_clause = "ORDER BY total_score DESC, total_time ASC, created_at ASC"
-
+    total_problems = get_total_problem_count(paper_id)
+    response_filter, response_params = build_enabled_paper_filter('ur', paper_id)
+    response_filter_ur2, response_params_ur2 = build_enabled_paper_filter('ur2', paper_id)
     query = f"""
-        SELECT id, username, name, major, class_name, completed_all, completed_at, total_score, total_time, created_at
-        FROM users 
-        WHERE completed_all = %s
-        {order_clause}
+        WITH completed AS (
+            SELECT user_id, COUNT(DISTINCT template_id) AS total_score, COALESCE(SUM(time_taken), 0) AS total_time
+            FROM user_responses ur
+            WHERE ur.is_correct = TRUE {response_filter}
+              AND (ur.user_id, ur.template_id, ur.attempt_count) IN (
+                SELECT user_id, template_id, attempt_count
+                FROM user_responses ur2
+                WHERE 1=1 {response_filter_ur2}
+                GROUP BY user_id, template_id, attempt_count
+                HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+              )
+            GROUP BY user_id
+        )
+        SELECT u.id, u.username, u.name, u.major, u.class_name,
+               CASE WHEN COALESCE(c.total_score, 0) >= %s AND %s > 0 THEN TRUE ELSE FALSE END AS completed_all,
+               u.completed_at, COALESCE(c.total_score, 0) AS total_score, COALESCE(c.total_time, 0) AS total_time, u.created_at
+        FROM users u
+        LEFT JOIN completed c ON c.user_id = u.id
+        WHERE u.username != 'admin'
+        HAVING completed_all = %s
+        ORDER BY total_score DESC, total_time ASC, created_at ASC
     """
-    params = [completed]
-
+    full_params = response_params + response_params_ur2 + [total_problems, total_problems, completed]
     if limit:
         query += " LIMIT %s OFFSET %s"
-        params.extend([limit, offset])
-
-    cursor.execute(query, params)
+        full_params.extend([limit, offset])
+    cursor.execute(query, full_params)
     students = cursor.fetchall()
     cursor.close()
     conn.close()
-
     return students
-
-
-def get_class_comparison_stats():
+def get_class_comparison_stats(paper_id=None):
     """获取班级对比统计数据（用于管理端分析）"""
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
-
-    cursor.execute("""
-        SELECT
-            COALESCE(NULLIF(TRIM(class_name), ''), '未分班') AS class_name,
-            COUNT(*) AS student_count,
-            SUM(CASE WHEN completed_all = TRUE THEN 1 ELSE 0 END) AS completed_count,
-            ROUND(
-                SUM(CASE WHEN completed_all = TRUE THEN 1 ELSE 0 END) / COUNT(*) * 100,
-                1
-            ) AS completion_rate,
-            ROUND(AVG(total_score), 1) AS avg_score,
-            ROUND(AVG(total_time), 1) AS avg_time
-        FROM users
-        WHERE username != 'admin'
-        GROUP BY COALESCE(NULLIF(TRIM(class_name), ''), '未分班')
+    total_problems = get_total_problem_count(paper_id)
+    response_filter = ""
+    params = []
+    if paper_id is not None:
+        response_filter = " AND ur.paper_id = %s"
+        params.append(paper_id)
+    cursor.execute(f"""
+        WITH completed AS (
+            SELECT user_id, COUNT(DISTINCT template_id) AS total_score, COALESCE(SUM(time_taken), 0) AS total_time
+            FROM user_responses ur
+            WHERE ur.is_correct = TRUE {response_filter}
+              AND (ur.user_id, ur.template_id, ur.attempt_count) IN (
+                SELECT user_id, template_id, attempt_count
+                FROM user_responses ur2
+                WHERE 1=1 {response_filter.replace('ur.', 'ur2.')}
+                GROUP BY user_id, template_id, attempt_count
+                HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+              )
+            GROUP BY user_id
+        )
+        SELECT COALESCE(NULLIF(TRIM(u.class_name), ''), '未分班') AS class_name,
+               COUNT(*) AS student_count,
+               SUM(CASE WHEN COALESCE(c.total_score, 0) >= %s AND %s > 0 THEN 1 ELSE 0 END) AS completed_count,
+               ROUND(SUM(CASE WHEN COALESCE(c.total_score, 0) >= %s AND %s > 0 THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) AS completion_rate,
+               ROUND(AVG(COALESCE(c.total_score, 0)), 1) AS avg_score,
+               ROUND(AVG(COALESCE(c.total_time, 0)), 1) AS avg_time
+        FROM users u
+        LEFT JOIN completed c ON c.user_id = u.id
+        WHERE u.username != 'admin'
+        GROUP BY COALESCE(NULLIF(TRIM(u.class_name), ''), '未分班')
         ORDER BY completion_rate DESC, avg_score DESC
-    """)
+    """, params + params + [total_problems, total_problems, total_problems, total_problems])
     class_stats = cursor.fetchall()
-
     cursor.close()
     conn.close()
-
     return class_stats
-
-
 def diagnose_database_issue():
     """诊断数据库问题"""
     print("\n=== 数据库诊断开始 ===")
@@ -1971,58 +2267,58 @@ def dashboard():
     cursor = conn.cursor(dictionary=True)
 
     try:
-        # 获取题目显示映射
-        display_mapping = get_problem_display_info()
+        available_papers = get_enabled_exam_papers()
+        selected_paper_id = resolve_selected_exam_paper_id()
+        selected_paper = get_exam_paper_by_id(selected_paper_id) if selected_paper_id else None
+        has_available_papers = bool(available_papers)
+
+        if not has_available_papers:
+            flash('教师没有布置题目。', 'info')
+        elif session.get('username') != 'admin' and not selected_paper_id:
+            flash('当前暂无可用题库，请联系管理员开启试卷。', 'warning')
+
+        display_mapping = get_problem_display_info(selected_paper_id) if selected_paper_id else {}
         total_problems = len(display_mapping)
+        paper_stats = get_exam_paper_stats(selected_paper_id) if selected_paper_id else {'completed_count': 0, 'completed_all': False, 'total_time': 0}
+        completed_all = paper_stats['completed_all']
+        completed_count = paper_stats['completed_count']
 
-        # 获取用户完成状态
-        cursor.execute("""
-            SELECT 
-                completed_all,
-                total_score as completed_count,
-                total_time
-            FROM users 
-            WHERE id = %s
-        """, (session['user_id'],))
-        user_data = cursor.fetchone()
-
-        if not user_data:
-            flash('用户数据不存在', 'danger')
-            return redirect(url_for('login'))
-
-        completed_all = user_data['completed_all']
-        completed_count = user_data['completed_count'] or 0
-
-        # 动态确定当前应该做的题目（使用显示序号）
         current_display_number = 1
-        if not completed_all:
+        if selected_paper_id and total_problems and not completed_all:
             for display_info in display_mapping.values():
                 actual_id = display_info['actual_id']
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT 1
                     FROM user_responses
-                    WHERE user_id = %s AND template_id = %s
+                    WHERE user_id = %s AND template_id = %s AND paper_id = %s
                     GROUP BY attempt_count
                     HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
                     LIMIT 1
-                """, (session['user_id'], actual_id))
-                result = cursor.fetchone()
-                if not result:
+                    """,
+                    (session['user_id'], actual_id, selected_paper_id)
+                )
+                if not cursor.fetchone():
                     current_display_number = display_info['display_number']
                     break
 
-        # 重置尝试次数
         session.pop('attempt_count', None)
         session.pop('current_problem', None)
 
-        return render_template('dashboard.html',
-                               display_name=session.get('display_name', session.get('username')),
-                               is_admin=session.get('username') == 'admin',
-                               current_problem=current_display_number,  # 使用显示序号
-                               completed_count=completed_count,
-                               completed_all=completed_all,
-                               total_problems=total_problems,
-                               display_mapping=display_mapping)  # 传递映射到模板
+        return render_template(
+            'dashboard.html',
+            display_name=session.get('display_name', session.get('username')),
+            is_admin=session.get('username') == 'admin',
+            current_problem=current_display_number,
+            completed_count=completed_count,
+            completed_all=completed_all,
+            total_problems=total_problems,
+            display_mapping=display_mapping,
+            available_papers=available_papers,
+            selected_paper=selected_paper,
+            selected_paper_id=selected_paper_id,
+            has_available_papers=has_available_papers
+        )
 
     except mysql.connector.Error as err:
         print(f"数据库查询错误: {err}")
@@ -2031,6 +2327,30 @@ def dashboard():
     finally:
         cursor.close()
         conn.close()
+
+
+@app.route('/select_exam_paper', methods=['POST'])
+@login_required
+def select_exam_paper():
+    paper_id = request.form.get('paper_id', type=int)
+    selected = get_exam_paper_by_id(paper_id)
+    if not selected or not selected.get('is_enabled'):
+        flash('所选题库不可用，请重新选择。', 'danger')
+        return redirect(url_for('dashboard'))
+
+    session['selected_exam_paper_id'] = paper_id
+    conn = get_db_connection()
+    if conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute("UPDATE users SET selected_paper_id = %s WHERE id = %s", (paper_id, session['user_id']))
+            conn.commit()
+        finally:
+            cursor.close()
+            conn.close()
+
+    flash(f"已切换到题库：{selected['name']}", 'success')
+    return redirect(url_for('dashboard'))
 
 
 @app.route('/stats')
@@ -2049,6 +2369,7 @@ def statistics():
             return redirect(url_for('dashboard'))
 
         cursor = conn.cursor(dictionary=True)
+        selected_paper_id = resolve_selected_exam_paper_id()
 
         # 总体统计 - 添加错误处理
         cursor.execute("""
@@ -2060,7 +2381,7 @@ def statistics():
                     SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) AS correct_answers,
                     MAX(time_taken) AS time_taken
                 FROM user_responses
-                WHERE user_id = %s
+                WHERE user_id = %s AND paper_id = %s
                 GROUP BY template_id, attempt_count
             )
             SELECT
@@ -2068,7 +2389,7 @@ def statistics():
                 SUM(CASE WHEN correct_answers = total_answers THEN 1 ELSE 0 END) AS correct_count,
                 AVG(time_taken) AS avg_time
             FROM attempt_summary
-        """, (session['user_id'],))
+        """, (session['user_id'], selected_paper_id))
 
         stats_result = cursor.fetchone()
 
@@ -2097,7 +2418,7 @@ def statistics():
                     SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) AS correct_answers,
                     MAX(time_taken) AS time_taken
                 FROM user_responses
-                WHERE user_id = %s
+                WHERE user_id = %s AND paper_id = %s
                 GROUP BY template_id, attempt_count
             )
             SELECT
@@ -2109,7 +2430,7 @@ def statistics():
             JOIN problem_templates t ON s.template_id = t.id
             GROUP BY s.template_id, t.template_name
             ORDER BY t.id
-        """, (session['user_id'],))
+        """, (session['user_id'], selected_paper_id))
 
         problem_stats_result = cursor.fetchall()
 
@@ -2138,7 +2459,8 @@ def statistics():
                                total_count=stats['total_count'],
                                avg_time=round(stats['avg_time'], 1),
                                problem_stats=problem_stats,
-                               username=session['username'])
+                               username=session['username'],
+                           selected_paper_id=selected_paper_id)
 
     except Exception as e:
         print(f"[统计页面错误] {str(e)}")
@@ -2179,6 +2501,7 @@ def history():
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
+        selected_paper_id = resolve_selected_exam_paper_id()
 
         # 获取答题记录
         cursor.execute("""
@@ -2195,9 +2518,9 @@ def history():
                 t.id as template_id
             FROM user_responses r
             JOIN problem_templates t ON r.template_id = t.id
-            WHERE r.user_id = %s
+            WHERE r.user_id = %s AND r.paper_id = %s
             ORDER BY r.response_time DESC
-        """, (session['user_id'],))
+        """, (session['user_id'], selected_paper_id))
 
         responses = cursor.fetchall()
 
@@ -2215,8 +2538,8 @@ def history():
                 SUM(CASE WHEN is_correct = TRUE THEN 1 ELSE 0 END) as correct_count,
                 AVG(time_taken) as avg_time
             FROM user_responses 
-            WHERE user_id = %s
-        """, (session['user_id'],))
+            WHERE user_id = %s AND paper_id = %s
+        """, (session['user_id'], selected_paper_id))
 
         stats_result = cursor.fetchone()
 
@@ -2232,7 +2555,8 @@ def history():
         return render_template('history.html',
                                responses=responses,
                                stats=stats,
-                               username=session['username'])
+                               username=session['username'],
+                               selected_paper_id=selected_paper_id)
 
     except Exception as e:
         print(f"[系统错误] 获取答题历史失败: {str(e)}")
@@ -2240,7 +2564,8 @@ def history():
         return render_template('history.html',
                                responses=[],
                                stats=None,
-                               username=session['username'])
+                               username=session['username'],
+                               selected_paper_id=selected_paper_id)
     finally:
         if conn:
             conn.close()
@@ -2277,7 +2602,8 @@ def refresh_problem(problem_id):
     """刷新单个题目"""
     try:
         # 根据显示序号获取实际ID
-        actual_id = get_actual_id(problem_id)
+        paper_id = resolve_selected_exam_paper_id()
+        actual_id = get_actual_id(problem_id, paper_id)
         if actual_id is None:
             return jsonify({'success': False, 'message': '无效的题目编号'})
 
@@ -2311,14 +2637,16 @@ def problem_ajax(problem_id):
     print(f"显示序号: {problem_id}")
 
     # 根据显示序号获取实际ID
-    actual_id = get_actual_id(problem_id)
+    paper_id = resolve_selected_exam_paper_id()
+    actual_id = get_actual_id(problem_id, paper_id)
     if actual_id is None:
         flash('无效的题目编号', 'danger')
         return redirect(url_for('dashboard'))
 
     # 获取题目显示映射和总数
-    display_mapping = get_problem_display_info()
-    display_to_actual = build_display_to_actual_map()
+    paper_id = resolve_selected_exam_paper_id()
+    display_mapping = get_problem_display_info(paper_id)
+    display_to_actual = build_display_to_actual_map(paper_id)
     total_problems = len(display_mapping)
 
     # 1. 验证题目序号
@@ -2382,7 +2710,7 @@ def problem_ajax(problem_id):
     print(f"当前题目参数: {problem_data['var_values']}")
     print(f"=== Ajax问题页面结束 ===\n")
 
-    is_completed = is_problem_completed(session['user_id'], actual_id)
+    is_completed = is_problem_completed(session['user_id'], actual_id, paper_id)
 
     return render_template('problem_ajax.html',
                            problem=problem_data,
@@ -2409,12 +2737,14 @@ def api_submit(problem_id):
             return jsonify({'success': False, 'message': '无效的请求数据'})
 
         # 根据显示序号获取实际ID
-        actual_id = get_actual_id(problem_id)
+        paper_id = resolve_selected_exam_paper_id()
+        actual_id = get_actual_id(problem_id, paper_id)
         if actual_id is None:
             return jsonify({'success': False, 'message': '无效的题目编号'})
 
         # 获取题目显示映射和总数
-        display_mapping = get_problem_display_info()
+        paper_id = resolve_selected_exam_paper_id()
+        display_mapping = get_problem_display_info(paper_id)
         total_problems = len(display_mapping)
 
         # 验证会话
@@ -2435,7 +2765,7 @@ def api_submit(problem_id):
         problem_text = problem_data['problem_text']
 
         # 如果题目已完成，阻止重复作答
-        if is_problem_completed(user_id, actual_id):
+        if is_problem_completed(user_id, actual_id, paper_id):
             return jsonify({
                 'success': False,
                 'message': '该题已完成，无需重复作答',
@@ -2504,13 +2834,13 @@ def api_submit(problem_id):
         ]
 
         # 计算 attempt_count：基于数据库最大值递增，避免会话重置导致 attempt_count 重复
-        latest_attempt_count = get_latest_attempt_count(user_id, template_id)
+        latest_attempt_count = get_latest_attempt_count(user_id, template_id, paper_id)
         total_attempts = latest_attempt_count + 1
         session['current_problem']['total_attempts'] = total_attempts
 
         # 保存答题记录 - 使用更新后的累计尝试次数
         save_success = save_user_response(
-            user_id, template_id, problem_text, user_answers,
+            user_id, template_id, paper_id, problem_text, user_answers,
             correct_answers, is_correct_list, total_attempts, time_taken, error_types
         )
 
@@ -2649,21 +2979,24 @@ def admin_dashboard():
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
-    # 获取统计数据
-    stats = get_completion_stats()
-    total_problems = get_total_problem_count()
-
-    # 获取最近完成的学生（按最新完成时间排序，展示全部，前端默认显示 5 位）
-    recent_completions = get_students_by_completion(completed=True)
-
-    # 获取需要督促的学生（优先展示完成度最高、同进度下用时更短的学生）
-    incomplete_students = get_students_by_completion(completed=False)
+    selected_paper_id = resolve_selected_exam_paper_id(
+        request.args.get('paper_id', type=int),
+        include_disabled_for_admin=True
+    )
+    selected_paper = get_exam_paper_by_id(selected_paper_id) if selected_paper_id else None
+    stats = get_completion_stats(selected_paper_id)
+    total_problems = get_total_problem_count(selected_paper_id)
+    recent_completions = get_students_by_completion(completed=True, paper_id=selected_paper_id)
+    incomplete_students = get_students_by_completion(completed=False, paper_id=selected_paper_id)
 
     return render_template('admin_dashboard.html',
                            stats=stats,
                            recent_completions=recent_completions,
                            incomplete_students=incomplete_students,
-                           total_problems=total_problems)
+                           total_problems=total_problems,
+                           exam_papers=get_exam_papers(),
+                           selected_paper=selected_paper,
+                           selected_paper_id=selected_paper_id)
 
 
 @app.route('/admin/import/students', methods=['POST'])
@@ -2792,8 +3125,9 @@ def admin_export_students(status):
         return redirect(url_for('admin_dashboard'))
 
     completed = (status == 'completed')
-    students = get_students_by_completion(completed=completed)
-    total_problems = get_total_problem_count()
+    selected_paper_id = resolve_selected_exam_paper_id(request.args.get('paper_id', type=int))
+    students = get_students_by_completion(completed=completed, paper_id=selected_paper_id)
+    total_problems = get_total_problem_count(selected_paper_id)
 
     output = io.StringIO()
     writer = csv.writer(output)
@@ -2835,6 +3169,57 @@ def admin_export_students(status):
     return response
 
 
+@app.route('/admin/exam_papers', methods=['POST'])
+@login_required
+def admin_create_exam_paper():
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+    name = (request.form.get('name') or '').strip()
+    description = (request.form.get('description') or '').strip()
+    is_enabled = request.form.get('is_enabled') == '1'
+    if not name:
+        flash('题库名称不能为空', 'danger')
+        return redirect(url_for('admin_dashboard'))
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("INSERT INTO exam_papers (name, description, is_enabled) VALUES (%s, %s, %s)", (name, description or None, is_enabled))
+        conn.commit()
+        flash('题库创建成功', 'success')
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f'题库创建失败：{err}', 'danger')
+    finally:
+        cursor.close()
+        conn.close()
+    return redirect(url_for('admin_dashboard'))
+
+
+@app.route('/admin/exam_papers/<int:paper_id>/toggle', methods=['POST'])
+@login_required
+def admin_toggle_exam_paper(paper_id):
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT id, name, is_enabled FROM exam_papers WHERE id = %s", (paper_id,))
+        paper = cursor.fetchone()
+        if not paper:
+            flash('题库不存在', 'danger')
+            return redirect(url_for('admin_dashboard'))
+        new_status = not bool(paper['is_enabled'])
+        cursor.execute("UPDATE exam_papers SET is_enabled = %s WHERE id = %s", (new_status, paper_id))
+        conn.commit()
+        flash(f"题库《{paper['name']}》已{'开启' if new_status else '关闭'}", 'success')
+    finally:
+        cursor.close()
+        conn.close()
+    return redirect(url_for('admin_dashboard', paper_id=paper_id))
+
+
 @app.route('/admin/add_problem', methods=['GET', 'POST'])
 @login_required
 def admin_add_problem():
@@ -2851,6 +3236,8 @@ def admin_add_problem():
             solution_formula = request.form['solution_formula']
             answer_count = int(request.form.get('answer_count', 1))
             difficulty = request.form.get('difficulty', 'medium')
+            answer_units = request.form.get('answer_units', '')
+            paper_id = request.form.get('paper_id', type=int)
 
             # 处理图片上传
             image_filename = None
@@ -2869,9 +3256,9 @@ def admin_add_problem():
             # 插入新题目模板
             cursor.execute("""
                 INSERT INTO problem_templates 
-                (template_name, problem_text, variables, solution_formula, answer_count, difficulty, image_filename)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, (template_name, problem_text, variables, solution_formula, answer_count, difficulty, image_filename))
+                (template_name, problem_text, variables, solution_formula, answer_count, answer_units, difficulty, image_filename, paper_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (template_name, problem_text, variables, solution_formula, answer_count, answer_units, difficulty, image_filename, paper_id))
 
             conn.commit()
             cursor.close()
@@ -2884,7 +3271,7 @@ def admin_add_problem():
             print(f"添加题目失败: {str(e)}")
             flash(f'添加题目失败: {str(e)}', 'danger')
 
-    return render_template('admin_add_problem.html')
+    return render_template('admin_add_problem.html', exam_papers=get_exam_papers())
 
 
 @app.route('/admin/manage_problems')
@@ -2895,23 +3282,30 @@ def admin_manage_problems():
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
+    selected_paper_id = request.args.get('paper_id', type=int)
+    exam_papers = get_exam_papers()
+
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
+    try:
+        if selected_paper_id:
+            cursor.execute("SELECT * FROM problem_templates WHERE paper_id = %s ORDER BY id", (selected_paper_id,))
+        else:
+            cursor.execute("SELECT * FROM problem_templates ORDER BY id")
+        templates = cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
 
-    cursor.execute("SELECT * FROM problem_templates ORDER BY id")
-    templates = cursor.fetchall()
-
-    # 获取显示序号映射
-    display_mapping = get_problem_display_info()
+    display_mapping = get_problem_display_info(selected_paper_id, enabled_only=False)
     for template in templates:
-        template['display_number'] = get_display_number(template['id'])
-
-    cursor.close()
-    conn.close()
+        template['display_number'] = get_display_number(template['id'], template.get('paper_id'))
 
     return render_template('admin_manage_problems.html',
                            templates=templates,
-                           display_mapping=display_mapping)
+                           display_mapping=display_mapping,
+                           exam_papers=exam_papers,
+                           selected_paper_id=selected_paper_id)
 
 
 @app.route('/admin/edit_problem/<int:template_id>', methods=['GET', 'POST'])
@@ -2933,6 +3327,8 @@ def admin_edit_problem(template_id):
             solution_formula = request.form['solution_formula']
             answer_count = int(request.form.get('answer_count', 1))
             difficulty = request.form.get('difficulty', 'medium')
+            answer_units = request.form.get('answer_units', '')
+            paper_id = request.form.get('paper_id', type=int)
             remove_image = request.form.get('remove_image') == 'true'
             current_image = request.form.get('current_image', '')
 
@@ -2961,9 +3357,9 @@ def admin_edit_problem(template_id):
             cursor.execute("""
                 UPDATE problem_templates 
                 SET template_name = %s, problem_text = %s, variables = %s, 
-                    solution_formula = %s, answer_count = %s, difficulty = %s, image_filename = %s
+                    solution_formula = %s, answer_count = %s, answer_units = %s, difficulty = %s, image_filename = %s, paper_id = %s
                 WHERE id = %s
-            """, (template_name, problem_text, variables, solution_formula, answer_count, difficulty, image_filename,
+            """, (template_name, problem_text, variables, solution_formula, answer_count, answer_units, difficulty, image_filename, paper_id,
                   template_id))
 
             conn.commit()
@@ -2984,7 +3380,7 @@ def admin_edit_problem(template_id):
         flash('题目不存在', 'danger')
         return redirect(url_for('admin_manage_problems'))
 
-    return render_template('admin_edit_problem.html', template=template)
+    return render_template('admin_edit_problem.html', template=template, exam_papers=get_exam_papers())
 
 
 @app.route('/admin/delete_problem/<int:template_id>')
@@ -3125,11 +3521,12 @@ def admin_students_by_status(status):
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
+    selected_paper_id = request.args.get('paper_id', type=int)
     completed = (status == 'completed')
-    students = get_students_by_completion(completed=completed)
-    total_problems = get_total_problem_count()
-    completion_stats = get_completion_stats()
-    class_stats = get_class_comparison_stats()
+    students = get_students_by_completion(completed=completed, paper_id=selected_paper_id)
+    total_problems = get_total_problem_count(selected_paper_id)
+    completion_stats = get_completion_stats(selected_paper_id)
+    class_stats = get_class_comparison_stats(selected_paper_id)
     total_students = completion_stats['stats']['total_students'] or 0
     completed_students = completion_stats['stats']['completed_count'] or 0
 
@@ -3199,6 +3596,7 @@ def admin_student_details(user_id):
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
+    selected_paper_id = resolve_selected_exam_paper_id(request.args.get('paper_id', type=int))
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
@@ -3215,10 +3613,12 @@ def admin_student_details(user_id):
             return redirect(url_for('admin_dashboard'))
 
         # 获取题目总数
-        total_problems = get_total_problem_count()
+        total_problems = get_total_problem_count(selected_paper_id)
+        problem_template_filter, problem_template_params = build_enabled_paper_filter('t', selected_paper_id)
+        response_filter, response_params = build_enabled_paper_filter('ur', selected_paper_id)
 
         # 每题作答状态：是否答对；答对时展示达到答对所需次数与累计时长
-        cursor.execute("""
+        cursor.execute(f"""
             WITH attempt_summary AS (
                 SELECT
                     template_id,
@@ -3228,8 +3628,8 @@ def admin_student_details(user_id):
                     MAX(time_taken) AS time_taken,
                     MAX(response_time) AS last_response_time,
                     CASE WHEN SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*) THEN 1 ELSE 0 END AS is_fully_correct
-                FROM user_responses
-                WHERE user_id = %s
+                FROM user_responses ur
+                WHERE user_id = %s {response_filter}
                 GROUP BY template_id, attempt_count
             ),
             progress AS (
@@ -3262,8 +3662,9 @@ def admin_student_details(user_id):
                 ) AS cumulative_time_to_correct
             FROM problem_templates t
             LEFT JOIN progress p ON t.id = p.template_id
+            WHERE 1 = 1 {problem_template_filter}
             ORDER BY t.id
-        """, (user_id,))
+        """, [user_id] + response_params + problem_template_params)
 
         problem_stats = cursor.fetchall()
         for stat in problem_stats:
@@ -3272,7 +3673,7 @@ def admin_student_details(user_id):
         completed_problems_count = sum(1 for stat in problem_stats if stat.get('is_completed'))
 
         # 计算总体统计
-        cursor.execute("""
+        cursor.execute(f"""
             WITH attempt_summary AS (
                 SELECT
                     template_id,
@@ -3280,8 +3681,8 @@ def admin_student_details(user_id):
                     COUNT(*) AS total_answers,
                     SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) AS correct_answers,
                     MAX(time_taken) AS time_taken
-                FROM user_responses
-                WHERE user_id = %s
+                FROM user_responses ur
+                WHERE user_id = %s {response_filter}
                 GROUP BY template_id, attempt_count
             )
             SELECT
@@ -3289,7 +3690,7 @@ def admin_student_details(user_id):
                 SUM(CASE WHEN correct_answers = total_answers THEN 1 ELSE 0 END) as total_correct,
                 AVG(time_taken) as overall_avg_time
             FROM attempt_summary
-        """, (user_id,))
+        """, [user_id] + response_params)
 
         overall_stats = cursor.fetchone() or {}
         overall_stats.setdefault('total_attempts', 0)
@@ -3303,8 +3704,8 @@ def admin_student_details(user_id):
         for index, stat in enumerate(problem_stats, start=1):
             cumulative_correct += 1 if stat.get('is_completed') else 0
             trend_points.append({
-                'label': f"第{get_display_number(stat.get('template_id'))}题",
-                'short_label': str(get_display_number(stat.get('template_id'))),
+                'label': f"第{get_display_number(stat.get('template_id'), selected_paper_id)}题",
+                'short_label': str(get_display_number(stat.get('template_id'), selected_paper_id)),
                 'correct_rate': round((cumulative_correct / index) * 100, 1),
                 'attempts': stat.get('total_attempts') or 0,
                 'completed': bool(stat.get('is_completed'))
@@ -3341,16 +3742,16 @@ def admin_student_details(user_id):
             knowledge_stats.append(item)
         knowledge_stats.sort(key=lambda item: (-item['correct_rate'], -item['completed_templates'], item['label']))
 
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT COALESCE(NULLIF(TRIM(error_type), ''), '未知') AS error_type, COUNT(*) AS count
-            FROM user_responses
-            WHERE user_id = %s AND is_correct = FALSE
+            FROM user_responses ur
+            WHERE user_id = %s AND is_correct = FALSE {response_filter}
             GROUP BY COALESCE(NULLIF(TRIM(error_type), ''), '未知')
             ORDER BY count DESC, error_type ASC
-        """, (user_id,))
+        """, [user_id] + response_params)
         error_type_stats = cursor.fetchall()
 
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT
                 t.id AS template_id,
                 t.template_name,
@@ -3361,11 +3762,11 @@ def admin_student_details(user_id):
                 SUM(CASE WHEN ur.error_type = '格式错误' THEN 1 ELSE 0 END) AS format_error_count
             FROM user_responses ur
             JOIN problem_templates t ON t.id = ur.template_id
-            WHERE ur.user_id = %s AND ur.is_correct = FALSE
+            WHERE ur.user_id = %s AND ur.is_correct = FALSE {response_filter}
             GROUP BY t.id, t.template_name
             ORDER BY wrong_count DESC, t.id ASC
             LIMIT 6
-        """, (user_id,))
+        """, [user_id] + response_params)
         wrong_problem_stats = cursor.fetchall()
         for item in wrong_problem_stats:
             item['knowledge_label'] = infer_knowledge_label(item.get('template_name'))
@@ -3384,7 +3785,8 @@ def admin_student_details(user_id):
                                wrong_problem_stats=wrong_problem_stats,
                                insight_summary=insight_summary,
                                username=session['username'],
-                               get_display_number=get_display_number)  # 传递函数到模板
+                               get_display_number=get_display_number,
+                               selected_paper_id=selected_paper_id)  # 传递函数到模板
     except Exception as e:
         print(f"获取学生详情失败: {str(e)}")
         import traceback
@@ -3409,8 +3811,12 @@ def admin_all_problems_stats():
     cursor = conn.cursor(dictionary=True)
 
     try:
+        selected_paper_id = resolve_selected_exam_paper_id(request.args.get('paper_id', type=int))
         selected_class_name = (request.args.get('class_name') or '').strip()
         selected_major = (request.args.get('major') or '').strip()
+        problem_filter, problem_filter_params = build_enabled_paper_filter('t', selected_paper_id)
+        response_filter, response_params = build_enabled_paper_filter('ur', selected_paper_id)
+        response_filter_ur2, response_params_ur2 = build_enabled_paper_filter('ur2', selected_paper_id)
 
         # 加载班级筛选选项
         cursor.execute("""
@@ -3461,7 +3867,7 @@ def admin_all_problems_stats():
                     CASE WHEN SUM(CASE WHEN ur.is_correct THEN 1 ELSE 0 END) = COUNT(*) THEN 1 ELSE 0 END AS is_fully_correct
                 FROM user_responses ur
                 JOIN users u ON ur.user_id = u.id
-                WHERE {filter_clause}
+                WHERE {filter_clause} {response_filter}
                 GROUP BY ur.user_id, ur.template_id, ur.attempt_count
             ),
             user_problem_stats AS (
@@ -3497,9 +3903,10 @@ def admin_all_problems_stats():
                 ON correct_attempt.user_id = ups.user_id
                AND correct_attempt.template_id = ups.template_id
                AND correct_attempt.attempt_count = ups.first_correct_attempt_no
+            WHERE 1 = 1 {problem_filter}
             GROUP BY t.id, t.template_name
             ORDER BY t.id
-        """, params)
+        """, params + response_params + problem_filter_params)
 
         problem_stats_result = cursor.fetchall()
         problem_stats = []
@@ -3545,22 +3952,36 @@ def admin_all_problems_stats():
 
         cursor.execute(
             f"""
+            WITH completed AS (
+                SELECT user_id, COUNT(DISTINCT template_id) AS total_score, COALESCE(SUM(time_taken), 0) AS total_time
+                FROM user_responses ur
+                WHERE ur.is_correct = TRUE {response_filter}
+                  AND (ur.user_id, ur.template_id, ur.attempt_count) IN (
+                    SELECT user_id, template_id, attempt_count
+                    FROM user_responses ur2
+                    WHERE 1 = 1 {response_filter_ur2}
+                    GROUP BY user_id, template_id, attempt_count
+                    HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+                  )
+                GROUP BY user_id
+            )
             SELECT
                 u.id,
                 u.username,
                 u.name,
                 COALESCE(NULLIF(TRIM(u.major), ''), '未设置专业') AS major,
                 COALESCE(NULLIF(TRIM(u.class_name), ''), '未分班') AS class_name,
-                u.completed_all,
-                u.total_score,
-                u.total_time,
+                CASE WHEN COALESCE(c.total_score, 0) >= %s AND %s > 0 THEN TRUE ELSE FALSE END AS completed_all,
+                COALESCE(c.total_score, 0) AS total_score,
+                COALESCE(c.total_time, 0) AS total_time,
                 u.created_at,
                 u.completed_at
             FROM users u
+            LEFT JOIN completed c ON c.user_id = u.id
             WHERE {' AND '.join(student_filters)}
             ORDER BY u.class_name ASC, u.username ASC
             """,
-            student_params
+            response_params + response_params_ur2 + [get_total_problem_count(selected_paper_id), get_total_problem_count(selected_paper_id)] + student_params
         )
         filtered_students = cursor.fetchall()
 
@@ -3577,7 +3998,7 @@ def admin_all_problems_stats():
                     CASE WHEN SUM(CASE WHEN ur.is_correct THEN 1 ELSE 0 END) = COUNT(*) THEN 1 ELSE 0 END AS is_fully_correct
                 FROM user_responses ur
                 JOIN users u ON ur.user_id = u.id
-                WHERE {filter_clause}
+                WHERE {filter_clause} {response_filter}
                 GROUP BY ur.user_id, ur.template_id, ur.attempt_count
             ),
             user_problem_stats AS (
@@ -3609,7 +4030,7 @@ def admin_all_problems_stats():
                 ON correct_attempt.user_id = ups.user_id
                AND correct_attempt.template_id = ups.template_id
                AND correct_attempt.attempt_count = ups.first_correct_attempt_no
-        """, params)
+        """, params + response_params)
         overall_stats = cursor.fetchone() or {}
         for key, value in list(overall_stats.items()):
             if isinstance(value, Decimal):
@@ -3632,7 +4053,8 @@ def admin_all_problems_stats():
                                major_options=major_options,
                                selected_class_name=selected_class_name,
                                selected_major=selected_major,
-                               username=session['username'])
+                               username=session['username'],
+                               selected_paper_id=selected_paper_id)
 
     except Exception as e:
         print(f"获取题目统计失败: {str(e)}")
@@ -3681,9 +4103,8 @@ def api_user_completion_status():
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        # 获取所有题目模板
-        cursor.execute("SELECT id FROM problem_templates ORDER BY id")
-        templates = cursor.fetchall()
+        selected_paper_id = resolve_selected_exam_paper_id()
+        templates = get_problem_templates_by_paper(selected_paper_id)
 
         completion_status = {}
 

@@ -24,7 +24,7 @@
         </div>
         <div class="col-md-4 text-md-end">
             <div class="btn-group">
-                {% if not completed_all %}
+                {% if not completed_all and total_problems > 0 and selected_paper %}
                 <a href="{{ url_for('problem_ajax', problem_id=current_problem) }}" class="btn btn-light btn-lg">
                     <i class="bi bi-play-circle me-2"></i>
                     {% if completed_count > 0 %}继续{% endif %}学习
@@ -41,6 +41,31 @@
     </div>
 </div>
 
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+            <div>
+                <h5 class="mb-1"><i class="bi bi-collection me-2"></i>当前题库</h5>
+                {% if selected_paper %}
+                <div class="text-muted">{{ selected_paper.name }}{% if selected_paper.description %} · {{ selected_paper.description }}{% endif %}</div>
+                {% else %}
+                <div class="text-muted">教师没有布置题目</div>
+                {% endif %}
+            </div>
+            {% if available_papers %}
+            <form method="post" action="{{ url_for('select_exam_paper') }}" class="d-flex flex-wrap gap-2 align-items-center">
+                <select class="form-select" name="paper_id" style="min-width: 240px;">
+                    {% for paper in available_papers %}
+                    <option value="{{ paper.id }}" {% if selected_paper_id == paper.id %}selected{% endif %}>{{ paper.name }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="btn btn-outline-primary">切换题库</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
 <div class="row">
     <!-- 侧边栏 -->
     <div class="col-lg-3 mb-4">
@@ -51,9 +76,9 @@
                     {% if completed_all %}
                         {% set progress = 100 %}
                     {% else %}
-                        {% set progress = (completed_count / total_problems * 100) %}
+                        {% set progress = (completed_count / total_problems * 100) if total_problems else 0 %}
                     {% endif %}
-                    <div class="progress-circle mx-auto mb-3" data-progress="{{ progress }}">
+                    <div class="progress-circle mx-auto mb-3" data-progress="{{ progress }}" style="--progress: {{ progress }};">
                         <span class="progress-value">{{ "%.0f"|format(progress) }}%</span>
                     </div>
                     <h6 class="text-muted">学习进度</h6>
@@ -131,7 +156,7 @@
                     <div class="card-body">
                         <div class="d-flex align-items-center">
                             <div class="flex-grow-1">
-                                <h4 class="card-title" id="progress-percent">{{ "%.0f"|format(completed_count / total_problems * 100) }}%</h4>
+                                <h4 class="card-title" id="progress-percent">{{ "%.0f"|format((completed_count / total_problems * 100) if total_problems else 0) }}%</h4>
                                 <p class="card-text">总体进度</p>
                             </div>
                             <div class="stat-icon">
@@ -173,7 +198,7 @@
                 {% if completed_all %}
                     {% set progress = 100 %}
                 {% else %}
-                    {% set progress = (completed_count / total_problems * 100) %}
+                    {% set progress = (completed_count / total_problems * 100) if total_problems else 0 %}
                 {% endif %}
 
                 <div class="progress mb-3" style="height: 20px;">
@@ -206,6 +231,7 @@
                 <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>题目完成状态</h5>
             </div>
             <div class="card-body">
+                {% if total_problems > 0 %}
                 <div class="row" id="problem-status-grid">
                     <!-- 题目状态将通过JavaScript动态加载 -->
                     {% for i in range(1, total_problems + 1) %}
@@ -220,6 +246,9 @@
                     </div>
                     {% endfor %}
                 </div>
+                {% else %}
+                <div class="text-center text-muted py-4">{% if has_available_papers %}当前题库暂无题目，请等待管理员配置。{% else %}教师没有布置题目{% endif %}</div>
+                {% endif %}
             </div>
         </div>
 
@@ -397,7 +426,7 @@ document.addEventListener('DOMContentLoaded', function() {
     width: 80px;
     height: 80px;
     border-radius: 50%;
-    background: conic-gradient(#4e73df 0% {{ completed_count / total_problems * 100 }}%, #eaecf4 {{ completed_count / total_problems * 100 }}% 100%);
+    background: conic-gradient(#4e73df 0% calc(var(--progress, 0) * 1%), #eaecf4 calc(var(--progress, 0) * 1%) 100%);
     display: flex;
     align-items: center;
     justify-content: center;
