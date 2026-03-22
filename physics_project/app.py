@@ -157,6 +157,38 @@ def get_selected_exam_paper(include_disabled_for_admin=False):
     return get_exam_paper_by_id(paper_id)
 
 
+def get_problem_templates_by_paper(paper_id=None, enabled_only=True):
+    """获取题目模板列表，可按题库和启用状态过滤。"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    cursor = conn.cursor(dictionary=True)
+    try:
+        query = ["SELECT id, template_name, paper_id FROM problem_templates"]
+        conditions = []
+        params = []
+
+        if paper_id is not None:
+            conditions.append("paper_id = %s")
+            params.append(paper_id)
+        elif enabled_only:
+            enabled_paper_ids = get_enabled_exam_paper_ids()
+            if not enabled_paper_ids:
+                return []
+            placeholders = ', '.join(['%s'] * len(enabled_paper_ids))
+            conditions.append(f"paper_id IN ({placeholders})")
+            params.extend(enabled_paper_ids)
+
+        if conditions:
+            query.append("WHERE " + " AND ".join(conditions))
+        query.append("ORDER BY id")
+        cursor.execute(" ".join(query), params)
+        return cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def get_enabled_exam_paper_ids():
     """返回所有已开启题库 ID。"""
     return [paper['id'] for paper in get_enabled_exam_papers()]
@@ -559,19 +591,9 @@ def get_scientific_hint(correct_answers):
         return f"正确答案: {', '.join(parts)}"
 
 
-def get_problem_display_info(paper_id=None):
+def get_problem_display_info(paper_id=None, enabled_only=True):
     """获取题目的显示信息（支持按题库隔离显示序号）。"""
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-
-    query = "SELECT id, template_name, paper_id FROM problem_templates"
-    params = []
-    if paper_id is not None:
-        query += " WHERE paper_id = %s"
-        params.append(paper_id)
-    query += " ORDER BY id"
-    cursor.execute(query, params)
-    templates = cursor.fetchall()
+    templates = get_problem_templates_by_paper(paper_id=paper_id, enabled_only=enabled_only)
 
     display_mapping = {}
     for display_number, template in enumerate(templates, 1):
@@ -582,8 +604,6 @@ def get_problem_display_info(paper_id=None):
             'paper_id': template.get('paper_id')
         }
 
-    cursor.close()
-    conn.close()
     return display_mapping
 
 
@@ -2250,8 +2270,11 @@ def dashboard():
         available_papers = get_enabled_exam_papers()
         selected_paper_id = resolve_selected_exam_paper_id()
         selected_paper = get_exam_paper_by_id(selected_paper_id) if selected_paper_id else None
+        has_available_papers = bool(available_papers)
 
-        if session.get('username') != 'admin' and not selected_paper_id:
+        if not has_available_papers:
+            flash('教师没有布置题目。', 'info')
+        elif session.get('username') != 'admin' and not selected_paper_id:
             flash('当前暂无可用题库，请联系管理员开启试卷。', 'warning')
 
         display_mapping = get_problem_display_info(selected_paper_id) if selected_paper_id else {}
@@ -2293,7 +2316,8 @@ def dashboard():
             display_mapping=display_mapping,
             available_papers=available_papers,
             selected_paper=selected_paper,
-            selected_paper_id=selected_paper_id
+            selected_paper_id=selected_paper_id,
+            has_available_papers=has_available_papers
         )
 
     except mysql.connector.Error as err:
@@ -2955,7 +2979,10 @@ def admin_dashboard():
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
 
-    selected_paper_id = resolve_selected_exam_paper_id(request.args.get('paper_id', type=int))
+    selected_paper_id = resolve_selected_exam_paper_id(
+        request.args.get('paper_id', type=int),
+        include_disabled_for_admin=True
+    )
     selected_paper = get_exam_paper_by_id(selected_paper_id) if selected_paper_id else None
     stats = get_completion_stats(selected_paper_id)
     total_problems = get_total_problem_count(selected_paper_id)
@@ -3270,7 +3297,7 @@ def admin_manage_problems():
         cursor.close()
         conn.close()
 
-    display_mapping = get_problem_display_info(selected_paper_id)
+    display_mapping = get_problem_display_info(selected_paper_id, enabled_only=False)
     for template in templates:
         template['display_number'] = get_display_number(template['id'], template.get('paper_id'))
 
@@ -4076,9 +4103,8 @@ def api_user_completion_status():
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        # 获取所有题目模板
-        cursor.execute("SELECT id FROM problem_templates ORDER BY id")
-        templates = cursor.fetchall()
+        selected_paper_id = resolve_selected_exam_paper_id()
+        templates = get_problem_templates_by_paper(selected_paper_id)
 
         completion_status = {}
 

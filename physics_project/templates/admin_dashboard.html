@@ -33,28 +33,26 @@
         <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
             <h5 class="mb-0"><i class="bi bi-collection me-2"></i>题库管理</h5>
             {% if selected_paper %}
-            <span class="badge bg-light text-info">当前统计题库：{{ selected_paper.name }}</span>
+            <span class="badge bg-light text-info">当前统计题库：{{ selected_paper.name }}{% if selected_paper.is_enabled %} · 已开启{% else %} · 已关闭{% endif %}</span>
             {% else %}
-            <span class="badge bg-light text-secondary">暂无已开启题库</span>
+            <span class="badge bg-light text-secondary">暂无题库</span>
             {% endif %}
         </div>
         <div class="card-body">
             <form method="get" action="{{ url_for('admin_dashboard') }}" class="row g-3 align-items-end mb-4">
                 <div class="col-md-6">
                     <label class="form-label">查看题库统计</label>
-                    <select class="form-select" name="paper_id" {% if not selected_paper and not (exam_papers | selectattr('is_enabled') | list) %}disabled{% endif %}>
-                        {% if not (exam_papers | selectattr('is_enabled') | list) %}
-                        <option value="">暂无已开启题库</option>
+                    <select class="form-select" name="paper_id" {% if not exam_papers %}disabled{% endif %}>
+                        {% if not exam_papers %}
+                        <option value="">暂无题库</option>
                         {% endif %}
                         {% for paper in exam_papers %}
-                        {% if paper.is_enabled %}
-                        <option value="{{ paper.id }}" {% if selected_paper_id == paper.id %}selected{% endif %}>{{ paper.name }} · 已开启</option>
-                        {% endif %}
+                        <option value="{{ paper.id }}" {% if selected_paper_id == paper.id %}selected{% endif %}>{{ paper.name }} · {% if paper.is_enabled %}已开启{% else %}已关闭{% endif %}</option>
                         {% endfor %}
                     </select>
                 </div>
                 <div class="col-md-2">
-                    <button type="submit" class="btn btn-info w-100" {% if not (exam_papers | selectattr('is_enabled') | list) %}disabled{% endif %}>切换统计</button>
+                    <button type="submit" class="btn btn-info w-100" {% if not exam_papers %}disabled{% endif %}>切换统计</button>
                 </div>
             </form>
             {% if not (exam_papers | selectattr('is_enabled') | list) %}

@@ -49,7 +49,7 @@
                 {% if selected_paper %}
                 <div class="text-muted">{{ selected_paper.name }}{% if selected_paper.description %} · {{ selected_paper.description }}{% endif %}</div>
                 {% else %}
-                <div class="text-muted">暂无已开启题库，请联系管理员</div>
+                <div class="text-muted">教师没有布置题目</div>
                 {% endif %}
             </div>
             {% if available_papers %}
@@ -247,7 +247,7 @@
                     {% endfor %}
                 </div>
                 {% else %}
-                <div class="text-center text-muted py-4">当前题库暂无题目，请等待管理员配置。</div>
+                <div class="text-center text-muted py-4">{% if has_available_papers %}当前题库暂无题目，请等待管理员配置。{% else %}教师没有布置题目{% endif %}</div>
                 {% endif %}
             </div>
         </div>
