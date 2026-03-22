@@ -157,6 +157,28 @@ def get_selected_exam_paper(include_disabled_for_admin=False):
     return get_exam_paper_by_id(paper_id)
 
 
+def persist_selected_exam_paper_id(user_id, paper_id):
+    """尽力持久化用户选择的题库；旧库缺列时降级为仅写入会话。"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE users SET selected_paper_id = %s WHERE id = %s", (paper_id, user_id))
+        conn.commit()
+        return True
+    except mysql.connector.Error as err:
+        if getattr(err, 'errno', None) == 1054:
+            logger.warning("users.selected_paper_id 列不存在，跳过持久化题库选择: %s", err)
+            conn.rollback()
+            return False
+        raise
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def get_problem_templates_by_paper(paper_id=None, enabled_only=True):
     """获取题目模板列表，可按题库和启用状态过滤。"""
     conn = get_db_connection()
@@ -2339,15 +2361,7 @@ def select_exam_paper():
         return redirect(url_for('dashboard'))
 
     session['selected_exam_paper_id'] = paper_id
-    conn = get_db_connection()
-    if conn:
-        cursor = conn.cursor()
-        try:
-            cursor.execute("UPDATE users SET selected_paper_id = %s WHERE id = %s", (paper_id, session['user_id']))
-            conn.commit()
-        finally:
-            cursor.close()
-            conn.close()
+    persist_selected_exam_paper_id(session['user_id'], paper_id)
 
     flash(f"已切换到题库：{selected['name']}", 'success')
     return redirect(url_for('dashboard'))
