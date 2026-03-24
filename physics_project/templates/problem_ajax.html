@@ -696,6 +696,7 @@ const SPOTLIGHT_CONFIG = {
 let spotlightElement = null;
 let problemContentContainer = null;
 let lastMousePosition = { x: -100, y: -100 }; // 新增：记录最后鼠标位置
+let lastSpotlightRelativePosition = { xRatio: 0.5, yRatio: 0.5, hasValue: false }; // 新增：记录光圈相对位置，避免缩放后丢失
 let spotlightTimer = null; // 新增：保持蒙版定时器
 let isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent); // 新增：检测移动设备
 
@@ -1274,6 +1275,11 @@ function updateSpotlightPosition(x, y) {
 
         // 记录最后鼠标位置
         lastMousePosition = { x, y };
+        lastSpotlightRelativePosition = {
+            xRatio: containerRect.width > 0 ? (relativeX / containerRect.width) : 0.5,
+            yRatio: containerRect.height > 0 ? (relativeY / containerRect.height) : 0.5,
+            hasValue: true
+        };
 
         // 圆形光圈
         spotlightElement.style.maskImage = `radial-gradient(circle ${size/2}px at ${relativeX}px ${relativeY}px, transparent 0%, transparent 100%, black 100%)`;
@@ -1291,9 +1297,9 @@ function updateSpotlightPosition(x, y) {
             spotlightElement.style.maskImage = `radial-gradient(circle ${size/2}px at ${clampedX}px ${clampedY}px, transparent 0%, transparent 100%, black 100%)`;
             spotlightElement.style.webkitMaskImage = `radial-gradient(circle ${size/2}px at ${clampedX}px ${clampedY}px, transparent 0%, transparent 100%, black 100%)`;
         } else {
-            // 如果没有最后位置，使用中心位置
-            const centerX = containerRect.width / 2;
-            const centerY = containerRect.height / 2;
+            // 如果没有最后位置，优先使用最近一次相对位置，否则使用中心位置
+            const centerX = containerRect.width * (lastSpotlightRelativePosition.hasValue ? lastSpotlightRelativePosition.xRatio : 0.5);
+            const centerY = containerRect.height * (lastSpotlightRelativePosition.hasValue ? lastSpotlightRelativePosition.yRatio : 0.5);
             spotlightElement.style.maskImage = `radial-gradient(circle ${size/2}px at ${centerX}px ${centerY}px, transparent 0%, transparent 100%, black 100%)`;
             spotlightElement.style.webkitMaskImage = `radial-gradient(circle ${size/2}px at ${centerX}px ${centerY}px, transparent 0%, transparent 100%, black 100%)`;
         }
@@ -1326,9 +1332,9 @@ function updateSpotlightLayout() {
                 updateSpotlightPosition(lastMousePosition.x, lastMousePosition.y);
             } else {
                 const rect = problemContentContainer.getBoundingClientRect();
-                const centerX = rect.left + rect.width / 2;
-                const centerY = rect.top + rect.height / 2;
-                updateSpotlightPosition(centerX, centerY);
+                const relativeX = rect.width * (lastSpotlightRelativePosition.hasValue ? lastSpotlightRelativePosition.xRatio : 0.5);
+                const relativeY = rect.height * (lastSpotlightRelativePosition.hasValue ? lastSpotlightRelativePosition.yRatio : 0.5);
+                updateSpotlightPosition(rect.left + relativeX, rect.top + relativeY);
             }
         }
     }, 100);
@@ -1349,14 +1355,6 @@ function maintainSpotlightPermanent() {
             // 确保蒙版可见
             if (spotlightElement.style.display === 'none') {
                 spotlightElement.style.display = 'block';
-            }
-
-            // 移动设备：定期更新位置到中心
-            if (isMobileDevice) {
-                const rect = problemContentContainer.getBoundingClientRect();
-                const centerX = rect.left + rect.width / 2;
-                const centerY = rect.top + rect.height / 2;
-                updateSpotlightPosition(centerX, centerY);
             }
         }
     }, 2000); // 每2秒检查一次
