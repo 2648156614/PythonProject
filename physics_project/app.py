@@ -446,22 +446,6 @@ def login_required(f):
         if 'user_id' not in session:
             flash('请先登录！', 'danger')
             return redirect(url_for('login'))
-        if session.get('username') != 'admin':
-            conn = get_db_connection()
-            if not conn:
-                flash('数据库连接失败', 'danger')
-                return redirect(url_for('login'))
-            cursor = conn.cursor(dictionary=True)
-            try:
-                cursor.execute("SELECT current_session_token FROM users WHERE id = %s", (session['user_id'],))
-                user = cursor.fetchone()
-                if not user or user['current_session_token'] != session.get('session_token'):
-                    session.clear()
-                    flash('账号已在其他设备登录', 'danger')
-                    return redirect(url_for('login'))
-            finally:
-                cursor.close()
-                conn.close()
         return f(*args, **kwargs)
 
     return decorated_function
@@ -2111,14 +2095,7 @@ def login():
                 session['display_name'] = get_display_name(user)
                 session['avatar_filename'] = user.get('avatar_filename') or DEFAULT_AVATAR
                 session['is_admin'] = (user['username'] == 'admin')
-
-                if user['username'] != 'admin':
-                    session_token = uuid.uuid4().hex
-                    cursor.execute("UPDATE users SET current_session_token = %s WHERE id = %s", (session_token, user['id']))
-                    conn.commit()
-                    session['session_token'] = session_token
-                else:
-                    session.pop('session_token', None)
+                session.pop('session_token', None)
 
                 if not user.get('password_changed', True):
                     session['show_password_modal'] = True
@@ -2140,16 +2117,6 @@ def login():
 
 @app.route('/logout')
 def logout():
-    if 'user_id' in session and session.get('username') != 'admin':
-        conn = get_db_connection()
-        if conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute("UPDATE users SET current_session_token = NULL WHERE id = %s", (session['user_id'],))
-                conn.commit()
-            finally:
-                cursor.close()
-                conn.close()
     session.clear()
     flash('您已成功退出。', 'success')
     return redirect(url_for('login'))
