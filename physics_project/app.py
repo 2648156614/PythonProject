@@ -1188,10 +1188,10 @@ def save_user_response(user_id, template_id, paper_id, problem_text, user_answer
                 cursor.execute("""
                     INSERT INTO user_responses
                     (user_id, template_id, problem_text, user_answer,
-                     correct_answer, is_correct, error_type, attempt_count, time_taken, answer_index)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     correct_answer, is_correct, error_type, attempt_count, time_taken, answer_index, paper_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (user_id, template_id, truncated_problem_text, user_answer,
-                      correct_answer, is_correct, error_type, attempt_count, time_taken, i))
+                      correct_answer, is_correct, error_type, attempt_count, time_taken, i, paper_id))
 
                 saved_count += 1
                 print(f"✅ 答案 {i + 1} 保存成功")
@@ -2485,7 +2485,7 @@ def history():
                 t.id as template_id
             FROM user_responses r
             JOIN problem_templates t ON r.template_id = t.id
-            WHERE r.user_id = %s AND r.paper_id = %s
+            WHERE r.user_id = %s AND COALESCE(r.paper_id, t.paper_id) = %s
             ORDER BY r.response_time DESC
         """, (session['user_id'], selected_paper_id))
 
@@ -2504,8 +2504,9 @@ def history():
                 COUNT(*) as total,
                 SUM(CASE WHEN is_correct = TRUE THEN 1 ELSE 0 END) as correct_count,
                 AVG(time_taken) as avg_time
-            FROM user_responses 
-            WHERE user_id = %s AND paper_id = %s
+            FROM user_responses r
+            JOIN problem_templates t ON r.template_id = t.id
+            WHERE r.user_id = %s AND COALESCE(r.paper_id, t.paper_id) = %s
         """, (session['user_id'], selected_paper_id))
 
         stats_result = cursor.fetchone()
