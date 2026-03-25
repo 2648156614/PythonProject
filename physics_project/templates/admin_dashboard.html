@@ -162,7 +162,7 @@
                 <div class="card-body">
                     <div class="d-flex align-items-center">
                         <div class="flex-grow-1">
-                            <h4 class="card-title">{{ (stats.stats.total_students - stats.stats.completed_count) or 0 }}</h4>
+                            <h4 class="card-title">{{ (stats.stats.total_students|default(0, true)) - (stats.stats.completed_count|default(0, true)) }}</h4>
                             <p class="card-text">未完成学生</p>
                         </div>
                         <div class="stat-icon">
