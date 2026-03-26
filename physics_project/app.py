@@ -219,15 +219,22 @@ def get_exam_paper_stats(paper_id):
         total_problems = get_total_problem_count(paper_id)
         cursor.execute(
             """
-            SELECT COUNT(DISTINCT template_id) AS completed_count, COALESCE(SUM(time_taken), 0) AS total_time
-            FROM user_responses
-            WHERE user_id = %s AND paper_id = %s AND is_correct = TRUE
-              AND (template_id, attempt_count) IN (
-                  SELECT template_id, attempt_count
-                  FROM user_responses
-                  WHERE user_id = %s AND paper_id = %s
-                  GROUP BY template_id, attempt_count
-                  HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+            SELECT
+                COUNT(DISTINCT r.template_id) AS completed_count,
+                COALESCE(SUM(r.time_taken), 0) AS total_time
+            FROM user_responses r
+            JOIN problem_templates t ON r.template_id = t.id
+            WHERE r.user_id = %s
+              AND COALESCE(r.paper_id, t.paper_id) = %s
+              AND r.is_correct = TRUE
+              AND (r.template_id, r.attempt_count) IN (
+                  SELECT r2.template_id, r2.attempt_count
+                  FROM user_responses r2
+                  JOIN problem_templates t2 ON r2.template_id = t2.id
+                  WHERE r2.user_id = %s
+                    AND COALESCE(r2.paper_id, t2.paper_id) = %s
+                  GROUP BY r2.template_id, r2.attempt_count
+                  HAVING SUM(CASE WHEN r2.is_correct THEN 1 ELSE 0 END) = COUNT(*)
               )
             """,
             (session['user_id'], paper_id, session['user_id'], paper_id)
@@ -1784,6 +1791,10 @@ def update_user_completion_status(user_id):
     cursor = conn.cursor(dictionary=True)
 
     try:
+        selected_paper_id = resolve_selected_exam_paper_id()
+        if not selected_paper_id:
+            return False
+
         # 动态获取题目总数
         total_problems = get_total_problem_count(selected_paper_id)
 
@@ -1791,9 +1802,10 @@ def update_user_completion_status(user_id):
         cursor.execute("""
             SELECT COUNT(DISTINCT template_id) as completed_count
             FROM (
-                SELECT template_id, attempt_count
-                FROM user_responses
-                WHERE user_id = %s AND paper_id = %s
+                SELECT ur.template_id, ur.attempt_count
+                FROM user_responses ur
+                JOIN problem_templates t ON ur.template_id = t.id
+                WHERE ur.user_id = %s AND COALESCE(ur.paper_id, t.paper_id) = %s
                 GROUP BY template_id, attempt_count
                 HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
             ) as completed_attempts
@@ -1805,15 +1817,17 @@ def update_user_completion_status(user_id):
             SELECT
                 COUNT(*) as total_score,
                 SUM(time_taken) as total_time
-            FROM user_responses
-            WHERE (user_id, template_id, attempt_count) IN (
-                SELECT user_id, template_id, attempt_count
-                FROM user_responses
-                WHERE user_id = %s AND paper_id = %s
-                GROUP BY template_id, attempt_count
-                HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+            FROM user_responses ur
+            JOIN problem_templates t ON ur.template_id = t.id
+            WHERE (ur.user_id, ur.template_id, ur.attempt_count) IN (
+                SELECT ur2.user_id, ur2.template_id, ur2.attempt_count
+                FROM user_responses ur2
+                JOIN problem_templates t2 ON ur2.template_id = t2.id
+                WHERE ur2.user_id = %s AND COALESCE(ur2.paper_id, t2.paper_id) = %s
+                GROUP BY ur2.template_id, ur2.attempt_count
+                HAVING SUM(CASE WHEN ur2.is_correct THEN 1 ELSE 0 END) = COUNT(*)
             )
-            AND is_correct = TRUE
+            AND ur.is_correct = TRUE
         """, (user_id, selected_paper_id))
         stats = cursor.fetchone()
 
@@ -2257,10 +2271,13 @@ def dashboard():
                 cursor.execute(
                     """
                     SELECT 1
-                    FROM user_responses
-                    WHERE user_id = %s AND template_id = %s AND paper_id = %s
-                    GROUP BY attempt_count
-                    HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+                    FROM user_responses ur
+                    JOIN problem_templates t ON ur.template_id = t.id
+                    WHERE ur.user_id = %s
+                      AND ur.template_id = %s
+                      AND COALESCE(ur.paper_id, t.paper_id) = %s
+                    GROUP BY ur.attempt_count
+                    HAVING SUM(CASE WHEN ur.is_correct THEN 1 ELSE 0 END) = COUNT(*)
                     LIMIT 1
                     """,
                     (session['user_id'], actual_id, selected_paper_id)
