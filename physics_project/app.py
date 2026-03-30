@@ -3557,8 +3557,24 @@ def build_student_insight_summary(problem_stats, knowledge_stats, error_type_sta
 
     comparable = [item for item in knowledge_stats if item.get('attempted_templates')]
     if comparable:
-        best = max(comparable, key=lambda item: (item.get('correct_rate', 0), item.get('avg_attempts', 999) * -1))
-        weakest = min(comparable, key=lambda item: (item.get('correct_rate', 0), -(item.get('avg_attempts', 0))))
+        def normalized_avg_attempts(item, default_value):
+            value = item.get('avg_attempts')
+            return value if isinstance(value, (int, float)) else default_value
+
+        best = max(
+            comparable,
+            key=lambda item: (
+                item.get('correct_rate', 0),
+                normalized_avg_attempts(item, 999) * -1,
+            ),
+        )
+        weakest = min(
+            comparable,
+            key=lambda item: (
+                item.get('correct_rate', 0),
+                -normalized_avg_attempts(item, 0),
+            ),
+        )
         if best.get('label') == weakest.get('label'):
             summary.append(f"当前题库主要集中在{best['label']}，该知识点正确率为 {best.get('correct_rate', 0):.1f}%。")
         else:
