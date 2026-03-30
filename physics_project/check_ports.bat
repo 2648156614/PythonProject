@@ -7,7 +7,7 @@ echo   Port and Service Status Check
 echo ========================================
 echo.
 
-echo [1/4] Checking port 80 (Nginx)...
+echo [1/7] Checking port 80 (Nginx)...
 netstat -ano | findstr ":80" | findstr "LISTENING"
 if errorlevel 1 (
     echo ❌ Port 80 is not listening (Nginx not running)
@@ -15,15 +15,18 @@ if errorlevel 1 (
     echo ✅ Port 80 is listening
 )
 
-echo [2/4] Checking port 5000 (Flask app)...
-netstat -ano | findstr ":5000" | findstr "LISTENING"
-if errorlevel 1 (
-    echo ❌ Port 5000 is not listening (Flask app not running)
-) else (
-    echo ✅ Port 5000 is listening
+echo [2/7] Checking app ports (5000-5003)...
+for %%P in (5000 5001 5002 5003) do (
+    echo   - Checking port %%P...
+    netstat -ano | findstr ":%%P" | findstr "LISTENING" > nul
+    if errorlevel 1 (
+        echo     ❌ Port %%P is not listening
+    ) else (
+        echo     ✅ Port %%P is listening
+    )
 )
 
-echo [3/4] Checking Nginx process...
+echo [3/7] Checking Nginx process...
 tasklist /fi "imagename eq nginx.exe"
 if errorlevel 1 (
     echo ❌ No Nginx processes found
@@ -31,7 +34,7 @@ if errorlevel 1 (
     echo ✅ Nginx processes found
 )
 
-echo [4/4] Checking Python processes...
+echo [4/7] Checking Python processes...
 tasklist /fi "imagename eq python.exe"
 if errorlevel 1 (
     echo ❌ No Python processes found
