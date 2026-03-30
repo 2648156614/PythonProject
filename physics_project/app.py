@@ -4102,20 +4102,18 @@ def api_user_completion_status():
     """获取用户所有题目的完成状态"""
     try:
         conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
         selected_paper_id = resolve_selected_exam_paper_id()
-        templates = get_problem_templates_by_paper(selected_paper_id)
+        display_mapping = get_problem_display_info(selected_paper_id) if selected_paper_id else {}
 
         completion_status = {}
 
-        for template in templates:
-            template_id = template['id']
-            # 检查该题目是否已完成（有正确答题记录）
-            completion_status[template_id] = has_full_correct_attempt(cursor, session['user_id'], template_id)
-
-        cursor.close()
-        conn.close()
+        for actual_id, display_info in display_mapping.items():
+            display_number = display_info['display_number']
+            completion_status[display_number] = is_problem_completed(
+                session['user_id'],
+                actual_id,
+                selected_paper_id
+            )
 
         return jsonify({
             'success': True,
@@ -4128,6 +4126,9 @@ def api_user_completion_status():
             'success': False,
             'message': f'获取完成状态失败: {str(e)}'
         })
+    finally:
+        if 'conn' in locals() and conn:
+            conn.close()
 
 
 # 图片管理功能
