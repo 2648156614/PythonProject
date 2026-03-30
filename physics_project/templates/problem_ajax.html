@@ -2144,13 +2144,11 @@ async function updateProblemSidebar() {
     const completionStatus = await getProblemCompletionStatus();
     const sidebarItems = document.querySelectorAll('#problem-sidebar .list-group-item');
 
-    const currentActualId = getActualIdFromDisplay({{ problem_id }});
+    const currentProblemId = {{ problem_id }};
 
     sidebarItems.forEach(item => {
         const problemId = parseInt(item.getAttribute('data-problem-id'));
-        const actualId = getActualIdFromDisplay(problemId);
-        const isCompleted = actualId ? completionStatus[actualId] || false : false;
-        const currentProblemId = {{ problem_id }};
+        const isCompleted = completionStatus[problemId] || false;
         const statusBadge = item.querySelector('.problem-status-badge');
 
         // 更新活动状态
@@ -2176,7 +2174,7 @@ async function updateProblemSidebar() {
         }
     });
 
-    if (currentActualId && completionStatus[currentActualId]) {
+    if (completionStatus[currentProblemId]) {
         handleCompletedProblem();
     }
 }
