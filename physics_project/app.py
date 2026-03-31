@@ -14,6 +14,7 @@ from functools import wraps
 from math import pi, log
 
 import mysql.connector
+from mysql.connector import pooling
 import numpy as np
 import redis
 import sympy as sp
@@ -48,6 +49,11 @@ db_config = {
     'password': '123456',
     'database': 'physics_new3'
 }
+
+DB_POOL_NAME = os.getenv('DB_POOL_NAME', 'physics_app_pool')
+DB_POOL_SIZE = int(os.getenv('DB_POOL_SIZE', 20))
+DB_POOL_RESET_SESSION = os.getenv('DB_POOL_RESET_SESSION', 'true').lower() in ('1', 'true', 'yes', 'on')
+db_pool = None
 
 # 图片上传配置
 UPLOAD_FOLDER = 'static/images'
@@ -309,11 +315,22 @@ def get_display_name(user):
 
 def get_db_connection():
     """获取数据库连接"""
+    global db_pool
     try:
-        conn = mysql.connector.connect(**db_config)
+        if db_pool is None:
+            db_pool = pooling.MySQLConnectionPool(
+                pool_name=DB_POOL_NAME,
+                pool_size=DB_POOL_SIZE,
+                pool_reset_session=DB_POOL_RESET_SESSION,
+                **db_config
+            )
+            logger.info("MySQL连接池初始化成功: %s, 大小=%s", DB_POOL_NAME, DB_POOL_SIZE)
+
+        conn = db_pool.get_connection()
+        conn.ping(reconnect=True, attempts=1, delay=0)
         return conn
     except mysql.connector.Error as err:
-        print(f"数据库连接失败：{err}")
+        logger.error("数据库连接失败：%s", err)
         return None
 
 
