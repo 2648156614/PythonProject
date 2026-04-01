@@ -464,15 +464,46 @@ def prewarm_pools():
 
 
 # 登录装饰器
-def login_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'user_id' not in session:
-            flash('请先登录！', 'danger')
-            return redirect(url_for('login'))
-        return f(*args, **kwargs)
+def login_required(f=None, *, db_check=False):
+    """
+    登录校验：
+    - 默认仅校验 session，避免每次请求都查库。
+    - db_check=True 时，在关键操作前额外校验用户是否仍存在。
+    """
 
-    return decorated_function
+    def decorator(func):
+        @wraps(func)
+        def decorated_function(*args, **kwargs):
+            user_id = session.get('user_id')
+            if not user_id:
+                flash('请先登录！', 'danger')
+                return redirect(url_for('login'))
+
+            if db_check:
+                conn = get_db_connection()
+                if not conn:
+                    flash('系统繁忙，请稍后重试。', 'danger')
+                    return redirect(url_for('login'))
+                cursor = conn.cursor(dictionary=True)
+                try:
+                    cursor.execute("SELECT id FROM users WHERE id = %s LIMIT 1", (user_id,))
+                    user_exists = cursor.fetchone()
+                finally:
+                    cursor.close()
+                    conn.close()
+
+                if not user_exists:
+                    session.clear()
+                    flash('当前账号状态异常，请重新登录。', 'danger')
+                    return redirect(url_for('login'))
+
+            return func(*args, **kwargs)
+
+        return decorated_function
+
+    if f is None:
+        return decorator
+    return decorator(f)
 
 
 def is_correct(user_answer, correct_answer):
@@ -2154,7 +2185,7 @@ def logout():
 
 
 @app.route('/user/password', methods=['POST'])
-@login_required
+@login_required(db_check=True)
 def update_password():
     current_password = request.form.get('current_password', '')
     new_password = request.form.get('new_password', '')
@@ -2202,7 +2233,7 @@ def update_password():
 
 
 @app.route('/user/name', methods=['POST'])
-@login_required
+@login_required(db_check=True)
 def update_name():
     new_name = request.form.get('name', '').strip()
     if not new_name:
@@ -2226,7 +2257,7 @@ def update_name():
 
 
 @app.route('/user/avatar', methods=['POST'])
-@login_required
+@login_required(db_check=True)
 def update_avatar():
     avatar_filename = request.form.get('avatar_filename', '')
     available_avatars = get_avatar_choices()
@@ -2331,7 +2362,7 @@ def dashboard():
 
 
 @app.route('/select_exam_paper', methods=['POST'])
-@login_required
+@login_required(db_check=True)
 def select_exam_paper():
     paper_id = request.form.get('paper_id', type=int)
     selected = get_exam_paper_by_id(paper_id)
@@ -2727,7 +2758,7 @@ def problem_ajax(problem_id):
 
 
 @app.route('/api/submit/<int:problem_id>', methods=['POST'])  # 保持参数名为 problem_id
-@login_required
+@login_required(db_check=True)
 def api_submit(problem_id):
     """API接口：提交答案 - 内部将problem_id作为显示序号使用"""
     try:
@@ -3002,7 +3033,7 @@ def admin_dashboard():
 
 
 @app.route('/admin/import/students', methods=['POST'])
-@login_required
+@login_required(db_check=True)
 def admin_import_students():
     """管理员批量导入学生（xlsx：第1列学号，第2列姓名，第3列专业，第4列班级）"""
     if session.get('username') != 'admin':
@@ -3172,7 +3203,7 @@ def admin_export_students(status):
 
 
 @app.route('/admin/exam_papers', methods=['POST'])
-@login_required
+@login_required(db_check=True)
 def admin_create_exam_paper():
     if session.get('username') != 'admin':
         flash('权限不足', 'danger')
@@ -3199,7 +3230,7 @@ def admin_create_exam_paper():
 
 
 @app.route('/admin/exam_papers/<int:paper_id>/toggle', methods=['POST'])
-@login_required
+@login_required(db_check=True)
 def admin_toggle_exam_paper(paper_id):
     if session.get('username') != 'admin':
         flash('权限不足', 'danger')
@@ -3386,7 +3417,7 @@ def admin_edit_problem(template_id):
 
 
 @app.route('/admin/delete_problem/<int:template_id>')
-@login_required
+@login_required(db_check=True)
 def admin_delete_problem(template_id):
     """删除题目并清理相关图片"""
     if session.get('username') != 'admin':
@@ -3444,7 +3475,7 @@ def admin_delete_problem(template_id):
 
 
 @app.route('/admin/update_all_status')
-@login_required
+@login_required(db_check=True)
 def update_all_status():
     """批量更新所有用户的完成状态"""
     if session.get('username') != 'admin':
@@ -4178,7 +4209,7 @@ def admin_image_manager():
 
 
 @app.route('/admin/delete_image/<filename>')
-@login_required
+@login_required(db_check=True)
 def admin_delete_image(filename):
     """删除图片"""
     if session.get('username') != 'admin':
