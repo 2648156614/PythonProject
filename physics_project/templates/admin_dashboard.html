@@ -162,7 +162,7 @@
                 <div class="card-body">
                     <div class="d-flex align-items-center">
                         <div class="flex-grow-1">
-                            <h4 class="card-title">{{ (stats.stats.total_students - stats.stats.completed_count) or 0 }}</h4>
+                            <h4 class="card-title">{{ (stats.stats.total_students|default(0, true)) - (stats.stats.completed_count|default(0, true)) }}</h4>
                             <p class="card-text">未完成学生</p>
                         </div>
                         <div class="stat-icon">
@@ -205,7 +205,7 @@
                         {% for student in recent_completions %}
                         <a href="{{ url_for('admin_student_details', user_id=student.id, paper_id=selected_paper_id) }}" class="student-compact-item student-compact-item-success text-decoration-none">
                             <span class="student-compact-name">{{ student.name or student.username }}</span>
-                            <span class="student-compact-meta">{{ student.completed_at.strftime('%m-%d %H:%M') }}</span>
+                            <span class="student-compact-meta">{{ student.completed_at.strftime('%m-%d %H:%M') if student.completed_at else '未记录时间' }}</span>
                         </a>
                         {% endfor %}
                     </div>

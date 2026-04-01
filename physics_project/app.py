@@ -14,6 +14,7 @@ from functools import wraps
 from math import pi, log
 
 import mysql.connector
+from mysql.connector import pooling
 import numpy as np
 import redis
 import sympy as sp
@@ -48,6 +49,11 @@ db_config = {
     'password': '123456',
     'database': 'physics_new3'
 }
+
+DB_POOL_NAME = os.getenv('DB_POOL_NAME', 'physics_app_pool')
+DB_POOL_SIZE = int(os.getenv('DB_POOL_SIZE', 20))
+DB_POOL_RESET_SESSION = os.getenv('DB_POOL_RESET_SESSION', 'true').lower() in ('1', 'true', 'yes', 'on')
+db_pool = None
 
 # 图片上传配置
 UPLOAD_FOLDER = 'static/images'
@@ -219,15 +225,22 @@ def get_exam_paper_stats(paper_id):
         total_problems = get_total_problem_count(paper_id)
         cursor.execute(
             """
-            SELECT COUNT(DISTINCT template_id) AS completed_count, COALESCE(SUM(time_taken), 0) AS total_time
-            FROM user_responses
-            WHERE user_id = %s AND paper_id = %s AND is_correct = TRUE
-              AND (template_id, attempt_count) IN (
-                  SELECT template_id, attempt_count
-                  FROM user_responses
-                  WHERE user_id = %s AND paper_id = %s
-                  GROUP BY template_id, attempt_count
-                  HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+            SELECT
+                COUNT(DISTINCT r.template_id) AS completed_count,
+                COALESCE(SUM(r.time_taken), 0) AS total_time
+            FROM user_responses r
+            JOIN problem_templates t ON r.template_id = t.id
+            WHERE r.user_id = %s
+              AND COALESCE(r.paper_id, t.paper_id) = %s
+              AND r.is_correct = TRUE
+              AND (r.template_id, r.attempt_count) IN (
+                  SELECT r2.template_id, r2.attempt_count
+                  FROM user_responses r2
+                  JOIN problem_templates t2 ON r2.template_id = t2.id
+                  WHERE r2.user_id = %s
+                    AND COALESCE(r2.paper_id, t2.paper_id) = %s
+                  GROUP BY r2.template_id, r2.attempt_count
+                  HAVING SUM(CASE WHEN r2.is_correct THEN 1 ELSE 0 END) = COUNT(*)
               )
             """,
             (session['user_id'], paper_id, session['user_id'], paper_id)
@@ -302,11 +315,22 @@ def get_display_name(user):
 
 def get_db_connection():
     """获取数据库连接"""
+    global db_pool
     try:
-        conn = mysql.connector.connect(**db_config)
+        if db_pool is None:
+            db_pool = pooling.MySQLConnectionPool(
+                pool_name=DB_POOL_NAME,
+                pool_size=DB_POOL_SIZE,
+                pool_reset_session=DB_POOL_RESET_SESSION,
+                **db_config
+            )
+            logger.info("MySQL连接池初始化成功: %s, 大小=%s", DB_POOL_NAME, DB_POOL_SIZE)
+
+        conn = db_pool.get_connection()
+        conn.ping(reconnect=True, attempts=1, delay=0)
         return conn
     except mysql.connector.Error as err:
-        print(f"数据库连接失败：{err}")
+        logger.error("数据库连接失败：%s", err)
         return None
 
 
@@ -440,31 +464,46 @@ def prewarm_pools():
 
 
 # 登录装饰器
-def login_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'user_id' not in session:
-            flash('请先登录！', 'danger')
-            return redirect(url_for('login'))
-        if session.get('username') != 'admin':
-            conn = get_db_connection()
-            if not conn:
-                flash('数据库连接失败', 'danger')
-                return redirect(url_for('login'))
-            cursor = conn.cursor(dictionary=True)
-            try:
-                cursor.execute("SELECT current_session_token FROM users WHERE id = %s", (session['user_id'],))
-                user = cursor.fetchone()
-                if not user or user['current_session_token'] != session.get('session_token'):
-                    session.clear()
-                    flash('账号已在其他设备登录', 'danger')
-                    return redirect(url_for('login'))
-            finally:
-                cursor.close()
-                conn.close()
-        return f(*args, **kwargs)
+def login_required(f=None, *, db_check=False):
+    """
+    登录校验：
+    - 默认仅校验 session，避免每次请求都查库。
+    - db_check=True 时，在关键操作前额外校验用户是否仍存在。
+    """
 
-    return decorated_function
+    def decorator(func):
+        @wraps(func)
+        def decorated_function(*args, **kwargs):
+            user_id = session.get('user_id')
+            if not user_id:
+                flash('请先登录！', 'danger')
+                return redirect(url_for('login'))
+
+            if db_check:
+                conn = get_db_connection()
+                if not conn:
+                    flash('系统繁忙，请稍后重试。', 'danger')
+                    return redirect(url_for('login'))
+                cursor = conn.cursor(dictionary=True)
+                try:
+                    cursor.execute("SELECT id FROM users WHERE id = %s LIMIT 1", (user_id,))
+                    user_exists = cursor.fetchone()
+                finally:
+                    cursor.close()
+                    conn.close()
+
+                if not user_exists:
+                    session.clear()
+                    flash('当前账号状态异常，请重新登录。', 'danger')
+                    return redirect(url_for('login'))
+
+            return func(*args, **kwargs)
+
+        return decorated_function
+
+    if f is None:
+        return decorator
+    return decorator(f)
 
 
 def is_correct(user_answer, correct_answer):
@@ -1204,10 +1243,10 @@ def save_user_response(user_id, template_id, paper_id, problem_text, user_answer
                 cursor.execute("""
                     INSERT INTO user_responses
                     (user_id, template_id, problem_text, user_answer,
-                     correct_answer, is_correct, error_type, attempt_count, time_taken, answer_index)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     correct_answer, is_correct, error_type, attempt_count, time_taken, answer_index, paper_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (user_id, template_id, truncated_problem_text, user_answer,
-                      correct_answer, is_correct, error_type, attempt_count, time_taken, i))
+                      correct_answer, is_correct, error_type, attempt_count, time_taken, i, paper_id))
 
                 saved_count += 1
                 print(f"✅ 答案 {i + 1} 保存成功")
@@ -1800,6 +1839,10 @@ def update_user_completion_status(user_id):
     cursor = conn.cursor(dictionary=True)
 
     try:
+        selected_paper_id = resolve_selected_exam_paper_id()
+        if not selected_paper_id:
+            return False
+
         # 动态获取题目总数
         total_problems = get_total_problem_count(selected_paper_id)
 
@@ -1807,9 +1850,10 @@ def update_user_completion_status(user_id):
         cursor.execute("""
             SELECT COUNT(DISTINCT template_id) as completed_count
             FROM (
-                SELECT template_id, attempt_count
-                FROM user_responses
-                WHERE user_id = %s AND paper_id = %s
+                SELECT ur.template_id, ur.attempt_count
+                FROM user_responses ur
+                JOIN problem_templates t ON ur.template_id = t.id
+                WHERE ur.user_id = %s AND COALESCE(ur.paper_id, t.paper_id) = %s
                 GROUP BY template_id, attempt_count
                 HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
             ) as completed_attempts
@@ -1821,15 +1865,17 @@ def update_user_completion_status(user_id):
             SELECT
                 COUNT(*) as total_score,
                 SUM(time_taken) as total_time
-            FROM user_responses
-            WHERE (user_id, template_id, attempt_count) IN (
-                SELECT user_id, template_id, attempt_count
-                FROM user_responses
-                WHERE user_id = %s AND paper_id = %s
-                GROUP BY template_id, attempt_count
-                HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+            FROM user_responses ur
+            JOIN problem_templates t ON ur.template_id = t.id
+            WHERE (ur.user_id, ur.template_id, ur.attempt_count) IN (
+                SELECT ur2.user_id, ur2.template_id, ur2.attempt_count
+                FROM user_responses ur2
+                JOIN problem_templates t2 ON ur2.template_id = t2.id
+                WHERE ur2.user_id = %s AND COALESCE(ur2.paper_id, t2.paper_id) = %s
+                GROUP BY ur2.template_id, ur2.attempt_count
+                HAVING SUM(CASE WHEN ur2.is_correct THEN 1 ELSE 0 END) = COUNT(*)
             )
-            AND is_correct = TRUE
+            AND ur.is_correct = TRUE
         """, (user_id, selected_paper_id))
         stats = cursor.fetchone()
 
@@ -2111,14 +2157,7 @@ def login():
                 session['display_name'] = get_display_name(user)
                 session['avatar_filename'] = user.get('avatar_filename') or DEFAULT_AVATAR
                 session['is_admin'] = (user['username'] == 'admin')
-
-                if user['username'] != 'admin':
-                    session_token = uuid.uuid4().hex
-                    cursor.execute("UPDATE users SET current_session_token = %s WHERE id = %s", (session_token, user['id']))
-                    conn.commit()
-                    session['session_token'] = session_token
-                else:
-                    session.pop('session_token', None)
+                session.pop('session_token', None)
 
                 if not user.get('password_changed', True):
                     session['show_password_modal'] = True
@@ -2140,23 +2179,13 @@ def login():
 
 @app.route('/logout')
 def logout():
-    if 'user_id' in session and session.get('username') != 'admin':
-        conn = get_db_connection()
-        if conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute("UPDATE users SET current_session_token = NULL WHERE id = %s", (session['user_id'],))
-                conn.commit()
-            finally:
-                cursor.close()
-                conn.close()
     session.clear()
     flash('您已成功退出。', 'success')
     return redirect(url_for('login'))
 
 
 @app.route('/user/password', methods=['POST'])
-@login_required
+@login_required(db_check=True)
 def update_password():
     current_password = request.form.get('current_password', '')
     new_password = request.form.get('new_password', '')
@@ -2204,7 +2233,7 @@ def update_password():
 
 
 @app.route('/user/name', methods=['POST'])
-@login_required
+@login_required(db_check=True)
 def update_name():
     new_name = request.form.get('name', '').strip()
     if not new_name:
@@ -2228,7 +2257,7 @@ def update_name():
 
 
 @app.route('/user/avatar', methods=['POST'])
-@login_required
+@login_required(db_check=True)
 def update_avatar():
     avatar_filename = request.form.get('avatar_filename', '')
     available_avatars = get_avatar_choices()
@@ -2290,10 +2319,13 @@ def dashboard():
                 cursor.execute(
                     """
                     SELECT 1
-                    FROM user_responses
-                    WHERE user_id = %s AND template_id = %s AND paper_id = %s
-                    GROUP BY attempt_count
-                    HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+                    FROM user_responses ur
+                    JOIN problem_templates t ON ur.template_id = t.id
+                    WHERE ur.user_id = %s
+                      AND ur.template_id = %s
+                      AND COALESCE(ur.paper_id, t.paper_id) = %s
+                    GROUP BY ur.attempt_count
+                    HAVING SUM(CASE WHEN ur.is_correct THEN 1 ELSE 0 END) = COUNT(*)
                     LIMIT 1
                     """,
                     (session['user_id'], actual_id, selected_paper_id)
@@ -2330,7 +2362,7 @@ def dashboard():
 
 
 @app.route('/select_exam_paper', methods=['POST'])
-@login_required
+@login_required(db_check=True)
 def select_exam_paper():
     paper_id = request.form.get('paper_id', type=int)
     selected = get_exam_paper_by_id(paper_id)
@@ -2518,7 +2550,7 @@ def history():
                 t.id as template_id
             FROM user_responses r
             JOIN problem_templates t ON r.template_id = t.id
-            WHERE r.user_id = %s AND r.paper_id = %s
+            WHERE r.user_id = %s AND COALESCE(r.paper_id, t.paper_id) = %s
             ORDER BY r.response_time DESC
         """, (session['user_id'], selected_paper_id))
 
@@ -2537,8 +2569,9 @@ def history():
                 COUNT(*) as total,
                 SUM(CASE WHEN is_correct = TRUE THEN 1 ELSE 0 END) as correct_count,
                 AVG(time_taken) as avg_time
-            FROM user_responses 
-            WHERE user_id = %s AND paper_id = %s
+            FROM user_responses r
+            JOIN problem_templates t ON r.template_id = t.id
+            WHERE r.user_id = %s AND COALESCE(r.paper_id, t.paper_id) = %s
         """, (session['user_id'], selected_paper_id))
 
         stats_result = cursor.fetchone()
@@ -2725,7 +2758,7 @@ def problem_ajax(problem_id):
 
 
 @app.route('/api/submit/<int:problem_id>', methods=['POST'])  # 保持参数名为 problem_id
-@login_required
+@login_required(db_check=True)
 def api_submit(problem_id):
     """API接口：提交答案 - 内部将problem_id作为显示序号使用"""
     try:
@@ -3000,7 +3033,7 @@ def admin_dashboard():
 
 
 @app.route('/admin/import/students', methods=['POST'])
-@login_required
+@login_required(db_check=True)
 def admin_import_students():
     """管理员批量导入学生（xlsx：第1列学号，第2列姓名，第3列专业，第4列班级）"""
     if session.get('username') != 'admin':
@@ -3170,7 +3203,7 @@ def admin_export_students(status):
 
 
 @app.route('/admin/exam_papers', methods=['POST'])
-@login_required
+@login_required(db_check=True)
 def admin_create_exam_paper():
     if session.get('username') != 'admin':
         flash('权限不足', 'danger')
@@ -3197,7 +3230,7 @@ def admin_create_exam_paper():
 
 
 @app.route('/admin/exam_papers/<int:paper_id>/toggle', methods=['POST'])
-@login_required
+@login_required(db_check=True)
 def admin_toggle_exam_paper(paper_id):
     if session.get('username') != 'admin':
         flash('权限不足', 'danger')
@@ -3384,7 +3417,7 @@ def admin_edit_problem(template_id):
 
 
 @app.route('/admin/delete_problem/<int:template_id>')
-@login_required
+@login_required(db_check=True)
 def admin_delete_problem(template_id):
     """删除题目并清理相关图片"""
     if session.get('username') != 'admin':
@@ -3442,7 +3475,7 @@ def admin_delete_problem(template_id):
 
 
 @app.route('/admin/update_all_status')
-@login_required
+@login_required(db_check=True)
 def update_all_status():
     """批量更新所有用户的完成状态"""
     if session.get('username') != 'admin':
@@ -3572,8 +3605,24 @@ def build_student_insight_summary(problem_stats, knowledge_stats, error_type_sta
 
     comparable = [item for item in knowledge_stats if item.get('attempted_templates')]
     if comparable:
-        best = max(comparable, key=lambda item: (item.get('correct_rate', 0), item.get('avg_attempts', 999) * -1))
-        weakest = min(comparable, key=lambda item: (item.get('correct_rate', 0), -(item.get('avg_attempts', 0))))
+        def normalized_avg_attempts(item, default_value):
+            value = item.get('avg_attempts')
+            return value if isinstance(value, (int, float)) else default_value
+
+        best = max(
+            comparable,
+            key=lambda item: (
+                item.get('correct_rate', 0),
+                normalized_avg_attempts(item, 999) * -1,
+            ),
+        )
+        weakest = min(
+            comparable,
+            key=lambda item: (
+                item.get('correct_rate', 0),
+                -normalized_avg_attempts(item, 0),
+            ),
+        )
         if best.get('label') == weakest.get('label'):
             summary.append(f"当前题库主要集中在{best['label']}，该知识点正确率为 {best.get('correct_rate', 0):.1f}%。")
         else:
@@ -4101,20 +4150,18 @@ def api_user_completion_status():
     """获取用户所有题目的完成状态"""
     try:
         conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
         selected_paper_id = resolve_selected_exam_paper_id()
-        templates = get_problem_templates_by_paper(selected_paper_id)
+        display_mapping = get_problem_display_info(selected_paper_id) if selected_paper_id else {}
 
         completion_status = {}
 
-        for template in templates:
-            template_id = template['id']
-            # 检查该题目是否已完成（有正确答题记录）
-            completion_status[template_id] = has_full_correct_attempt(cursor, session['user_id'], template_id)
-
-        cursor.close()
-        conn.close()
+        for actual_id, display_info in display_mapping.items():
+            display_number = display_info['display_number']
+            completion_status[display_number] = is_problem_completed(
+                session['user_id'],
+                actual_id,
+                selected_paper_id
+            )
 
         return jsonify({
             'success': True,
@@ -4127,6 +4174,9 @@ def api_user_completion_status():
             'success': False,
             'message': f'获取完成状态失败: {str(e)}'
         })
+    finally:
+        if 'conn' in locals() and conn:
+            conn.close()
 
 
 # 图片管理功能
@@ -4159,7 +4209,7 @@ def admin_image_manager():
 
 
 @app.route('/admin/delete_image/<filename>')
-@login_required
+@login_required(db_check=True)
 def admin_delete_image(filename):
     """删除图片"""
     if session.get('username') != 'admin':
