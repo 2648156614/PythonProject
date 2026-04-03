@@ -737,6 +737,46 @@ def is_problem_completed(user_id, template_id, paper_id=None):
         conn.close()
 
 
+def get_completion_status_map(user_id, paper_id, template_ids):
+    """批量获取题目完成状态，避免逐题查询导致的 N+1 问题。"""
+    if not template_ids:
+        return {}
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        placeholders = ', '.join(['%s'] * len(template_ids))
+        params = [user_id, *template_ids]
+        paper_filter = ""
+
+        if paper_id is not None:
+            paper_filter = "AND paper_id = %s"
+            params.insert(1, paper_id)
+
+        cursor.execute(f"""
+            SELECT t.template_id
+            FROM (
+                SELECT
+                    template_id,
+                    attempt_count,
+                    SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*) AS full_correct
+                FROM user_responses
+                WHERE user_id = %s
+                  {paper_filter}
+                  AND template_id IN ({placeholders})
+                GROUP BY template_id, attempt_count
+            ) AS t
+            WHERE t.full_correct = 1
+            GROUP BY t.template_id
+        """, params)
+
+        completed_ids = {int(row['template_id']) for row in cursor.fetchall()}
+        return {int(template_id): (int(template_id) in completed_ids) for template_id in template_ids}
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def get_latest_attempt_count(user_id, template_id, paper_id=None):
     """获取用户在某题上的最大 attempt_count，避免会话重置导致编号冲突"""
     conn = get_db_connection()
@@ -2292,9 +2332,6 @@ def home():
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-
     try:
         available_papers = get_enabled_exam_papers()
         selected_paper_id = resolve_selected_exam_paper_id()
@@ -2314,23 +2351,12 @@ def dashboard():
 
         current_display_number = 1
         if selected_paper_id and total_problems and not completed_all:
+            actual_ids = [item['actual_id'] for item in display_mapping.values()]
+            completion_map = get_completion_status_map(session['user_id'], selected_paper_id, actual_ids)
+
             for display_info in display_mapping.values():
                 actual_id = display_info['actual_id']
-                cursor.execute(
-                    """
-                    SELECT 1
-                    FROM user_responses ur
-                    JOIN problem_templates t ON ur.template_id = t.id
-                    WHERE ur.user_id = %s
-                      AND ur.template_id = %s
-                      AND COALESCE(ur.paper_id, t.paper_id) = %s
-                    GROUP BY ur.attempt_count
-                    HAVING SUM(CASE WHEN ur.is_correct THEN 1 ELSE 0 END) = COUNT(*)
-                    LIMIT 1
-                    """,
-                    (session['user_id'], actual_id, selected_paper_id)
-                )
-                if not cursor.fetchone():
+                if not completion_map.get(actual_id, False):
                     current_display_number = display_info['display_number']
                     break
 
@@ -2356,9 +2382,6 @@ def dashboard():
         print(f"数据库查询错误: {err}")
         flash('数据库查询错误', 'danger')
         return redirect(url_for('home'))
-    finally:
-        cursor.close()
-        conn.close()
 
 
 @app.route('/select_exam_paper', methods=['POST'])
@@ -4149,19 +4172,14 @@ def inject_device_status():
 def api_user_completion_status():
     """获取用户所有题目的完成状态"""
     try:
-        conn = get_db_connection()
         selected_paper_id = resolve_selected_exam_paper_id()
         display_mapping = get_problem_display_info(selected_paper_id) if selected_paper_id else {}
-
-        completion_status = {}
-
-        for actual_id, display_info in display_mapping.items():
-            display_number = display_info['display_number']
-            completion_status[display_number] = is_problem_completed(
-                session['user_id'],
-                actual_id,
-                selected_paper_id
-            )
+        actual_ids = list(display_mapping.keys())
+        completion_map = get_completion_status_map(session['user_id'], selected_paper_id, actual_ids)
+        completion_status = {
+            display_info['display_number']: completion_map.get(actual_id, False)
+            for actual_id, display_info in display_mapping.items()
+        }
 
         return jsonify({
             'success': True,
@@ -4174,9 +4192,6 @@ def api_user_completion_status():
             'success': False,
             'message': f'获取完成状态失败: {str(e)}'
         })
-    finally:
-        if 'conn' in locals() and conn:
-            conn.close()
 
 
 # 图片管理功能
