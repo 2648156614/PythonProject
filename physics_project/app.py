@@ -26,6 +26,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 SESSION_IDLE_TIMEOUT_SECONDS = 60 * 60
 MAX_LOGIN_FAILURES = 10
 LOGIN_LOCK_MINUTES = 5
+LOGIN_AUDIT_RETENTION_DAYS = 183
+LOGIN_AUDIT_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 
 app = Flask(__name__, template_folder='templates', static_folder='static', static_url_path='/static')
 app.secret_key = 'your_secret_key_here'
@@ -59,6 +61,7 @@ DB_POOL_NAME = os.getenv('DB_POOL_NAME', 'physics_app_pool')
 DB_POOL_SIZE = int(os.getenv('DB_POOL_SIZE', 20))
 DB_POOL_RESET_SESSION = os.getenv('DB_POOL_RESET_SESSION', 'true').lower() in ('1', 'true', 'yes', 'on')
 db_pool = None
+last_login_audit_cleanup_ts = 0
 
 # 图片上传配置
 UPLOAD_FOLDER = 'static/images'
@@ -352,6 +355,62 @@ def get_display_name(user):
     name = (user.get('name') if isinstance(user, dict) else None) or ''
     name = str(name).strip()
     return name or user.get('username')
+
+
+def get_client_ip():
+    """
+    获取客户端 IP。
+    优先读取 X-Forwarded-For / X-Real-IP，适配反向代理场景。
+    """
+    forwarded_for = request.headers.get('X-Forwarded-For', '')
+    if forwarded_for:
+        real_ip = forwarded_for.split(',')[0].strip()
+        if real_ip:
+            return real_ip[:45]
+
+    real_ip = (request.headers.get('X-Real-IP') or '').strip()
+    if real_ip:
+        return real_ip[:45]
+
+    return (request.remote_addr or '')[:45]
+
+
+def cleanup_expired_login_audits(cursor):
+    """按间隔清理超期登录日志，避免每次登录都触发重清理。"""
+    global last_login_audit_cleanup_ts
+    now_ts = int(time.time())
+    if now_ts - last_login_audit_cleanup_ts < LOGIN_AUDIT_CLEANUP_INTERVAL_SECONDS:
+        return
+
+    cursor.execute(
+        """
+        DELETE FROM user_login_audit_logs
+        WHERE login_time < DATE_SUB(NOW(), INTERVAL %s DAY)
+        """,
+        (LOGIN_AUDIT_RETENTION_DAYS,)
+    )
+    last_login_audit_cleanup_ts = now_ts
+
+
+def record_login_audit(cursor, user_id, login_status):
+    """
+    记录登录审计信息。
+    - login_status: success / failed / locked
+    """
+    cursor.execute(
+        """
+        INSERT INTO user_login_audit_logs (
+            user_id, username, login_status, ip_address, user_agent
+        ) VALUES (%s, %s, %s, %s, %s)
+        """,
+        (
+            user_id,
+            request.form.get('username', '').strip()[:50],
+            login_status,
+            get_client_ip(),
+            (request.headers.get('User-Agent') or '')[:512]
+        )
+    )
 
 
 def get_db_connection():
@@ -1517,6 +1576,24 @@ def initialize_database():
     """)
 
     cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_login_audit_logs (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NULL,
+        username VARCHAR(50) NOT NULL,
+        login_status VARCHAR(20) NOT NULL,
+        ip_address VARCHAR(45) DEFAULT NULL,
+        user_agent VARCHAR(512) DEFAULT NULL,
+        login_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_login_time (login_time),
+        INDEX idx_username_login_time (username, login_time),
+        INDEX idx_user_id_login_time (user_id, login_time),
+        CONSTRAINT fk_login_audit_user
+            FOREIGN KEY (user_id) REFERENCES users(id)
+            ON DELETE SET NULL
+    )
+    """)
+
+    cursor.execute("""
     CREATE TABLE IF NOT EXISTS exam_papers (
         id INT AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR(100) NOT NULL UNIQUE,
@@ -2249,6 +2326,9 @@ def login():
             if user:
                 lock_until = user.get('login_locked_until')
                 if lock_until and lock_until > now:
+                    cleanup_expired_login_audits(cursor)
+                    record_login_audit(cursor, user['id'], 'locked')
+                    conn.commit()
                     remaining_seconds = int((lock_until - now).total_seconds())
                     remaining_minutes = max(1, (remaining_seconds + 59) // 60)
                     flash(f'该账号已被临时锁定，请在约 {remaining_minutes} 分钟后重试。', 'danger')
@@ -2278,6 +2358,8 @@ def login():
                     "UPDATE users SET failed_login_attempts = 0, login_locked_until = NULL WHERE id = %s",
                     (user['id'],)
                 )
+                cleanup_expired_login_audits(cursor)
+                record_login_audit(cursor, user['id'], 'success')
                 conn.commit()
 
                 session['user_id'] = user['id']
@@ -2311,6 +2393,8 @@ def login():
                         """,
                         (failed_attempts, lock_until, user['id'])
                     )
+                    cleanup_expired_login_audits(cursor)
+                    record_login_audit(cursor, user['id'], 'locked')
                     conn.commit()
                     flash(
                         f'账号或密码连续错误超过 {MAX_LOGIN_FAILURES} 次，账号已锁定 {LOGIN_LOCK_MINUTES} 分钟。',
@@ -2322,6 +2406,13 @@ def login():
                     "UPDATE users SET failed_login_attempts = %s WHERE id = %s",
                     (failed_attempts, user['id'])
                 )
+                cleanup_expired_login_audits(cursor)
+                record_login_audit(cursor, user['id'], 'failed')
+                conn.commit()
+
+            if not user:
+                cleanup_expired_login_audits(cursor)
+                record_login_audit(cursor, None, 'failed')
                 conn.commit()
 
             flash('用户名或密码错误！', 'danger')
