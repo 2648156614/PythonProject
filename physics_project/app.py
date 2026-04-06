@@ -9,7 +9,7 @@ import re
 import time
 import uuid
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from math import pi, log
 
@@ -23,8 +23,11 @@ from openpyxl import load_workbook
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 
+SESSION_IDLE_TIMEOUT_SECONDS = 60 * 60
+
 app = Flask(__name__, template_folder='templates', static_folder='static', static_url_path='/static')
 app.secret_key = 'your_secret_key_here'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(seconds=SESSION_IDLE_TIMEOUT_SECONDS)
 logger = logging.getLogger(__name__)
 
 # Redis 配置
@@ -66,10 +69,46 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 AVATAR_FOLDER = 'static/avatars'
 AVATAR_ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.svg'}
 DEFAULT_AVATAR = 'default.svg'
-DEFAULT_PASSWORD = '123456'
 
 
 DEFAULT_EXAM_PAPER_NAME = '默认题库'
+
+
+def extract_student_id_suffix(student_id):
+    """提取学号末四位，不足四位左侧补 0，保证始终返回 4 位。"""
+    raw_value = str(student_id or '').strip()
+    if not raw_value:
+        return '0000'
+
+    cleaned_digits = re.sub(r'\D', '', raw_value)
+    source = cleaned_digits if cleaned_digits else re.sub(r'\s+', '', raw_value)
+    if not source:
+        return '0000'
+
+    return source[-4:].rjust(4, '0')
+
+
+def build_initial_password(student_id):
+    """根据学号生成初始密码：@ncst + 学号后四位。"""
+    suffix = extract_student_id_suffix(student_id)
+    return f"@ncst{suffix}"
+
+
+def is_strong_password(password):
+    """强密码校验：长度>=8，且包含小写字母、数字、特殊字符。"""
+    if not password:
+        return False
+    if len(password) < 8:
+        return False
+    if not re.search(r'[a-z]', password):
+        return False
+    if not re.search(r'\d', password):
+        return False
+    if not re.search(r'[^A-Za-z0-9]', password):
+        return False
+    if re.search(r'\s', password):
+        return False
+    return True
 
 
 def get_or_create_default_exam_paper(cursor):
@@ -504,6 +543,28 @@ def login_required(f=None, *, db_check=False):
     if f is None:
         return decorator
     return decorator(f)
+
+
+@app.before_request
+def enforce_session_idle_timeout():
+    """用户无操作超过 1 小时自动锁定（清空会话并返回登录页）。"""
+    if request.endpoint in {'login', 'logout', 'static'}:
+        return None
+
+    user_id = session.get('user_id')
+    if not user_id:
+        return None
+
+    now_ts = int(time.time())
+    last_activity = session.get('last_activity_ts')
+    if last_activity and (now_ts - int(last_activity)) > SESSION_IDLE_TIMEOUT_SECONDS:
+        session.clear()
+        flash('由于超过1小时未操作，账号已自动锁定，请重新登录。', 'warning')
+        return redirect(url_for('login'))
+
+    session.permanent = True
+    session['last_activity_ts'] = now_ts
+    return None
 
 
 def is_correct(user_answer, correct_answer):
@@ -1795,14 +1856,15 @@ def create_admin_user():
         cursor.execute("SELECT id FROM users WHERE username = 'admin'")
         if not cursor.fetchone():
             # 创建管理员用户
-            admin_password = generate_password_hash('admin123')
+            default_admin_password = '@admin123'
+            admin_password = generate_password_hash(default_admin_password)
             cursor.execute(
                 "INSERT INTO users (username, name, password, password_changed, avatar_filename) "
                 "VALUES (%s, %s, %s, %s, %s)",
                 ('admin', '管理员', admin_password, True, DEFAULT_AVATAR)
             )
             conn.commit()
-            print("管理员用户创建成功: admin / admin123")
+            print(f"管理员用户创建成功: admin / {default_admin_password}")
         else:
             print("管理员用户已存在")
     except Exception as e:
@@ -2198,9 +2260,14 @@ def login():
                 session['avatar_filename'] = user.get('avatar_filename') or DEFAULT_AVATAR
                 session['is_admin'] = (user['username'] == 'admin')
                 session.pop('session_token', None)
+                session.permanent = True
+                session['last_activity_ts'] = int(time.time())
 
                 if not user.get('password_changed', True):
                     session['show_password_modal'] = True
+                if not is_strong_password(password):
+                    session['show_password_modal'] = True
+                    flash('当前密码强度不足，请尽快修改为强密码。', 'warning')
 
                 flash('登录成功！', 'success')
                 return redirect(url_for('dashboard'))
@@ -2233,6 +2300,9 @@ def update_password():
 
     if not new_password or new_password != confirm_password:
         flash('新密码与确认密码不一致', 'danger')
+        return redirect(request.referrer or url_for('dashboard'))
+    if not is_strong_password(new_password):
+        flash('新密码必须为强密码（至少8位，包含小写字母、数字和特殊字符，且不含空格）', 'danger')
         return redirect(request.referrer or url_for('dashboard'))
 
     conn = get_db_connection()
@@ -3123,8 +3193,9 @@ def admin_import_students():
     cursor = None
     try:
         cursor = conn.cursor()
-        default_password_hash = generate_password_hash(DEFAULT_PASSWORD)
         for student_id, student_name, major, class_name in valid_rows:
+            initial_password = build_initial_password(student_id)
+            initial_password_hash = generate_password_hash(initial_password)
             cursor.execute("SELECT id FROM users WHERE username = %s", (student_id,))
             existing = cursor.fetchone()
             if existing:
@@ -3138,7 +3209,7 @@ def admin_import_students():
                         password_changed = FALSE
                     WHERE username = %s
                     """,
-                    (student_name, major, class_name, default_password_hash, student_id)
+                    (student_name, major, class_name, initial_password_hash, student_id)
                 )
                 updated_count += 1
             else:
@@ -3147,14 +3218,14 @@ def admin_import_students():
                     INSERT INTO users (username, name, major, class_name, password, password_changed, avatar_filename)
                     VALUES (%s, %s, %s, %s, %s, FALSE, %s)
                     """,
-                    (student_id, student_name, major, class_name, default_password_hash, DEFAULT_AVATAR)
+                    (student_id, student_name, major, class_name, initial_password_hash, DEFAULT_AVATAR)
                 )
                 inserted_count += 1
 
         conn.commit()
         flash(
             f'导入完成：新增 {inserted_count} 人，更新 {updated_count} 人，跳过 {skipped_rows} 行。'
-            f'初始密码统一为 {DEFAULT_PASSWORD}。',
+            f'初始密码已按“@ncst+学号后四位”自动设置。',
             'success'
         )
     except Exception as e:
