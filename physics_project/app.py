@@ -24,6 +24,8 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 
 SESSION_IDLE_TIMEOUT_SECONDS = 60 * 60
+MAX_LOGIN_FAILURES = 10
+LOGIN_LOCK_MINUTES = 5
 
 app = Flask(__name__, template_folder='templates', static_folder='static', static_url_path='/static')
 app.secret_key = 'your_secret_key_here'
@@ -1504,6 +1506,8 @@ def initialize_database():
         avatar_filename VARCHAR(255) DEFAULT 'default.svg',
         password_changed BOOLEAN DEFAULT TRUE,
         current_session_token VARCHAR(64) DEFAULT NULL,
+        failed_login_attempts INT DEFAULT 0,
+        login_locked_until DATETIME NULL,
         completed_all BOOLEAN DEFAULT FALSE,
         completed_at TIMESTAMP NULL,
         total_score INT DEFAULT 0,
@@ -1834,8 +1838,15 @@ def ensure_user_columns():
         if 'current_session_token' not in existing_columns:
             cursor.execute("ALTER TABLE users ADD COLUMN current_session_token VARCHAR(64) DEFAULT NULL AFTER password_changed")
             print("已添加 current_session_token 列")
+        if 'failed_login_attempts' not in existing_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN failed_login_attempts INT DEFAULT 0 AFTER current_session_token")
+            cursor.execute("UPDATE users SET failed_login_attempts = 0 WHERE failed_login_attempts IS NULL")
+            print("已添加 failed_login_attempts 列")
+        if 'login_locked_until' not in existing_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN login_locked_until DATETIME NULL AFTER failed_login_attempts")
+            print("已添加 login_locked_until 列")
         if 'selected_paper_id' not in existing_columns:
-            cursor.execute("ALTER TABLE users ADD COLUMN selected_paper_id INT DEFAULT NULL AFTER current_session_token")
+            cursor.execute("ALTER TABLE users ADD COLUMN selected_paper_id INT DEFAULT NULL AFTER login_locked_until")
             print("已添加 selected_paper_id 列")
         conn.commit()
     except mysql.connector.Error as err:
@@ -2227,12 +2238,21 @@ def login():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
+        now = datetime.now()
 
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
         try:
             cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
             user = cursor.fetchone()
+
+            if user:
+                lock_until = user.get('login_locked_until')
+                if lock_until and lock_until > now:
+                    remaining_seconds = int((lock_until - now).total_seconds())
+                    remaining_minutes = max(1, (remaining_seconds + 59) // 60)
+                    flash(f'该账号已被临时锁定，请在约 {remaining_minutes} 分钟后重试。', 'danger')
+                    return render_template('login.html')
 
             if user and is_password_hash(user['password']):
                 password_ok = check_password_hash(user['password'], password)
@@ -2254,6 +2274,12 @@ def login():
                             err,
                         )
 
+                cursor.execute(
+                    "UPDATE users SET failed_login_attempts = 0, login_locked_until = NULL WHERE id = %s",
+                    (user['id'],)
+                )
+                conn.commit()
+
                 session['user_id'] = user['id']
                 session['username'] = user['username']
                 session['display_name'] = get_display_name(user)
@@ -2271,6 +2297,32 @@ def login():
 
                 flash('登录成功！', 'success')
                 return redirect(url_for('dashboard'))
+
+            if user:
+                failed_attempts = (user.get('failed_login_attempts') or 0) + 1
+                lock_until = None
+                if failed_attempts > MAX_LOGIN_FAILURES:
+                    lock_until = now + timedelta(minutes=LOGIN_LOCK_MINUTES)
+                    cursor.execute(
+                        """
+                        UPDATE users
+                        SET failed_login_attempts = %s, login_locked_until = %s
+                        WHERE id = %s
+                        """,
+                        (failed_attempts, lock_until, user['id'])
+                    )
+                    conn.commit()
+                    flash(
+                        f'账号或密码连续错误超过 {MAX_LOGIN_FAILURES} 次，账号已锁定 {LOGIN_LOCK_MINUTES} 分钟。',
+                        'danger'
+                    )
+                    return render_template('login.html')
+
+                cursor.execute(
+                    "UPDATE users SET failed_login_attempts = %s WHERE id = %s",
+                    (failed_attempts, user['id'])
+                )
+                conn.commit()
 
             flash('用户名或密码错误！', 'danger')
         except mysql.connector.Error as err:
