@@ -9,7 +9,7 @@ import re
 import time
 import uuid
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from math import pi, log
 
@@ -25,6 +25,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__, template_folder='templates', static_folder='static', static_url_path='/static')
 app.secret_key = 'your_secret_key_here'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=1)
 logger = logging.getLogger(__name__)
 
 # Redis 配置
@@ -66,7 +67,7 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 AVATAR_FOLDER = 'static/avatars'
 AVATAR_ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.svg'}
 DEFAULT_AVATAR = 'default.svg'
-DEFAULT_PASSWORD = '123456'
+INACTIVE_LOCK_SECONDS = 3600
 
 
 DEFAULT_EXAM_PAPER_NAME = '默认题库'
@@ -307,6 +308,23 @@ def is_password_hash(value):
     return value.startswith('pbkdf2:') or value.startswith('scrypt:') or value.startswith('argon2:')
 
 
+def is_strong_password(password):
+    """强密码规则：至少8位，且必须包含字母、数字、特殊字符。"""
+    if not password or len(password) < 8:
+        return False
+    has_letter = bool(re.search(r'[A-Za-z]', password))
+    has_digit = bool(re.search(r'\d', password))
+    has_special = bool(re.search(r'[^A-Za-z0-9]', password))
+    return has_letter and has_digit and has_special
+
+
+def build_initial_password(student_id):
+    """初始密码：@ncst + 学号后四位（不足四位则使用全部）。"""
+    sid = str(student_id or '').strip()
+    suffix = sid[-4:] if sid else ''
+    return f"@ncst{suffix}"
+
+
 def get_display_name(user):
     name = (user.get('name') if isinstance(user, dict) else None) or ''
     name = str(name).strip()
@@ -504,6 +522,26 @@ def login_required(f=None, *, db_check=False):
     if f is None:
         return decorator
     return decorator(f)
+
+
+@app.before_request
+def enforce_inactive_lock():
+    """登录后无操作超过1小时自动锁定。"""
+    if request.endpoint in {'login', 'logout', 'static'}:
+        return
+
+    if 'user_id' not in session:
+        return
+
+    now = int(time.time())
+    last_active_at = session.get('last_active_at')
+    if last_active_at and now - int(last_active_at) > INACTIVE_LOCK_SECONDS:
+        session.clear()
+        flash('登录超时，已自动锁定，请重新登录。', 'warning')
+        return redirect(url_for('login'))
+
+    session['last_active_at'] = now
+    session.permanent = True
 
 
 def is_correct(user_answer, correct_answer):
@@ -2197,9 +2235,11 @@ def login():
                 session['display_name'] = get_display_name(user)
                 session['avatar_filename'] = user.get('avatar_filename') or DEFAULT_AVATAR
                 session['is_admin'] = (user['username'] == 'admin')
+                session['last_active_at'] = int(time.time())
+                session.permanent = True
                 session.pop('session_token', None)
 
-                if not user.get('password_changed', True):
+                if (not user.get('password_changed', True)) or (not is_strong_password(password)):
                     session['show_password_modal'] = True
 
                 flash('登录成功！', 'success')
@@ -2233,6 +2273,10 @@ def update_password():
 
     if not new_password or new_password != confirm_password:
         flash('新密码与确认密码不一致', 'danger')
+        return redirect(request.referrer or url_for('dashboard'))
+
+    if not is_strong_password(new_password):
+        flash('新密码必须至少8位，并包含字母、数字和特殊字符', 'danger')
         return redirect(request.referrer or url_for('dashboard'))
 
     conn = get_db_connection()
@@ -3123,8 +3167,8 @@ def admin_import_students():
     cursor = None
     try:
         cursor = conn.cursor()
-        default_password_hash = generate_password_hash(DEFAULT_PASSWORD)
         for student_id, student_name, major, class_name in valid_rows:
+            initial_password_hash = generate_password_hash(build_initial_password(student_id))
             cursor.execute("SELECT id FROM users WHERE username = %s", (student_id,))
             existing = cursor.fetchone()
             if existing:
@@ -3138,7 +3182,7 @@ def admin_import_students():
                         password_changed = FALSE
                     WHERE username = %s
                     """,
-                    (student_name, major, class_name, default_password_hash, student_id)
+                    (student_name, major, class_name, initial_password_hash, student_id)
                 )
                 updated_count += 1
             else:
@@ -3147,14 +3191,14 @@ def admin_import_students():
                     INSERT INTO users (username, name, major, class_name, password, password_changed, avatar_filename)
                     VALUES (%s, %s, %s, %s, %s, FALSE, %s)
                     """,
-                    (student_id, student_name, major, class_name, default_password_hash, DEFAULT_AVATAR)
+                    (student_id, student_name, major, class_name, initial_password_hash, DEFAULT_AVATAR)
                 )
                 inserted_count += 1
 
         conn.commit()
         flash(
             f'导入完成：新增 {inserted_count} 人，更新 {updated_count} 人，跳过 {skipped_rows} 行。'
-            f'初始密码统一为 {DEFAULT_PASSWORD}。',
+            '初始密码规则为 @ncst + 学号后四位。',
             'success'
         )
     except Exception as e:
