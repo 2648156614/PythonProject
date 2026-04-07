@@ -2613,6 +2613,18 @@ def select_exam_paper():
         try:
             cursor.execute("UPDATE users SET selected_paper_id = %s WHERE id = %s", (paper_id, session['user_id']))
             conn.commit()
+        except mysql.connector.Error as err:
+            # 兼容旧数据库：users 表可能还没有 selected_paper_id 列
+            if getattr(err, 'errno', None) == 1054 and "selected_paper_id" in str(err):
+                try:
+                    ensure_user_columns()
+                    cursor.execute("UPDATE users SET selected_paper_id = %s WHERE id = %s", (paper_id, session['user_id']))
+                    conn.commit()
+                except mysql.connector.Error:
+                    conn.rollback()
+            else:
+                conn.rollback()
+                raise
         finally:
             cursor.close()
             conn.close()
