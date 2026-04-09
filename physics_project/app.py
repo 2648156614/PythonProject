@@ -9,7 +9,7 @@ import re
 import time
 import uuid
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from math import pi, log
 
@@ -23,8 +23,15 @@ from openpyxl import load_workbook
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 
+SESSION_IDLE_TIMEOUT_SECONDS = 60 * 60
+MAX_LOGIN_FAILURES = 10
+LOGIN_LOCK_MINUTES = 5
+LOGIN_AUDIT_RETENTION_DAYS = 183
+LOGIN_AUDIT_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
+
 app = Flask(__name__, template_folder='templates', static_folder='static', static_url_path='/static')
 app.secret_key = 'your_secret_key_here'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(seconds=SESSION_IDLE_TIMEOUT_SECONDS)
 logger = logging.getLogger(__name__)
 
 # Redis 配置
@@ -54,6 +61,7 @@ DB_POOL_NAME = os.getenv('DB_POOL_NAME', 'physics_app_pool')
 DB_POOL_SIZE = int(os.getenv('DB_POOL_SIZE', 20))
 DB_POOL_RESET_SESSION = os.getenv('DB_POOL_RESET_SESSION', 'true').lower() in ('1', 'true', 'yes', 'on')
 db_pool = None
+last_login_audit_cleanup_ts = 0
 UPGRADE_LEGACY_PASSWORD_ON_LOGIN = os.getenv('UPGRADE_LEGACY_PASSWORD_ON_LOGIN', 'false').lower() in ('1', 'true', 'yes', 'on')
 
 # 图片上传配置
@@ -67,10 +75,46 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 AVATAR_FOLDER = 'static/avatars'
 AVATAR_ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.svg'}
 DEFAULT_AVATAR = 'default.svg'
-DEFAULT_PASSWORD = '123456'
 
 
 DEFAULT_EXAM_PAPER_NAME = '默认题库'
+
+
+def extract_student_id_suffix(student_id):
+    """提取学号末四位，不足四位左侧补 0，保证始终返回 4 位。"""
+    raw_value = str(student_id or '').strip()
+    if not raw_value:
+        return '0000'
+
+    cleaned_digits = re.sub(r'\D', '', raw_value)
+    source = cleaned_digits if cleaned_digits else re.sub(r'\s+', '', raw_value)
+    if not source:
+        return '0000'
+
+    return source[-4:].rjust(4, '0')
+
+
+def build_initial_password(student_id):
+    """根据学号生成初始密码：@ncst + 学号后四位。"""
+    suffix = extract_student_id_suffix(student_id)
+    return f"@ncst{suffix}"
+
+
+def is_strong_password(password):
+    """强密码校验：长度>=8，且包含小写字母、数字、特殊字符。"""
+    if not password:
+        return False
+    if len(password) < 8:
+        return False
+    if not re.search(r'[a-z]', password):
+        return False
+    if not re.search(r'\d', password):
+        return False
+    if not re.search(r'[^A-Za-z0-9]', password):
+        return False
+    if re.search(r'\s', password):
+        return False
+    return True
 
 
 def get_or_create_default_exam_paper(cursor):
@@ -314,6 +358,62 @@ def get_display_name(user):
     return name or user.get('username')
 
 
+def get_client_ip():
+    """
+    获取客户端 IP。
+    优先读取 X-Forwarded-For / X-Real-IP，适配反向代理场景。
+    """
+    forwarded_for = request.headers.get('X-Forwarded-For', '')
+    if forwarded_for:
+        real_ip = forwarded_for.split(',')[0].strip()
+        if real_ip:
+            return real_ip[:45]
+
+    real_ip = (request.headers.get('X-Real-IP') or '').strip()
+    if real_ip:
+        return real_ip[:45]
+
+    return (request.remote_addr or '')[:45]
+
+
+def cleanup_expired_login_audits(cursor):
+    """按间隔清理超期登录日志，避免每次登录都触发重清理。"""
+    global last_login_audit_cleanup_ts
+    now_ts = int(time.time())
+    if now_ts - last_login_audit_cleanup_ts < LOGIN_AUDIT_CLEANUP_INTERVAL_SECONDS:
+        return
+
+    cursor.execute(
+        """
+        DELETE FROM user_login_audit_logs
+        WHERE login_time < DATE_SUB(NOW(), INTERVAL %s DAY)
+        """,
+        (LOGIN_AUDIT_RETENTION_DAYS,)
+    )
+    last_login_audit_cleanup_ts = now_ts
+
+
+def record_login_audit(cursor, user_id, login_status):
+    """
+    记录登录审计信息。
+    - login_status: success / failed / locked
+    """
+    cursor.execute(
+        """
+        INSERT INTO user_login_audit_logs (
+            user_id, username, login_status, ip_address, user_agent
+        ) VALUES (%s, %s, %s, %s, %s)
+        """,
+        (
+            user_id,
+            request.form.get('username', '').strip()[:50],
+            login_status,
+            get_client_ip(),
+            (request.headers.get('User-Agent') or '')[:512]
+        )
+    )
+
+
 def get_db_connection():
     """获取数据库连接"""
     global db_pool
@@ -505,6 +605,28 @@ def login_required(f=None, *, db_check=False):
     if f is None:
         return decorator
     return decorator(f)
+
+
+@app.before_request
+def enforce_session_idle_timeout():
+    """用户无操作超过 1 小时自动锁定（清空会话并返回登录页）。"""
+    if request.endpoint in {'login', 'logout', 'static'}:
+        return None
+
+    user_id = session.get('user_id')
+    if not user_id:
+        return None
+
+    now_ts = int(time.time())
+    last_activity = session.get('last_activity_ts')
+    if last_activity and (now_ts - int(last_activity)) > SESSION_IDLE_TIMEOUT_SECONDS:
+        session.clear()
+        flash('由于超过1小时未操作，账号已自动锁定，请重新登录。', 'warning')
+        return redirect(url_for('login'))
+
+    session.permanent = True
+    session['last_activity_ts'] = now_ts
+    return None
 
 
 def is_correct(user_answer, correct_answer):
@@ -1444,11 +1566,31 @@ def initialize_database():
         avatar_filename VARCHAR(255) DEFAULT 'default.svg',
         password_changed BOOLEAN DEFAULT TRUE,
         current_session_token VARCHAR(64) DEFAULT NULL,
+        failed_login_attempts INT DEFAULT 0,
+        login_locked_until DATETIME NULL,
         completed_all BOOLEAN DEFAULT FALSE,
         completed_at TIMESTAMP NULL,
         total_score INT DEFAULT 0,
         total_time FLOAT DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_login_audit_logs (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NULL,
+        username VARCHAR(50) NOT NULL,
+        login_status VARCHAR(20) NOT NULL,
+        ip_address VARCHAR(45) DEFAULT NULL,
+        user_agent VARCHAR(512) DEFAULT NULL,
+        login_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_login_time (login_time),
+        INDEX idx_username_login_time (username, login_time),
+        INDEX idx_user_id_login_time (user_id, login_time),
+        CONSTRAINT fk_login_audit_user
+            FOREIGN KEY (user_id) REFERENCES users(id)
+            ON DELETE SET NULL
     )
     """)
 
@@ -1774,8 +1916,15 @@ def ensure_user_columns():
         if 'current_session_token' not in existing_columns:
             cursor.execute("ALTER TABLE users ADD COLUMN current_session_token VARCHAR(64) DEFAULT NULL AFTER password_changed")
             print("已添加 current_session_token 列")
+        if 'failed_login_attempts' not in existing_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN failed_login_attempts INT DEFAULT 0 AFTER current_session_token")
+            cursor.execute("UPDATE users SET failed_login_attempts = 0 WHERE failed_login_attempts IS NULL")
+            print("已添加 failed_login_attempts 列")
+        if 'login_locked_until' not in existing_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN login_locked_until DATETIME NULL AFTER failed_login_attempts")
+            print("已添加 login_locked_until 列")
         if 'selected_paper_id' not in existing_columns:
-            cursor.execute("ALTER TABLE users ADD COLUMN selected_paper_id INT DEFAULT NULL AFTER current_session_token")
+            cursor.execute("ALTER TABLE users ADD COLUMN selected_paper_id INT DEFAULT NULL AFTER login_locked_until")
             print("已添加 selected_paper_id 列")
         conn.commit()
     except mysql.connector.Error as err:
@@ -1796,14 +1945,15 @@ def create_admin_user():
         cursor.execute("SELECT id FROM users WHERE username = 'admin'")
         if not cursor.fetchone():
             # 创建管理员用户
-            admin_password = generate_password_hash('admin123')
+            default_admin_password = '@admin123'
+            admin_password = generate_password_hash(default_admin_password)
             cursor.execute(
                 "INSERT INTO users (username, name, password, password_changed, avatar_filename) "
                 "VALUES (%s, %s, %s, %s, %s)",
                 ('admin', '管理员', admin_password, True, DEFAULT_AVATAR)
             )
             conn.commit()
-            print("管理员用户创建成功: admin / admin123")
+            print(f"管理员用户创建成功: admin / {default_admin_password}")
         else:
             print("管理员用户已存在")
     except Exception as e:
@@ -2166,12 +2316,24 @@ def login():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
+        now = datetime.now()
 
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
         try:
             cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
             user = cursor.fetchone()
+
+            if user:
+                lock_until = user.get('login_locked_until')
+                if lock_until and lock_until > now:
+                    cleanup_expired_login_audits(cursor)
+                    record_login_audit(cursor, user['id'], 'locked')
+                    conn.commit()
+                    remaining_seconds = int((lock_until - now).total_seconds())
+                    remaining_minutes = max(1, (remaining_seconds + 59) // 60)
+                    flash(f'该账号已被临时锁定，请在约 {remaining_minutes} 分钟后重试。', 'danger')
+                    return render_template('login.html')
 
             if user and is_password_hash(user['password']):
                 password_ok = check_password_hash(user['password'], password)
@@ -2193,15 +2355,28 @@ def login():
                             err,
                         )
 
+                cursor.execute(
+                    "UPDATE users SET failed_login_attempts = 0, login_locked_until = NULL WHERE id = %s",
+                    (user['id'],)
+                )
+                cleanup_expired_login_audits(cursor)
+                record_login_audit(cursor, user['id'], 'success')
+                conn.commit()
+
                 session['user_id'] = user['id']
                 session['username'] = user['username']
                 session['display_name'] = get_display_name(user)
                 session['avatar_filename'] = user.get('avatar_filename') or DEFAULT_AVATAR
                 session['is_admin'] = (user['username'] == 'admin')
                 session.pop('session_token', None)
+                session.permanent = True
+                session['last_activity_ts'] = int(time.time())
 
                 if not user.get('password_changed', True):
                     session['show_password_modal'] = True
+                if not is_strong_password(password):
+                    session['show_password_modal'] = True
+                    flash('当前密码强度不足，请尽快修改为强密码。', 'warning')
 
                 flash('登录成功！', 'success')
                 selected_paper_id = resolve_selected_exam_paper_id()
@@ -2209,6 +2384,41 @@ def login():
                 if first_problem_mapping:
                     return redirect(url_for('problem_ajax', problem_id=1))
                 return redirect(url_for('dashboard'))
+
+            if user:
+                failed_attempts = (user.get('failed_login_attempts') or 0) + 1
+                lock_until = None
+                if failed_attempts > MAX_LOGIN_FAILURES:
+                    lock_until = now + timedelta(minutes=LOGIN_LOCK_MINUTES)
+                    cursor.execute(
+                        """
+                        UPDATE users
+                        SET failed_login_attempts = %s, login_locked_until = %s
+                        WHERE id = %s
+                        """,
+                        (failed_attempts, lock_until, user['id'])
+                    )
+                    cleanup_expired_login_audits(cursor)
+                    record_login_audit(cursor, user['id'], 'locked')
+                    conn.commit()
+                    flash(
+                        f'账号或密码连续错误超过 {MAX_LOGIN_FAILURES} 次，账号已锁定 {LOGIN_LOCK_MINUTES} 分钟。',
+                        'danger'
+                    )
+                    return render_template('login.html')
+
+                cursor.execute(
+                    "UPDATE users SET failed_login_attempts = %s WHERE id = %s",
+                    (failed_attempts, user['id'])
+                )
+                cleanup_expired_login_audits(cursor)
+                record_login_audit(cursor, user['id'], 'failed')
+                conn.commit()
+
+            if not user:
+                cleanup_expired_login_audits(cursor)
+                record_login_audit(cursor, None, 'failed')
+                conn.commit()
 
             flash('用户名或密码错误！', 'danger')
         except mysql.connector.Error as err:
@@ -2238,6 +2448,9 @@ def update_password():
 
     if not new_password or new_password != confirm_password:
         flash('新密码与确认密码不一致', 'danger')
+        return redirect(request.referrer or url_for('dashboard'))
+    if not is_strong_password(new_password):
+        flash('新密码必须为强密码（至少8位，包含小写字母、数字和特殊字符，且不含空格）', 'danger')
         return redirect(request.referrer or url_for('dashboard'))
 
     conn = get_db_connection()
@@ -2405,6 +2618,18 @@ def select_exam_paper():
         try:
             cursor.execute("UPDATE users SET selected_paper_id = %s WHERE id = %s", (paper_id, session['user_id']))
             conn.commit()
+        except mysql.connector.Error as err:
+            # 兼容旧数据库：users 表可能还没有 selected_paper_id 列
+            if getattr(err, 'errno', None) == 1054 and "selected_paper_id" in str(err):
+                try:
+                    ensure_user_columns()
+                    cursor.execute("UPDATE users SET selected_paper_id = %s WHERE id = %s", (paper_id, session['user_id']))
+                    conn.commit()
+                except mysql.connector.Error:
+                    conn.rollback()
+            else:
+                conn.rollback()
+                raise
         finally:
             cursor.close()
             conn.close()
@@ -3128,8 +3353,9 @@ def admin_import_students():
     cursor = None
     try:
         cursor = conn.cursor()
-        default_password_hash = generate_password_hash(DEFAULT_PASSWORD)
         for student_id, student_name, major, class_name in valid_rows:
+            initial_password = build_initial_password(student_id)
+            initial_password_hash = generate_password_hash(initial_password)
             cursor.execute("SELECT id FROM users WHERE username = %s", (student_id,))
             existing = cursor.fetchone()
             if existing:
@@ -3143,7 +3369,7 @@ def admin_import_students():
                         password_changed = FALSE
                     WHERE username = %s
                     """,
-                    (student_name, major, class_name, default_password_hash, student_id)
+                    (student_name, major, class_name, initial_password_hash, student_id)
                 )
                 updated_count += 1
             else:
@@ -3152,14 +3378,14 @@ def admin_import_students():
                     INSERT INTO users (username, name, major, class_name, password, password_changed, avatar_filename)
                     VALUES (%s, %s, %s, %s, %s, FALSE, %s)
                     """,
-                    (student_id, student_name, major, class_name, default_password_hash, DEFAULT_AVATAR)
+                    (student_id, student_name, major, class_name, initial_password_hash, DEFAULT_AVATAR)
                 )
                 inserted_count += 1
 
         conn.commit()
         flash(
             f'导入完成：新增 {inserted_count} 人，更新 {updated_count} 人，跳过 {skipped_rows} 行。'
-            f'初始密码统一为 {DEFAULT_PASSWORD}。',
+            f'初始密码已按“@ncst+学号后四位”自动设置。',
             'success'
         )
     except Exception as e:

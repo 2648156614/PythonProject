@@ -2,7 +2,7 @@ import os
 import sys
 import logging
 from datetime import datetime
-from app import app, initialize_database, create_admin_user, repair_database
+from app import app, initialize_database, ensure_user_columns, create_admin_user, repair_database
 
 
 # 配置日志
@@ -61,6 +61,7 @@ if __name__ == '__main__':
         # 初始化数据库（注意：多实例同时启动时可能会同时跑一遍）
         print("📊 初始化数据库...")
         initialize_database()
+        ensure_user_columns()
         create_admin_user()
         repair_database()
 
