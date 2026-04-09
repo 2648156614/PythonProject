@@ -18,7 +18,7 @@ from mysql.connector import pooling
 import numpy as np
 import redis
 import sympy as sp
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, abort
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, abort, make_response
 from openpyxl import load_workbook
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -58,7 +58,8 @@ db_config = {
 }
 
 DB_POOL_NAME = os.getenv('DB_POOL_NAME', 'physics_app_pool')
-DB_POOL_SIZE = int(os.getenv('DB_POOL_SIZE', 100))
+MYSQL_CONNECTOR_POOL_MAX_SIZE = 32
+DB_POOL_SIZE = int(os.getenv('DB_POOL_SIZE', 32))
 DB_POOL_RESET_SESSION = os.getenv('DB_POOL_RESET_SESSION', 'true').lower() in ('1', 'true', 'yes', 'on')
 db_pool = None
 last_login_audit_cleanup_ts = 0
@@ -419,13 +420,21 @@ def get_db_connection():
     global db_pool
     try:
         if db_pool is None:
+            normalized_pool_size = max(1, min(DB_POOL_SIZE, MYSQL_CONNECTOR_POOL_MAX_SIZE))
+            if normalized_pool_size != DB_POOL_SIZE:
+                logger.warning(
+                    "DB_POOL_SIZE=%s 超出 mysql-connector 支持范围，已自动调整为 %s",
+                    DB_POOL_SIZE,
+                    normalized_pool_size,
+                )
+
             db_pool = pooling.MySQLConnectionPool(
                 pool_name=DB_POOL_NAME,
-                pool_size=DB_POOL_SIZE,
+                pool_size=normalized_pool_size,
                 pool_reset_session=DB_POOL_RESET_SESSION,
                 **db_config
             )
-            logger.info("MySQL连接池初始化成功: %s, 大小=%s", DB_POOL_NAME, DB_POOL_SIZE)
+            logger.info("MySQL连接池初始化成功: %s, 大小=%s", DB_POOL_NAME, normalized_pool_size)
 
         conn = db_pool.get_connection()
         conn.ping(reconnect=True, attempts=1, delay=0)
@@ -2382,11 +2391,11 @@ def login():
                     flash('当前密码强度不足，请尽快修改为强密码。', 'warning')
 
                 flash('登录成功！', 'success')
-                selected_paper_id = resolve_selected_exam_paper_id()
-                first_problem_mapping = get_problem_display_info(selected_paper_id) if selected_paper_id else {}
-                if first_problem_mapping:
-                    return redirect(url_for('problem_ajax', problem_id=1))
-                return redirect(url_for('dashboard'))
+                # 登录阶段仅建立会话，题库映射延迟到首个业务页按需加载，缩短登录路径。
+                # 这里返回轻量中转页，避免 POST /login 响应链路被 dashboard 首屏查询放大。
+                response = make_response(render_template('post_login_redirect.html', target_url=url_for('dashboard')))
+                response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+                return response
 
             if user:
                 failed_attempts = (user.get('failed_login_attempts') or 0) + 1
