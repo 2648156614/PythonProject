@@ -2382,10 +2382,7 @@ def login():
                     flash('当前密码强度不足，请尽快修改为强密码。', 'warning')
 
                 flash('登录成功！', 'success')
-                selected_paper_id = resolve_selected_exam_paper_id()
-                first_problem_mapping = get_problem_display_info(selected_paper_id) if selected_paper_id else {}
-                if first_problem_mapping:
-                    return redirect(url_for('problem_ajax', problem_id=1))
+                # 登录阶段仅建立会话，题库映射延迟到首个业务页按需加载，缩短登录路径。
                 return redirect(url_for('dashboard'))
 
             if user:
