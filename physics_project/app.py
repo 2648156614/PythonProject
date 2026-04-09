@@ -18,7 +18,7 @@ from mysql.connector import pooling
 import numpy as np
 import redis
 import sympy as sp
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, abort
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, abort, make_response
 from openpyxl import load_workbook
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -2392,7 +2392,10 @@ def login():
 
                 flash('登录成功！', 'success')
                 # 登录阶段仅建立会话，题库映射延迟到首个业务页按需加载，缩短登录路径。
-                return redirect(url_for('dashboard'))
+                # 这里返回轻量中转页，避免 POST /login 响应链路被 dashboard 首屏查询放大。
+                response = make_response(render_template('post_login_redirect.html', target_url=url_for('dashboard')))
+                response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+                return response
 
             if user:
                 failed_attempts = (user.get('failed_login_attempts') or 0) + 1
