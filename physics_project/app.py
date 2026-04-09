@@ -58,7 +58,7 @@ db_config = {
 }
 
 DB_POOL_NAME = os.getenv('DB_POOL_NAME', 'physics_app_pool')
-DB_POOL_SIZE = int(os.getenv('DB_POOL_SIZE', 20))
+DB_POOL_SIZE = int(os.getenv('DB_POOL_SIZE', 100))
 DB_POOL_RESET_SESSION = os.getenv('DB_POOL_RESET_SESSION', 'true').lower() in ('1', 'true', 'yes', 'on')
 db_pool = None
 last_login_audit_cleanup_ts = 0
@@ -2319,6 +2319,9 @@ def login():
         now = datetime.now()
 
         conn = get_db_connection()
+        if not conn:
+            flash('系统繁忙，请稍后重试', 'danger')
+            return render_template('login.html'), 503
         cursor = conn.cursor(dictionary=True)
         try:
             cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
