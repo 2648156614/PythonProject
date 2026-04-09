@@ -32,8 +32,23 @@ def get_port() -> int:
         sys.exit(1)
 
 
+def get_int_env(name: str, default: int, minimum: int = 1) -> int:
+    raw = os.environ.get(name, str(default)).strip()
+    try:
+        value = int(raw)
+        if value < minimum:
+            raise ValueError(f"{name} must be >= {minimum}")
+        return value
+    except Exception:
+        print(f"❌ 环境变量 {name} 无效: {raw}，已回退为默认值 {default}")
+        return default
+
+
 if __name__ == '__main__':
     port = get_port()
+    waitress_threads = get_int_env("WAITRESS_THREADS", 32, minimum=1)
+    waitress_connection_limit = get_int_env("WAITRESS_CONNECTION_LIMIT", 4000, minimum=1)
+    waitress_channel_timeout = get_int_env("WAITRESS_CHANNEL_TIMEOUT", 120, minimum=10)
     print("🚀 启动物理考试系统服务器...")
 
     # 设置日志（不同端口不同日志文件）
@@ -55,8 +70,9 @@ if __name__ == '__main__':
 
         print("🎯 服务器配置信息:")
         print(f"   - 地址: http://0.0.0.0:{port}")
-        print(f"   - 线程数: 12")
-        print(f"   - 最大连接: 2000")
+        print(f"   - 线程数: {waitress_threads}")
+        print(f"   - 最大连接: {waitress_connection_limit}")
+        print(f"   - channel_timeout: {waitress_channel_timeout}")
         print(f"   - 启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("=" * 50)
 
@@ -65,10 +81,10 @@ if __name__ == '__main__':
             app,
             host='0.0.0.0',
             port=port,
-            threads=12,              # 建议 4 实例时先用 12（比 16 更稳）
-            connection_limit=2000,
+            threads=waitress_threads,
+            connection_limit=waitress_connection_limit,
             asyncore_use_poll=True,
-            channel_timeout=300,
+            channel_timeout=waitress_channel_timeout,
             ident=f"Physics Exam System :{port}"
         )
 

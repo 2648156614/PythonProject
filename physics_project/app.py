@@ -62,6 +62,7 @@ DB_POOL_SIZE = int(os.getenv('DB_POOL_SIZE', 20))
 DB_POOL_RESET_SESSION = os.getenv('DB_POOL_RESET_SESSION', 'true').lower() in ('1', 'true', 'yes', 'on')
 db_pool = None
 last_login_audit_cleanup_ts = 0
+UPGRADE_LEGACY_PASSWORD_ON_LOGIN = os.getenv('UPGRADE_LEGACY_PASSWORD_ON_LOGIN', 'false').lower() in ('1', 'true', 'yes', 'on')
 
 # 图片上传配置
 UPLOAD_FOLDER = 'static/images'
@@ -2340,7 +2341,7 @@ def login():
                 password_ok = user is not None and user['password'] == password
 
             if user and password_ok:
-                if not is_password_hash(user['password']):
+                if UPGRADE_LEGACY_PASSWORD_ON_LOGIN and not is_password_hash(user['password']):
                     new_hash = generate_password_hash(password)
                     try:
                         cursor.execute("UPDATE users SET password = %s WHERE id = %s", (new_hash, user['id']))
@@ -2378,6 +2379,10 @@ def login():
                     flash('当前密码强度不足，请尽快修改为强密码。', 'warning')
 
                 flash('登录成功！', 'success')
+                selected_paper_id = resolve_selected_exam_paper_id()
+                first_problem_mapping = get_problem_display_info(selected_paper_id) if selected_paper_id else {}
+                if first_problem_mapping:
+                    return redirect(url_for('problem_ajax', problem_id=1))
                 return redirect(url_for('dashboard'))
 
             if user:
@@ -3006,7 +3011,7 @@ def problem_ajax(problem_id):
 
 
 @app.route('/api/submit/<int:problem_id>', methods=['POST'])  # 保持参数名为 problem_id
-@login_required(db_check=True)
+@login_required
 def api_submit(problem_id):
     """API接口：提交答案 - 内部将problem_id作为显示序号使用"""
     try:
