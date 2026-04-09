@@ -58,7 +58,8 @@ db_config = {
 }
 
 DB_POOL_NAME = os.getenv('DB_POOL_NAME', 'physics_app_pool')
-DB_POOL_SIZE = int(os.getenv('DB_POOL_SIZE', 100))
+MYSQL_CONNECTOR_POOL_MAX_SIZE = 32
+DB_POOL_SIZE = int(os.getenv('DB_POOL_SIZE', 32))
 DB_POOL_RESET_SESSION = os.getenv('DB_POOL_RESET_SESSION', 'true').lower() in ('1', 'true', 'yes', 'on')
 db_pool = None
 last_login_audit_cleanup_ts = 0
@@ -419,13 +420,21 @@ def get_db_connection():
     global db_pool
     try:
         if db_pool is None:
+            normalized_pool_size = max(1, min(DB_POOL_SIZE, MYSQL_CONNECTOR_POOL_MAX_SIZE))
+            if normalized_pool_size != DB_POOL_SIZE:
+                logger.warning(
+                    "DB_POOL_SIZE=%s 超出 mysql-connector 支持范围，已自动调整为 %s",
+                    DB_POOL_SIZE,
+                    normalized_pool_size,
+                )
+
             db_pool = pooling.MySQLConnectionPool(
                 pool_name=DB_POOL_NAME,
-                pool_size=DB_POOL_SIZE,
+                pool_size=normalized_pool_size,
                 pool_reset_session=DB_POOL_RESET_SESSION,
                 **db_config
             )
-            logger.info("MySQL连接池初始化成功: %s, 大小=%s", DB_POOL_NAME, DB_POOL_SIZE)
+            logger.info("MySQL连接池初始化成功: %s, 大小=%s", DB_POOL_NAME, normalized_pool_size)
 
         conn = db_pool.get_connection()
         conn.ping(reconnect=True, attempts=1, delay=0)
