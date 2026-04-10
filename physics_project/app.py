@@ -6,6 +6,7 @@ import math
 import os
 import random
 import re
+import threading
 import time
 import uuid
 from decimal import Decimal
@@ -63,6 +64,8 @@ DB_POOL_SIZE = int(os.getenv('DB_POOL_SIZE', 32))
 DB_POOL_RESET_SESSION = os.getenv('DB_POOL_RESET_SESSION', 'true').lower() in ('1', 'true', 'yes', 'on')
 db_pool = None
 last_login_audit_cleanup_ts = 0
+login_audit_cleanup_lock = threading.Lock()
+login_audit_cleanup_running = False
 UPGRADE_LEGACY_PASSWORD_ON_LOGIN = os.getenv('UPGRADE_LEGACY_PASSWORD_ON_LOGIN', 'false').lower() in ('1', 'true', 'yes', 'on')
 
 # 图片上传配置
@@ -377,21 +380,59 @@ def get_client_ip():
     return (request.remote_addr or '')[:45]
 
 
-def cleanup_expired_login_audits(cursor):
-    """按间隔清理超期登录日志，避免每次登录都触发重清理。"""
-    global last_login_audit_cleanup_ts
+def cleanup_expired_login_audits():
+    """按间隔清理超期登录日志，采用后台批量删除，避免阻塞登录请求。"""
+    global last_login_audit_cleanup_ts, login_audit_cleanup_running
     now_ts = int(time.time())
     if now_ts - last_login_audit_cleanup_ts < LOGIN_AUDIT_CLEANUP_INTERVAL_SECONDS:
         return
+    with login_audit_cleanup_lock:
+        if login_audit_cleanup_running:
+            return
+        login_audit_cleanup_running = True
 
-    cursor.execute(
-        """
-        DELETE FROM user_login_audit_logs
-        WHERE login_time < DATE_SUB(NOW(), INTERVAL %s DAY)
-        """,
-        (LOGIN_AUDIT_RETENTION_DAYS,)
-    )
-    last_login_audit_cleanup_ts = now_ts
+    def _run_cleanup():
+        global last_login_audit_cleanup_ts, login_audit_cleanup_running
+        conn = None
+        cursor = None
+        try:
+            conn = get_db_connection()
+            if not conn:
+                return
+            cursor = conn.cursor()
+            total_deleted = 0
+            max_batches = 20
+            batch_size = 1000
+            for _ in range(max_batches):
+                cursor.execute(
+                    """
+                    DELETE FROM user_login_audit_logs
+                    WHERE login_time < DATE_SUB(NOW(), INTERVAL %s DAY)
+                    LIMIT %s
+                    """,
+                    (LOGIN_AUDIT_RETENTION_DAYS, batch_size)
+                )
+                deleted = cursor.rowcount or 0
+                if deleted <= 0:
+                    break
+                total_deleted += deleted
+                conn.commit()
+            last_login_audit_cleanup_ts = int(time.time())
+            if total_deleted:
+                logger.info("登录审计日志后台清理完成，删除 %s 条", total_deleted)
+        except mysql.connector.Error as err:
+            if conn:
+                conn.rollback()
+            logger.warning("登录审计日志后台清理失败: %s", err)
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+            with login_audit_cleanup_lock:
+                login_audit_cleanup_running = False
+
+    threading.Thread(target=_run_cleanup, daemon=True).start()
 
 
 def record_login_audit(cursor, user_id, login_status):
@@ -2322,6 +2363,7 @@ def register():
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    cleanup_expired_login_audits()
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
@@ -2333,13 +2375,21 @@ def login():
             return render_template('login.html'), 503
         cursor = conn.cursor(dictionary=True)
         try:
-            cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
+            cursor.execute(
+                """
+                SELECT
+                    id, username, name, password, avatar_filename, password_changed,
+                    failed_login_attempts, login_locked_until
+                FROM users
+                WHERE username = %s
+                """,
+                (username,)
+            )
             user = cursor.fetchone()
 
             if user:
                 lock_until = user.get('login_locked_until')
                 if lock_until and lock_until > now:
-                    cleanup_expired_login_audits(cursor)
                     record_login_audit(cursor, user['id'], 'locked')
                     conn.commit()
                     remaining_seconds = int((lock_until - now).total_seconds())
@@ -2367,11 +2417,11 @@ def login():
                             err,
                         )
 
-                cursor.execute(
-                    "UPDATE users SET failed_login_attempts = 0, login_locked_until = NULL WHERE id = %s",
-                    (user['id'],)
-                )
-                cleanup_expired_login_audits(cursor)
+                if (user.get('failed_login_attempts') or 0) > 0 or user.get('login_locked_until'):
+                    cursor.execute(
+                        "UPDATE users SET failed_login_attempts = 0, login_locked_until = NULL WHERE id = %s",
+                        (user['id'],)
+                    )
                 record_login_audit(cursor, user['id'], 'success')
                 conn.commit()
 
@@ -2410,7 +2460,6 @@ def login():
                         """,
                         (failed_attempts, lock_until, user['id'])
                     )
-                    cleanup_expired_login_audits(cursor)
                     record_login_audit(cursor, user['id'], 'locked')
                     conn.commit()
                     flash(
@@ -2423,12 +2472,10 @@ def login():
                     "UPDATE users SET failed_login_attempts = %s WHERE id = %s",
                     (failed_attempts, user['id'])
                 )
-                cleanup_expired_login_audits(cursor)
                 record_login_audit(cursor, user['id'], 'failed')
                 conn.commit()
 
             if not user:
-                cleanup_expired_login_audits(cursor)
                 record_login_audit(cursor, None, 'failed')
                 conn.commit()
 
