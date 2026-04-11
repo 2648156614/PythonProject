@@ -9,6 +9,7 @@ import re
 import threading
 import time
 import uuid
+import queue
 from decimal import Decimal
 from datetime import datetime, timedelta
 from functools import wraps
@@ -67,6 +68,12 @@ last_login_audit_cleanup_ts = 0
 login_audit_cleanup_lock = threading.Lock()
 login_audit_cleanup_running = False
 UPGRADE_LEGACY_PASSWORD_ON_LOGIN = os.getenv('UPGRADE_LEGACY_PASSWORD_ON_LOGIN', 'false').lower() in ('1', 'true', 'yes', 'on')
+LOGIN_AUDIT_QUEUE_MAXSIZE = int(os.getenv('LOGIN_AUDIT_QUEUE_MAXSIZE', 20000))
+LOGIN_AUDIT_BATCH_SIZE = int(os.getenv('LOGIN_AUDIT_BATCH_SIZE', 200))
+LOGIN_AUDIT_FLUSH_INTERVAL_SECONDS = float(os.getenv('LOGIN_AUDIT_FLUSH_INTERVAL_SECONDS', 0.5))
+login_audit_queue = queue.Queue(maxsize=max(1, LOGIN_AUDIT_QUEUE_MAXSIZE))
+login_audit_worker_lock = threading.Lock()
+login_audit_worker_started = False
 
 # 图片上传配置
 UPLOAD_FOLDER = 'static/images'
@@ -454,6 +461,93 @@ def record_login_audit(cursor, user_id, login_status):
             (request.headers.get('User-Agent') or '')[:512]
         )
     )
+
+
+def _build_login_audit_payload(user_id, login_status):
+    return (
+        user_id,
+        request.form.get('username', '').strip()[:50],
+        login_status,
+        get_client_ip(),
+        (request.headers.get('User-Agent') or '')[:512]
+    )
+
+
+def _insert_login_audit_batch(cursor, batch_payload):
+    cursor.executemany(
+        """
+        INSERT INTO user_login_audit_logs (
+            user_id, username, login_status, ip_address, user_agent
+        ) VALUES (%s, %s, %s, %s, %s)
+        """,
+        batch_payload
+    )
+
+
+def _start_login_audit_worker_once():
+    global login_audit_worker_started
+    if login_audit_worker_started:
+        return
+    with login_audit_worker_lock:
+        if login_audit_worker_started:
+            return
+
+        def _worker():
+            while True:
+                payload = login_audit_queue.get()
+                if payload is None:
+                    login_audit_queue.task_done()
+                    continue
+
+                batch = [payload]
+                deadline = time.time() + LOGIN_AUDIT_FLUSH_INTERVAL_SECONDS
+                while len(batch) < LOGIN_AUDIT_BATCH_SIZE:
+                    timeout = max(0, deadline - time.time())
+                    if timeout <= 0:
+                        break
+                    try:
+                        next_payload = login_audit_queue.get(timeout=timeout)
+                    except queue.Empty:
+                        break
+                    if next_payload is None:
+                        login_audit_queue.task_done()
+                        continue
+                    batch.append(next_payload)
+
+                conn = None
+                cursor = None
+                try:
+                    conn = get_db_connection()
+                    if conn:
+                        cursor = conn.cursor()
+                        _insert_login_audit_batch(cursor, batch)
+                        conn.commit()
+                except mysql.connector.Error as err:
+                    if conn:
+                        conn.rollback()
+                    logger.warning("登录审计异步批量写入失败: %s", err)
+                finally:
+                    if cursor:
+                        cursor.close()
+                    if conn:
+                        conn.close()
+                    for _ in batch:
+                        login_audit_queue.task_done()
+
+        threading.Thread(target=_worker, daemon=True, name='login-audit-worker').start()
+        login_audit_worker_started = True
+
+
+def enqueue_login_audit(user_id, login_status, cursor=None):
+    payload = _build_login_audit_payload(user_id, login_status)
+    _start_login_audit_worker_once()
+    try:
+        login_audit_queue.put_nowait(payload)
+    except queue.Full:
+        if cursor is not None:
+            record_login_audit(cursor, user_id, login_status)
+        else:
+            logger.warning("登录审计队列已满，且无可用游标，跳过本次审计写入。")
 
 
 def get_db_connection():
@@ -2390,8 +2484,7 @@ def login():
             if user:
                 lock_until = user.get('login_locked_until')
                 if lock_until and lock_until > now:
-                    record_login_audit(cursor, user['id'], 'locked')
-                    conn.commit()
+                    enqueue_login_audit(user['id'], 'locked', cursor=cursor)
                     remaining_seconds = int((lock_until - now).total_seconds())
                     remaining_minutes = max(1, (remaining_seconds + 59) // 60)
                     flash(f'该账号已被临时锁定，请在约 {remaining_minutes} 分钟后重试。', 'danger')
@@ -2405,24 +2498,15 @@ def login():
             if user and password_ok:
                 if UPGRADE_LEGACY_PASSWORD_ON_LOGIN and not is_password_hash(user['password']):
                     new_hash = generate_password_hash(password)
-                    try:
-                        cursor.execute("UPDATE users SET password = %s WHERE id = %s", (new_hash, user['id']))
-                        conn.commit()
-                        user['password'] = new_hash
-                    except mysql.connector.Error as err:
-                        conn.rollback()
-                        app.logger.warning(
-                            "登录时升级密码哈希失败 user_id=%s, error=%s",
-                            user['id'],
-                            err,
-                        )
+                    cursor.execute("UPDATE users SET password = %s WHERE id = %s", (new_hash, user['id']))
+                    user['password'] = new_hash
 
                 if (user.get('failed_login_attempts') or 0) > 0 or user.get('login_locked_until'):
                     cursor.execute(
                         "UPDATE users SET failed_login_attempts = 0, login_locked_until = NULL WHERE id = %s",
                         (user['id'],)
                     )
-                record_login_audit(cursor, user['id'], 'success')
+                enqueue_login_audit(user['id'], 'success', cursor=cursor)
                 conn.commit()
 
                 session['user_id'] = user['id']
@@ -2460,7 +2544,7 @@ def login():
                         """,
                         (failed_attempts, lock_until, user['id'])
                     )
-                    record_login_audit(cursor, user['id'], 'locked')
+                    enqueue_login_audit(user['id'], 'locked', cursor=cursor)
                     conn.commit()
                     flash(
                         f'账号或密码连续错误超过 {MAX_LOGIN_FAILURES} 次，账号已锁定 {LOGIN_LOCK_MINUTES} 分钟。',
@@ -2472,12 +2556,11 @@ def login():
                     "UPDATE users SET failed_login_attempts = %s WHERE id = %s",
                     (failed_attempts, user['id'])
                 )
-                record_login_audit(cursor, user['id'], 'failed')
+                enqueue_login_audit(user['id'], 'failed', cursor=cursor)
                 conn.commit()
 
             if not user:
-                record_login_audit(cursor, None, 'failed')
-                conn.commit()
+                enqueue_login_audit(None, 'failed', cursor=cursor)
 
             flash('用户名或密码错误！', 'danger')
         except mysql.connector.Error as err:
