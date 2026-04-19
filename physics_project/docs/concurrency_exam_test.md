@@ -57,6 +57,43 @@ pip install locust
 
 ## 4. 运行压测（基础命令）
 
+### 4.0 Windows（PowerShell）100 个学生账号一键压测
+
+你已有 `student001` ~ `student100`，可以直接用下面两组命令：
+
+```powershell
+cd physics_project
+python -m pip install -r requirements.txt
+python -m pip install locust
+
+# 账号区间：student001 ~ student100
+$env:LOADTEST_USERNAME_PREFIX = "student"
+$env:LOADTEST_USERNAME_WIDTH = "3"
+$env:LOADTEST_USER_START = "1"
+$env:LOADTEST_USER_END = "100"
+$env:LOADTEST_PASSWORD = "123456"
+```
+
+**仅压登录（先做这个，定位登录瓶颈）**
+
+```powershell
+locust -f docs/locustfile_login_only.py --host http://127.0.0.1:5000 --headless -u 100 -r 20 -t 3m --csv loadtest_login_100
+```
+
+**登录 + 答题混合压测（接近真实考试）**
+
+```powershell
+$env:LOADTEST_MIN_PROBLEM_ID = "1"
+$env:LOADTEST_MAX_PROBLEM_ID = "40"
+locust -f docs/locustfile_100_students.py --host http://127.0.0.1:5000 --headless -u 100 -r 20 -t 5m --csv loadtest_exam_100
+```
+
+结果文件会输出到当前目录：
+- `loadtest_login_100_stats.csv`
+- `loadtest_login_100_failures.csv`
+- `loadtest_exam_100_stats.csv`
+- `loadtest_exam_100_failures.csv`
+
 ### 4.1 交互式（看 Web UI）
 
 ```bash
@@ -209,7 +246,32 @@ mysql -uroot -p -e "SHOW ENGINE INNODB STATUS\G"
 
 ---
 
-## 10. 一句话结论
+## 10. 复合索引：MySQL 手工执行方式（Windows 同样适用）
+
+如果你希望立即手工加索引（不等服务重启自动补齐），在 MySQL 里执行：
+
+```sql
+USE physics_new3;
+
+CREATE INDEX idx_problem_templates_paper_id
+ON problem_templates (paper_id);
+
+CREATE INDEX idx_user_responses_user_paper_template_attempt
+ON user_responses (user_id, paper_id, template_id, attempt_count);
+
+CREATE INDEX idx_user_responses_user_template_attempt_correct
+ON user_responses (user_id, template_id, attempt_count, is_correct);
+
+CREATE INDEX idx_user_responses_user_response_time
+ON user_responses (user_id, response_time);
+
+CREATE INDEX idx_users_login_lock_status
+ON users (username, login_locked_until, failed_login_attempts);
+```
+
+执行后建议用 `EXPLAIN` 验证关键 SQL 是否命中索引。
+
+## 11. 一句话结论
 
 你要模拟“学生考试并发”，最实用的方法就是：
 - 用 `docs/locustfile_exam.py` 做读写混合压测；

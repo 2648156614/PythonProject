@@ -20,7 +20,7 @@ from mysql.connector import pooling
 import numpy as np
 import redis
 import sympy as sp
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, abort, make_response
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, abort
 from openpyxl import load_workbook
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -2079,6 +2079,74 @@ def ensure_user_columns():
         conn.close()
 
 
+def ensure_performance_indexes():
+    """为高并发登录/答题场景补充必要复合索引。"""
+    conn = get_db_connection()
+    if not conn:
+        print("索引检查失败：数据库连接失败")
+        return
+
+    cursor = conn.cursor(dictionary=True)
+    try:
+        index_definitions = [
+            (
+                'problem_templates',
+                'idx_problem_templates_paper_id',
+                "CREATE INDEX idx_problem_templates_paper_id ON problem_templates (paper_id)"
+            ),
+            (
+                'user_responses',
+                'idx_user_responses_user_paper_template_attempt',
+                "CREATE INDEX idx_user_responses_user_paper_template_attempt ON user_responses (user_id, paper_id, template_id, attempt_count)"
+            ),
+            (
+                'user_responses',
+                'idx_user_responses_user_template_attempt_correct',
+                "CREATE INDEX idx_user_responses_user_template_attempt_correct ON user_responses (user_id, template_id, attempt_count, is_correct)"
+            ),
+            (
+                'user_responses',
+                'idx_user_responses_user_response_time',
+                "CREATE INDEX idx_user_responses_user_response_time ON user_responses (user_id, response_time)"
+            ),
+            (
+                'users',
+                'idx_users_login_lock_status',
+                "CREATE INDEX idx_users_login_lock_status ON users (username, login_locked_until, failed_login_attempts)"
+            ),
+        ]
+
+        for table_name, index_name, ddl in index_definitions:
+            cursor.execute(
+                """
+                SELECT 1
+                FROM information_schema.statistics
+                WHERE table_schema = DATABASE()
+                  AND table_name = %s
+                  AND index_name = %s
+                LIMIT 1
+                """,
+                (table_name, index_name)
+            )
+            exists = cursor.fetchone() is not None
+            if exists:
+                continue
+
+            try:
+                cursor.execute(ddl)
+                print(f"已创建索引: {index_name}")
+            except mysql.connector.Error as err:
+                print(f"创建索引失败 {index_name}: {err}")
+
+        conn.commit()
+    except mysql.connector.Error as err:
+        print(f"检查索引失败: {err}")
+        conn.rollback()
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def create_admin_user():
     """创建管理员用户"""
     conn = get_db_connection()
@@ -2525,9 +2593,9 @@ def login():
                     flash('当前密码强度不足，请尽快修改为强密码。', 'warning')
 
                 flash('登录成功！', 'success')
-                # 登录阶段仅建立会话，题库映射延迟到首个业务页按需加载，缩短登录路径。
-                # 这里返回轻量中转页，避免 POST /login 响应链路被 dashboard 首屏查询放大。
-                response = make_response(render_template('post_login_redirect.html', target_url=url_for('dashboard')))
+                # 采用 PRG（Post/Redirect/Get）模式，避免部分终端/浏览器在 POST 登录后
+                # 停留在登录页或中转页，导致学生误以为登录失败。
+                response = redirect(url_for('dashboard'))
                 response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
                 return response
 
@@ -2705,15 +2773,16 @@ def dashboard():
 
         display_mapping = get_problem_display_info(selected_paper_id) if selected_paper_id else {}
         total_problems = len(display_mapping)
-        paper_stats = get_exam_paper_stats(selected_paper_id) if selected_paper_id else {'completed_count': 0, 'completed_all': False, 'total_time': 0}
-        completed_all = paper_stats['completed_all']
-        completed_count = paper_stats['completed_count']
+        actual_ids = [item['actual_id'] for item in display_mapping.values()]
+        completion_map = (
+            get_completion_status_map(session['user_id'], selected_paper_id, actual_ids)
+            if selected_paper_id and actual_ids else {}
+        )
+        completed_count = sum(1 for completed in completion_map.values() if completed)
+        completed_all = total_problems > 0 and completed_count >= total_problems
 
         current_display_number = 1
         if selected_paper_id and total_problems and not completed_all:
-            actual_ids = [item['actual_id'] for item in display_mapping.values()]
-            completion_map = get_completion_status_map(session['user_id'], selected_paper_id, actual_ids)
-
             for display_info in display_mapping.values():
                 actual_id = display_info['actual_id']
                 if not completion_map.get(actual_id, False):
@@ -4686,6 +4755,9 @@ if __name__ == '__main__':
 
     # 确保用户表字段完整
     ensure_user_columns()
+
+    # 为高并发场景补齐关键索引
+    ensure_performance_indexes()
 
     # 确保默认图片存在
     ensure_default_images()
