@@ -1105,7 +1105,8 @@ def generate_problem_from_template(template_id, max_attempts=10):
     x, t, h = sp.symbols('x t h')
     local_vars = {
         'x': x, 't': t, 'h': h, 'sp': sp, 'sqrt': sp.sqrt, 'exp': sp.exp,
-        'integrate': sp.integrate, 'pi': pi, 'log': log, 'sin': sp.sin, 'cos': sp.cos
+        'integrate': sp.integrate, 'diff': sp.diff,
+        'pi': pi, 'log': log, 'sin': sp.sin, 'cos': sp.cos
     }
 
     # 内存中的自适应范围（不持久化）
@@ -2541,7 +2542,7 @@ def login():
                 """
                 SELECT
                     id, username, name, password, avatar_filename, password_changed,
-                    failed_login_attempts, login_locked_until
+                    failed_login_attempts, login_locked_until, selected_paper_id
                 FROM users
                 WHERE username = %s
                 """,
@@ -2582,6 +2583,11 @@ def login():
                 session['display_name'] = get_display_name(user)
                 session['avatar_filename'] = user.get('avatar_filename') or DEFAULT_AVATAR
                 session['is_admin'] = (user['username'] == 'admin')
+                preferred_paper_id = user.get('selected_paper_id')
+                if preferred_paper_id:
+                    session['selected_exam_paper_id'] = preferred_paper_id
+                else:
+                    session.pop('selected_exam_paper_id', None)
                 session.pop('session_token', None)
                 session.permanent = True
                 session['last_activity_ts'] = int(time.time())
