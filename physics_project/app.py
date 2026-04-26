@@ -2541,7 +2541,7 @@ def login():
                 """
                 SELECT
                     id, username, name, password, avatar_filename, password_changed,
-                    failed_login_attempts, login_locked_until
+                    failed_login_attempts, login_locked_until, selected_paper_id
                 FROM users
                 WHERE username = %s
                 """,
@@ -2582,6 +2582,11 @@ def login():
                 session['display_name'] = get_display_name(user)
                 session['avatar_filename'] = user.get('avatar_filename') or DEFAULT_AVATAR
                 session['is_admin'] = (user['username'] == 'admin')
+                preferred_paper_id = user.get('selected_paper_id')
+                if preferred_paper_id:
+                    session['selected_exam_paper_id'] = preferred_paper_id
+                else:
+                    session.pop('selected_exam_paper_id', None)
                 session.pop('session_token', None)
                 session.permanent = True
                 session['last_activity_ts'] = int(time.time())
