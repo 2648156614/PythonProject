@@ -1105,7 +1105,8 @@ def generate_problem_from_template(template_id, max_attempts=10):
     x, t, h = sp.symbols('x t h')
     local_vars = {
         'x': x, 't': t, 'h': h, 'sp': sp, 'sqrt': sp.sqrt, 'exp': sp.exp,
-        'integrate': sp.integrate, 'pi': pi, 'log': log, 'sin': sp.sin, 'cos': sp.cos
+        'integrate': sp.integrate, 'diff': sp.diff,
+        'pi': pi, 'log': log, 'sin': sp.sin, 'cos': sp.cos
     }
 
     # 内存中的自适应范围（不持久化）
