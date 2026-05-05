@@ -4047,6 +4047,160 @@ def admin_students_by_status(status):
                            username=session['username'])
 
 
+@app.route('/admin/users')
+@login_required
+def admin_user_management():
+    """管理员用户管理页面：仅展示基础信息。"""
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    keyword = (request.args.get('keyword') or '').strip()
+    class_name = (request.args.get('class_name') or '').strip()
+    major = (request.args.get('major') or '').strip()
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        query = """
+            SELECT id, username, name, major, class_name, created_at
+            FROM users
+            WHERE username != 'admin'
+        """
+        params = []
+
+        if keyword:
+            query += " AND (username LIKE %s OR name LIKE %s)"
+            like = f"%{keyword}%"
+            params.extend([like, like])
+        if class_name:
+            query += " AND class_name LIKE %s"
+            params.append(f"%{class_name}%")
+        if major:
+            query += " AND major LIKE %s"
+            params.append(f"%{major}%")
+
+        query += " ORDER BY created_at DESC, id DESC"
+        cursor.execute(query, params)
+        users = cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+    return render_template('admin_user_management.html', users=users, keyword=keyword, class_name=class_name, major=major)
+
+
+@app.route('/admin/users/add', methods=['POST'])
+@login_required
+def admin_add_user():
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    username = (request.form.get('username') or '').strip()
+    name = (request.form.get('name') or '').strip()
+    major = (request.form.get('major') or '').strip()
+    class_name = (request.form.get('class_name') or '').strip()
+
+    if not username or not name:
+        flash('学号和姓名不能为空', 'danger')
+        return redirect(url_for('admin_user_management'))
+
+    initial_password = build_initial_password(username)
+    password_hash = generate_password_hash(initial_password)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT id FROM users WHERE username = %s", (username,))
+        if cursor.fetchone():
+            flash('该学号已存在', 'danger')
+            return redirect(url_for('admin_user_management'))
+
+        cursor.execute(
+            """
+            INSERT INTO users (username, name, major, class_name, password, password_changed, avatar_filename)
+            VALUES (%s, %s, %s, %s, %s, FALSE, %s)
+            """,
+            (username, name, major or None, class_name or None, password_hash, DEFAULT_AVATAR)
+        )
+        conn.commit()
+        flash(f'账户已添加，初始密码：{initial_password}', 'success')
+    except Exception as e:
+        conn.rollback()
+        flash(f'添加失败：{e}', 'danger')
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(url_for('admin_user_management'))
+
+
+@app.route('/admin/users/<int:user_id>/edit', methods=['POST'])
+@login_required
+def admin_edit_user(user_id):
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    name = (request.form.get('name') or '').strip()
+    major = (request.form.get('major') or '').strip()
+    class_name = (request.form.get('class_name') or '').strip()
+    username = (request.form.get('username') or '').strip()
+
+    if not username or not name:
+        flash('学号和姓名不能为空', 'danger')
+        return redirect(url_for('admin_user_management'))
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            UPDATE users
+            SET username = %s, name = %s, major = %s, class_name = %s
+            WHERE id = %s AND username != 'admin'
+            """,
+            (username, name, major or None, class_name or None, user_id)
+        )
+        conn.commit()
+        flash('用户信息更新成功', 'success')
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f'更新失败：{err}', 'danger')
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(url_for('admin_user_management'))
+
+
+@app.route('/admin/users/<int:user_id>/delete', methods=['POST'])
+@login_required
+def admin_delete_user(user_id):
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM user_responses WHERE user_id = %s", (user_id,))
+        cursor.execute("DELETE FROM user_progress WHERE user_id = %s", (user_id,))
+        cursor.execute("DELETE FROM login_audit_logs WHERE user_id = %s", (user_id,))
+        cursor.execute("DELETE FROM users WHERE id = %s AND username != 'admin'", (user_id,))
+        conn.commit()
+        flash('账户已删除', 'success')
+    except Exception as e:
+        conn.rollback()
+        flash(f'删除失败：{e}', 'danger')
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(url_for('admin_user_management'))
+
+
 # 管理员功能 - 学生详细答题情况
 def infer_knowledge_label(template_name):
     """根据题目名称推断知识点标签。"""
