@@ -1396,7 +1396,7 @@ def format_problem_text(problem_text, var_values):
         return str(var_values.get(var_name, match.group(0)))
 
     # 先匹配 {{var}}，再兼容历史 __var__
-    pattern = r'\{\{\s*([^{}\s]+)\s*\}\}|__([^_]+(?:_[^_]+)*)__'
+    pattern = r'\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}|__([A-Za-z_][A-Za-z0-9_]*)__'
     return re.sub(pattern, replace_var, problem_text)
 
 
@@ -1404,7 +1404,7 @@ def normalize_problem_placeholders(problem_text):
     """将旧格式 __var__ 统一转换为新格式 {{var}}，避免和 LaTeX 下标冲突。"""
     if not problem_text:
         return problem_text
-    return re.sub(r'__([^_]+(?:_[^_]+)*)__', r'{{\1}}', problem_text)
+    return re.sub(r'__([A-Za-z_][A-Za-z0-9_]*)__', r'{{\1}}', problem_text)
 
 
 def normalize_variable_specs(variables_text):
