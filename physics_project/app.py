@@ -1389,15 +1389,44 @@ def check_dynamic_consistency(answer, var_values, attempt_num):
 
 
 def format_problem_text(problem_text, var_values):
-    """格式化问题文本"""
-    pattern = r'__(\w+)__'
+    """格式化问题文本，兼容 __var__ 与 {{var}} 两种占位符。"""
 
     def replace_var(match):
-        var_name = match.group(1)
+        var_name = match.group(1) or match.group(2)
         return str(var_values.get(var_name, match.group(0)))
 
+    # 先匹配 {{var}}，再兼容历史 __var__
+    pattern = r'\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}|__([A-Za-z_][A-Za-z0-9_]*)__'
     return re.sub(pattern, replace_var, problem_text)
 
+
+def normalize_problem_placeholders(problem_text):
+    """将旧格式 __var__ 统一转换为新格式 {{var}}，避免和 LaTeX 下标冲突。"""
+    if not problem_text:
+        return problem_text
+    return re.sub(r'__([A-Za-z_][A-Za-z0-9_]*)__', r'{{\1}}', problem_text)
+
+
+def normalize_variable_specs(variables_text):
+    """标准化变量列表：去空白、去重、修复范围写法中的空格。"""
+    variables, ranges = parse_variable_specs(variables_text or '')
+    ordered = []
+    seen = set()
+    for var in variables:
+        clean = var.strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        ordered.append(clean)
+
+    parts = []
+    for var in ordered:
+        if var in ranges:
+            min_val, max_val = ranges[var]
+            parts.append(f"{var}[{min_val:g},{max_val:g}]")
+        else:
+            parts.append(var)
+    return ','.join(parts)
 
 
 def parse_variable_specs(variables_text):
@@ -1991,7 +2020,7 @@ def initialize_database():
         cursor.execute("SELECT id FROM problem_templates WHERE template_name = %s", (template['name'],))
         if not cursor.fetchone():
             # 如果有图片文件名，在problem_text中插入图片HTML
-            problem_text = template['text']
+            problem_text = normalize_problem_placeholders(template['text'])
             if template.get('image_filename'):
                 img_html = f'''
                 <div class="text-center mb-3">
@@ -2011,7 +2040,7 @@ def initialize_database():
             """, (
                 template['name'],
                 problem_text,
-                template['variables'],
+                normalize_variable_specs(template['variables']),
                 template['formula'],
                 template['answer_count'],
                 template.get('answer_units', ''),
@@ -3736,8 +3765,9 @@ def admin_add_problem():
         try:
             template_name = request.form['template_name']
             problem_text = request.form['problem_text']
-            variables = request.form['variables']
+            variables = normalize_variable_specs(request.form['variables'])
             solution_formula = request.form['solution_formula']
+            problem_text = normalize_problem_placeholders(problem_text)
             answer_count = int(request.form.get('answer_count', 1))
             difficulty = request.form.get('difficulty', 'medium')
             answer_units = request.form.get('answer_units', '')
@@ -3827,8 +3857,9 @@ def admin_edit_problem(template_id):
         try:
             template_name = request.form['template_name']
             problem_text = request.form['problem_text']
-            variables = request.form['variables']
+            variables = normalize_variable_specs(request.form['variables'])
             solution_formula = request.form['solution_formula']
+            problem_text = normalize_problem_placeholders(problem_text)
             answer_count = int(request.form.get('answer_count', 1))
             difficulty = request.form.get('difficulty', 'medium')
             answer_units = request.form.get('answer_units', '')
