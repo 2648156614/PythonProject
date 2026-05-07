@@ -19,6 +19,9 @@
             <a href="{{ url_for('admin_export_students', status='incomplete', paper_id=selected_paper_id) }}" class="btn btn-outline-warning">
                 <i class="bi bi-download"></i> 导出未完成
             </a>
+            <a href="{{ url_for('admin_user_management') }}" class="btn btn-outline-dark">
+                <i class="bi bi-people"></i> 用户管理
+            </a>
             <a href="{{ url_for('admin_all_problems_stats', paper_id=selected_paper_id) }}" class="btn btn-info">
                 <i class="bi bi-graph-up"></i> 题目统计
             </a>

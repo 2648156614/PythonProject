@@ -20,7 +20,7 @@ from mysql.connector import pooling
 import numpy as np
 import redis
 import sympy as sp
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, abort, make_response
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, abort
 from openpyxl import load_workbook
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -630,6 +630,45 @@ def get_template(template_id):
     return template
 
 
+def invalidate_problem_cache(template_id):
+    """编辑题目后清理模板缓存、题目池缓存和已生成题目缓存。"""
+    global TEMPLATE_CACHE, TEMPLATE_CACHE_TS
+
+    try:
+        template_id = int(template_id)
+    except (TypeError, ValueError):
+        return 0
+
+    TEMPLATE_CACHE.pop(template_id, None)
+    TEMPLATE_CACHE_TS = time.time()
+
+    deleted_count = 0
+    try:
+        deleted_count += int(redis_client.delete(get_pool_key(template_id)) or 0)
+
+        for key in redis_client.scan_iter(match="exam:problem:*", count=100):
+            raw = redis_client.get(key)
+            if not raw:
+                continue
+
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+
+            try:
+                cached_template_id = int(data.get("template_id", -1))
+            except (TypeError, ValueError):
+                continue
+
+            if cached_template_id == template_id:
+                deleted_count += int(redis_client.delete(key) or 0)
+    except redis.RedisError as err:
+        logger.warning("清理题目缓存失败: template_id=%s error=%s", template_id, err)
+
+    return deleted_count
+
+
 def refill_problem_pool(template_id, count):
     """生成题目并补充到池中"""
     created = 0
@@ -1092,6 +1131,58 @@ def get_total_problem_count(paper_id=None):
         conn.close()
 
 
+def build_formula_context():
+    """构建解答公式可用的数学上下文。"""
+    x, t, h = sp.symbols('x t h')
+    return {
+        'x': x, 't': t, 'h': h, 'sp': sp,
+        'sqrt': sp.sqrt, 'exp': sp.exp, 'integrate': sp.integrate, 'diff': sp.diff,
+        'sin': sp.sin, 'cos': sp.cos, 'tan': sp.tan,
+        'asin': sp.asin, 'acos': sp.acos, 'atan': sp.atan,
+        'pi': pi, 'log': log, 'ln': sp.log,
+        'abs': abs, 'Abs': sp.Abs, 'min': min, 'max': max, 'round': round,
+        'pow': pow
+    }
+
+
+def evaluate_solution_formula(solution_formula, current_vars):
+    """计算解答公式，并把单答案/多答案统一转换为 float 列表。
+
+    数据库里部分历史模板会把每个答案表达式误写成字符串，例如
+    `'abs(m * (...))', 'abs(...)'`。直接 eval 后得到的是字符串元组，后续
+    `float('abs(...)')` 会失败。本函数会递归解析这类字符串表达式。
+    """
+    raw_answer = eval(solution_formula, {}, current_vars)
+    return coerce_formula_answers(raw_answer, current_vars)
+
+
+def coerce_formula_answers(raw_answer, current_vars, depth=0):
+    """将 eval 结果规范化为 float 列表，兼容字符串形式的表达式。"""
+    if depth > 3:
+        raise ValueError('解答公式嵌套字符串层级过深')
+
+    if isinstance(raw_answer, str):
+        stripped_answer = raw_answer.strip()
+        if not stripped_answer:
+            raise ValueError('解答公式返回空字符串')
+        try:
+            return [float(stripped_answer)]
+        except ValueError:
+            evaluated_answer = eval(stripped_answer, {}, current_vars)
+            return coerce_formula_answers(evaluated_answer, current_vars, depth + 1)
+
+    if isinstance(raw_answer, (tuple, list)):
+        normalized_answers = []
+        for answer_item in raw_answer:
+            normalized_answers.extend(coerce_formula_answers(answer_item, current_vars, depth + 1))
+        return normalized_answers
+
+    if hasattr(raw_answer, 'evalf'):
+        raw_answer = raw_answer.evalf()
+
+    return [float(raw_answer)]
+
+
 def generate_problem_from_template(template_id, max_attempts=10):
     """从模板生成具体问题 - 完全动态的合理性验证（无学习表），包含答案单位处理"""
     template = get_template(template_id)
@@ -1101,12 +1192,8 @@ def generate_problem_from_template(template_id, max_attempts=10):
 
     variables, configured_ranges = parse_variable_specs(template.get('variables', ''))
 
-    # 符号定义
-    x, t, h = sp.symbols('x t h')
-    local_vars = {
-        'x': x, 't': t, 'h': h, 'sp': sp, 'sqrt': sp.sqrt, 'exp': sp.exp,
-        'integrate': sp.integrate, 'pi': pi, 'log': log, 'sin': sp.sin, 'cos': sp.cos
-    }
+    # 解答公式上下文
+    local_vars = build_formula_context()
 
     # 内存中的自适应范围（不持久化）
     reasonable_ranges = {}
@@ -1137,13 +1224,7 @@ def generate_problem_from_template(template_id, max_attempts=10):
             current_vars = local_vars.copy()
             current_vars.update(var_values)
 
-            correct_answer = eval(template['solution_formula'], {}, current_vars)
-
-            if isinstance(correct_answer, tuple):
-                correct_answers = [float(a.evalf()) if hasattr(a, 'evalf') else float(a) for a in correct_answer]
-            else:
-                correct_answers = [
-                    float(correct_answer.evalf()) if hasattr(correct_answer, 'evalf') else float(correct_answer)]
+            correct_answers = evaluate_solution_formula(template['solution_formula'], current_vars)
 
             answer_count = template.get('answer_count', 1)
             if len(correct_answers) != answer_count:
@@ -1233,13 +1314,7 @@ def generate_fallback_problem(template, variables, local_vars, reasonable_ranges
         try:
             current_vars = local_vars.copy()
             current_vars.update(var_values)
-            correct_answer = eval(template['solution_formula'], {}, current_vars)
-
-            if isinstance(correct_answer, tuple):
-                current_answers = [float(a.evalf()) if hasattr(a, 'evalf') else float(a) for a in correct_answer]
-            else:
-                current_answers = [
-                    float(correct_answer.evalf()) if hasattr(correct_answer, 'evalf') else float(correct_answer)]
+            current_answers = evaluate_solution_formula(template['solution_formula'], current_vars)
 
             answer_count = template.get('answer_count', 1)
             if len(current_answers) != answer_count:
@@ -1251,8 +1326,24 @@ def generate_fallback_problem(template, variables, local_vars, reasonable_ranges
         except Exception:
             continue
     else:
-        var_values = {var: 1.0 for var in variables}
+        # 如果随机尝试全部失败，也不要把所有变量硬编码为 1.0。
+        # 取当前合理范围中点生成可读题干，避免前端反复看到“全是1”的回退题。
+        var_values = {}
+        for var in variables:
+            min_val, max_val = (reasonable_ranges or {}).get(var, (1.0, 3.0))
+            var_values[var] = round((min_val + max_val) / 2, 2)
         problem_content = format_problem_text(template['problem_text'], var_values)
+
+        try:
+            current_vars = local_vars.copy()
+            current_vars.update(var_values)
+            fallback_answers = evaluate_solution_formula(template['solution_formula'], current_vars)
+            answer_count = template.get('answer_count', 1)
+            if len(fallback_answers) != answer_count:
+                fallback_answers = [fallback_answers[0]] * answer_count
+            correct_answers = fallback_answers
+        except Exception as e:
+            print(f"⚠️ 回退题目公式计算仍失败，使用默认答案: {str(e)}")
 
     # 确保答案单位数量与答案数量匹配
     answer_count = template.get('answer_count', 1)
@@ -1388,15 +1479,49 @@ def check_dynamic_consistency(answer, var_values, attempt_num):
 
 
 def format_problem_text(problem_text, var_values):
-    """格式化问题文本"""
-    pattern = r'__(\w+)__'
+    """格式化问题文本，兼容 {{var}}、{{ problem.var_values.var }} 与 __var__ 占位符。"""
 
     def replace_var(match):
-        var_name = match.group(1)
+        var_name = match.group(1) or match.group(2)
         return str(var_values.get(var_name, match.group(0)))
 
+    # 优先匹配推荐的 {{var}}，同时兼容历史 Jinja 风格和 __var__。
+    pattern = r'\{\{\s*(?:problem\.var_values\.)?([A-Za-z_][A-Za-z0-9_]*)\s*\}\}|__([A-Za-z_][A-Za-z0-9_]*)__'
     return re.sub(pattern, replace_var, problem_text)
 
+
+def normalize_problem_placeholders(problem_text):
+    """统一占位符格式，避免 __var__ 在 LaTeX 中被 MathJax 当作下标解析。"""
+    if not problem_text:
+        return problem_text
+    problem_text = re.sub(
+        r'\{\{\s*problem\.var_values\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}',
+        r'{{\1}}',
+        problem_text
+    )
+    return re.sub(r'__([A-Za-z_][A-Za-z0-9_]*)__', r'{{\1}}', problem_text)
+
+
+def normalize_variable_specs(variables_text):
+    """标准化变量列表：去空白、去重、修复范围写法中的空格。"""
+    variables, ranges = parse_variable_specs(variables_text or '')
+    ordered = []
+    seen = set()
+    for var in variables:
+        clean = var.strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        ordered.append(clean)
+
+    parts = []
+    for var in ordered:
+        if var in ranges:
+            min_val, max_val = ranges[var]
+            parts.append(f"{var}[{min_val:g},{max_val:g}]")
+        else:
+            parts.append(var)
+    return ','.join(parts)
 
 
 def parse_variable_specs(variables_text):
@@ -1990,7 +2115,7 @@ def initialize_database():
         cursor.execute("SELECT id FROM problem_templates WHERE template_name = %s", (template['name'],))
         if not cursor.fetchone():
             # 如果有图片文件名，在problem_text中插入图片HTML
-            problem_text = template['text']
+            problem_text = normalize_problem_placeholders(template['text'])
             if template.get('image_filename'):
                 img_html = f'''
                 <div class="text-center mb-3">
@@ -2010,7 +2135,7 @@ def initialize_database():
             """, (
                 template['name'],
                 problem_text,
-                template['variables'],
+                normalize_variable_specs(template['variables']),
                 template['formula'],
                 template['answer_count'],
                 template.get('answer_units', ''),
@@ -2073,6 +2198,74 @@ def ensure_user_columns():
         conn.commit()
     except mysql.connector.Error as err:
         print(f"更新用户表失败: {err}")
+        conn.rollback()
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def ensure_performance_indexes():
+    """为高并发登录/答题场景补充必要复合索引。"""
+    conn = get_db_connection()
+    if not conn:
+        print("索引检查失败：数据库连接失败")
+        return
+
+    cursor = conn.cursor(dictionary=True)
+    try:
+        index_definitions = [
+            (
+                'problem_templates',
+                'idx_problem_templates_paper_id',
+                "CREATE INDEX idx_problem_templates_paper_id ON problem_templates (paper_id)"
+            ),
+            (
+                'user_responses',
+                'idx_user_responses_user_paper_template_attempt',
+                "CREATE INDEX idx_user_responses_user_paper_template_attempt ON user_responses (user_id, paper_id, template_id, attempt_count)"
+            ),
+            (
+                'user_responses',
+                'idx_user_responses_user_template_attempt_correct',
+                "CREATE INDEX idx_user_responses_user_template_attempt_correct ON user_responses (user_id, template_id, attempt_count, is_correct)"
+            ),
+            (
+                'user_responses',
+                'idx_user_responses_user_response_time',
+                "CREATE INDEX idx_user_responses_user_response_time ON user_responses (user_id, response_time)"
+            ),
+            (
+                'users',
+                'idx_users_login_lock_status',
+                "CREATE INDEX idx_users_login_lock_status ON users (username, login_locked_until, failed_login_attempts)"
+            ),
+        ]
+
+        for table_name, index_name, ddl in index_definitions:
+            cursor.execute(
+                """
+                SELECT 1
+                FROM information_schema.statistics
+                WHERE table_schema = DATABASE()
+                  AND table_name = %s
+                  AND index_name = %s
+                LIMIT 1
+                """,
+                (table_name, index_name)
+            )
+            exists = cursor.fetchone() is not None
+            if exists:
+                continue
+
+            try:
+                cursor.execute(ddl)
+                print(f"已创建索引: {index_name}")
+            except mysql.connector.Error as err:
+                print(f"创建索引失败 {index_name}: {err}")
+
+        conn.commit()
+    except mysql.connector.Error as err:
+        print(f"检查索引失败: {err}")
         conn.rollback()
     finally:
         cursor.close()
@@ -2473,7 +2666,7 @@ def login():
                 """
                 SELECT
                     id, username, name, password, avatar_filename, password_changed,
-                    failed_login_attempts, login_locked_until
+                    failed_login_attempts, login_locked_until, selected_paper_id
                 FROM users
                 WHERE username = %s
                 """,
@@ -2514,6 +2707,11 @@ def login():
                 session['display_name'] = get_display_name(user)
                 session['avatar_filename'] = user.get('avatar_filename') or DEFAULT_AVATAR
                 session['is_admin'] = (user['username'] == 'admin')
+                preferred_paper_id = user.get('selected_paper_id')
+                if preferred_paper_id:
+                    session['selected_exam_paper_id'] = preferred_paper_id
+                else:
+                    session.pop('selected_exam_paper_id', None)
                 session.pop('session_token', None)
                 session.permanent = True
                 session['last_activity_ts'] = int(time.time())
@@ -2525,9 +2723,9 @@ def login():
                     flash('当前密码强度不足，请尽快修改为强密码。', 'warning')
 
                 flash('登录成功！', 'success')
-                # 登录阶段仅建立会话，题库映射延迟到首个业务页按需加载，缩短登录路径。
-                # 这里返回轻量中转页，避免 POST /login 响应链路被 dashboard 首屏查询放大。
-                response = make_response(render_template('post_login_redirect.html', target_url=url_for('dashboard')))
+                # 采用 PRG（Post/Redirect/Get）模式，避免部分终端/浏览器在 POST 登录后
+                # 停留在登录页或中转页，导致学生误以为登录失败。
+                response = redirect(url_for('dashboard'))
                 response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
                 return response
 
@@ -2705,15 +2903,16 @@ def dashboard():
 
         display_mapping = get_problem_display_info(selected_paper_id) if selected_paper_id else {}
         total_problems = len(display_mapping)
-        paper_stats = get_exam_paper_stats(selected_paper_id) if selected_paper_id else {'completed_count': 0, 'completed_all': False, 'total_time': 0}
-        completed_all = paper_stats['completed_all']
-        completed_count = paper_stats['completed_count']
+        actual_ids = [item['actual_id'] for item in display_mapping.values()]
+        completion_map = (
+            get_completion_status_map(session['user_id'], selected_paper_id, actual_ids)
+            if selected_paper_id and actual_ids else {}
+        )
+        completed_count = sum(1 for completed in completion_map.values() if completed)
+        completed_all = total_problems > 0 and completed_count >= total_problems
 
         current_display_number = 1
         if selected_paper_id and total_problems and not completed_all:
-            actual_ids = [item['actual_id'] for item in display_mapping.values()]
-            completion_map = get_completion_status_map(session['user_id'], selected_paper_id, actual_ids)
-
             for display_info in display_mapping.values():
                 actual_id = display_info['actual_id']
                 if not completion_map.get(actual_id, False):
@@ -2917,7 +3116,28 @@ def reload_templates():
     global TEMPLATE_CACHE, TEMPLATE_CACHE_TS
     TEMPLATE_CACHE = {}
     TEMPLATE_CACHE_TS = time.time()
-    return jsonify({'success': True, 'message': '模板缓存已清空', 'timestamp': TEMPLATE_CACHE_TS})
+
+    deleted_count = 0
+    try:
+        for pattern in ("exam:pool:*", "exam:problem:*"):
+            keys = list(redis_client.scan_iter(match=pattern, count=100))
+            if keys:
+                deleted_count += int(redis_client.delete(*keys) or 0)
+    except redis.RedisError as err:
+        logger.warning("调试缓存清理失败: %s", err)
+        return jsonify({
+            'success': False,
+            'message': '模板缓存已清空，但 Redis 题目缓存清理失败',
+            'error': str(err),
+            'timestamp': TEMPLATE_CACHE_TS
+        }), 500
+
+    return jsonify({
+        'success': True,
+        'message': '模板缓存、Redis题目池和已生成题目缓存已清空',
+        'deleted_cache_count': deleted_count,
+        'timestamp': TEMPLATE_CACHE_TS
+    })
 
 
 @app.route('/history')
@@ -3090,8 +3310,15 @@ def problem_ajax(problem_id):
             session['current_problem'].get('display_number') == problem_id):
         problem_token = session['current_problem'].get('token')
         problem_data = get_problem_by_token(problem_token)
+        if problem_data and int(problem_data.get('template_id', -1)) != int(actual_id):
+            print(
+                f"会话题目实际ID不匹配，丢弃旧题目: cached={problem_data.get('template_id')} current={actual_id}"
+            )
+            problem_data = None
+            problem_token = None
+            session.pop('current_problem', None)
         if not problem_data:
-            print("缓存中的题目已过期，重新获取新题目")
+            print("缓存中的题目已过期或不匹配，重新获取新题目")
 
     if not problem_data:
         print(f"生成/获取新题目... 实际ID: {actual_id}")
@@ -3184,6 +3411,10 @@ def api_submit(problem_id):
         problem_data = get_problem_by_token(problem_token)
         if not problem_data:
             return jsonify({'success': False, 'message': '题目已过期，请刷新后重试'})
+        if int(problem_data.get('template_id', -1)) != int(actual_id):
+            session.pop('current_problem', None)
+            session.modified = True
+            return jsonify({'success': False, 'message': '题目缓存与当前题号不匹配，请刷新后重试'})
 
         correct_answers = problem_data.get('correct_answers', [])
         answer_count = problem_data.get('answer_count', 1)
@@ -3661,8 +3892,9 @@ def admin_add_problem():
         try:
             template_name = request.form['template_name']
             problem_text = request.form['problem_text']
-            variables = request.form['variables']
+            variables = normalize_variable_specs(request.form['variables'])
             solution_formula = request.form['solution_formula']
+            problem_text = normalize_problem_placeholders(problem_text)
             answer_count = int(request.form.get('answer_count', 1))
             difficulty = request.form.get('difficulty', 'medium')
             answer_units = request.form.get('answer_units', '')
@@ -3690,6 +3922,8 @@ def admin_add_problem():
             """, (template_name, problem_text, variables, solution_formula, answer_count, answer_units, difficulty, image_filename, paper_id))
 
             conn.commit()
+            session.pop('current_problem', None)
+            session.modified = True
             cursor.close()
             conn.close()
 
@@ -3752,8 +3986,9 @@ def admin_edit_problem(template_id):
         try:
             template_name = request.form['template_name']
             problem_text = request.form['problem_text']
-            variables = request.form['variables']
+            variables = normalize_variable_specs(request.form['variables'])
             solution_formula = request.form['solution_formula']
+            problem_text = normalize_problem_placeholders(problem_text)
             answer_count = int(request.form.get('answer_count', 1))
             difficulty = request.form.get('difficulty', 'medium')
             answer_units = request.form.get('answer_units', '')
@@ -3792,7 +4027,12 @@ def admin_edit_problem(template_id):
                   template_id))
 
             conn.commit()
-            flash('题目更新成功！', 'success')
+            deleted_cache_count = invalidate_problem_cache(template_id)
+            session.pop('current_problem', None)
+            session.modified = True
+            cursor.close()
+            conn.close()
+            flash(f'题目更新成功！已清理 {deleted_cache_count} 条旧缓存。', 'success')
             return redirect(url_for('admin_manage_problems'))
 
         except Exception as e:
@@ -3834,6 +4074,10 @@ def admin_delete_problem(template_id):
         cursor.execute("DELETE FROM problem_templates WHERE id = %s", (template_id,))
 
         conn.commit()
+        deleted_cache_count = invalidate_problem_cache(template_id)
+        session.pop('current_problem', None)
+        session.modified = True
+        print(f"ℹ️ 删除题目后已清理 {deleted_cache_count} 条旧缓存")
 
         # 删除题目后刷新所有用户的完成状态和统计
         try:
@@ -3970,6 +4214,160 @@ def admin_students_by_status(status):
                            completed_students=completed_students,
                            class_stats=class_stats,
                            username=session['username'])
+
+
+@app.route('/admin/users')
+@login_required
+def admin_user_management():
+    """管理员用户管理页面：仅展示基础信息。"""
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    keyword = (request.args.get('keyword') or '').strip()
+    class_name = (request.args.get('class_name') or '').strip()
+    major = (request.args.get('major') or '').strip()
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        query = """
+            SELECT id, username, name, major, class_name, created_at
+            FROM users
+            WHERE username != 'admin'
+        """
+        params = []
+
+        if keyword:
+            query += " AND (username LIKE %s OR name LIKE %s)"
+            like = f"%{keyword}%"
+            params.extend([like, like])
+        if class_name:
+            query += " AND class_name LIKE %s"
+            params.append(f"%{class_name}%")
+        if major:
+            query += " AND major LIKE %s"
+            params.append(f"%{major}%")
+
+        query += " ORDER BY created_at DESC, id DESC"
+        cursor.execute(query, params)
+        users = cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+    return render_template('admin_user_management.html', users=users, keyword=keyword, class_name=class_name, major=major)
+
+
+@app.route('/admin/users/add', methods=['POST'])
+@login_required
+def admin_add_user():
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    username = (request.form.get('username') or '').strip()
+    name = (request.form.get('name') or '').strip()
+    major = (request.form.get('major') or '').strip()
+    class_name = (request.form.get('class_name') or '').strip()
+
+    if not username or not name:
+        flash('学号和姓名不能为空', 'danger')
+        return redirect(url_for('admin_user_management'))
+
+    initial_password = build_initial_password(username)
+    password_hash = generate_password_hash(initial_password)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT id FROM users WHERE username = %s", (username,))
+        if cursor.fetchone():
+            flash('该学号已存在', 'danger')
+            return redirect(url_for('admin_user_management'))
+
+        cursor.execute(
+            """
+            INSERT INTO users (username, name, major, class_name, password, password_changed, avatar_filename)
+            VALUES (%s, %s, %s, %s, %s, FALSE, %s)
+            """,
+            (username, name, major or None, class_name or None, password_hash, DEFAULT_AVATAR)
+        )
+        conn.commit()
+        flash(f'账户已添加，初始密码：{initial_password}', 'success')
+    except Exception as e:
+        conn.rollback()
+        flash(f'添加失败：{e}', 'danger')
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(url_for('admin_user_management'))
+
+
+@app.route('/admin/users/<int:user_id>/edit', methods=['POST'])
+@login_required
+def admin_edit_user(user_id):
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    name = (request.form.get('name') or '').strip()
+    major = (request.form.get('major') or '').strip()
+    class_name = (request.form.get('class_name') or '').strip()
+    username = (request.form.get('username') or '').strip()
+
+    if not username or not name:
+        flash('学号和姓名不能为空', 'danger')
+        return redirect(url_for('admin_user_management'))
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            UPDATE users
+            SET username = %s, name = %s, major = %s, class_name = %s
+            WHERE id = %s AND username != 'admin'
+            """,
+            (username, name, major or None, class_name or None, user_id)
+        )
+        conn.commit()
+        flash('用户信息更新成功', 'success')
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f'更新失败：{err}', 'danger')
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(url_for('admin_user_management'))
+
+
+@app.route('/admin/users/<int:user_id>/delete', methods=['POST'])
+@login_required
+def admin_delete_user(user_id):
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM user_responses WHERE user_id = %s", (user_id,))
+        cursor.execute("DELETE FROM user_progress WHERE user_id = %s", (user_id,))
+        cursor.execute("DELETE FROM login_audit_logs WHERE user_id = %s", (user_id,))
+        cursor.execute("DELETE FROM users WHERE id = %s AND username != 'admin'", (user_id,))
+        conn.commit()
+        flash('账户已删除', 'success')
+    except Exception as e:
+        conn.rollback()
+        flash(f'删除失败：{e}', 'danger')
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(url_for('admin_user_management'))
 
 
 # 管理员功能 - 学生详细答题情况
@@ -4686,6 +5084,9 @@ if __name__ == '__main__':
 
     # 确保用户表字段完整
     ensure_user_columns()
+
+    # 为高并发场景补齐关键索引
+    ensure_performance_indexes()
 
     # 确保默认图片存在
     ensure_default_images()

@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}用户管理{% endblock %}
+
+{% block content %}
+<div class="container">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-people me-2"></i>用户管理</h2>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-header">筛选用户</div>
+    <div class="card-body">
+      <form method="get" class="row g-3">
+        <div class="col-md-4"><input class="form-control" name="keyword" placeholder="学号或姓名" value="{{ keyword }}"></div>
+        <div class="col-md-3"><input class="form-control" name="class_name" placeholder="班级" value="{{ class_name }}"></div>
+        <div class="col-md-3"><input class="form-control" name="major" placeholder="专业" value="{{ major }}"></div>
+        <div class="col-md-2 d-grid"><button class="btn btn-primary" type="submit">筛选</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-header">添加账户</div>
+    <div class="card-body">
+      <form method="post" action="{{ url_for('admin_add_user') }}" class="row g-3">
+        <div class="col-md-3"><input class="form-control" name="username" placeholder="学号" required></div>
+        <div class="col-md-2"><input class="form-control" name="name" placeholder="姓名" required></div>
+        <div class="col-md-3"><input class="form-control" name="major" placeholder="专业"></div>
+        <div class="col-md-3"><input class="form-control" name="class_name" placeholder="班级"></div>
+        <div class="col-md-1 d-grid"><button class="btn btn-success" type="submit">添加</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">用户列表（仅基础信息）</div>
+    <div class="card-body table-responsive">
+      <table class="table table-bordered align-middle">
+        <thead><tr><th>学号</th><th>姓名</th><th>专业</th><th>班级</th><th>操作</th></tr></thead>
+        <tbody>
+          {% for user in users %}
+          <tr>
+            <form method="post" action="{{ url_for('admin_edit_user', user_id=user.id) }}">
+              <td><input class="form-control" name="username" value="{{ user.username }}" required></td>
+              <td><input class="form-control" name="name" value="{{ user.name or '' }}" required></td>
+              <td><input class="form-control" name="major" value="{{ user.major or '' }}"></td>
+              <td><input class="form-control" name="class_name" value="{{ user.class_name or '' }}"></td>
+              <td class="d-flex gap-2">
+                <button class="btn btn-sm btn-primary" type="submit">保存</button>
+            </form>
+                <form method="post" action="{{ url_for('admin_delete_user', user_id=user.id) }}" onsubmit="return confirm('确认删除该账户？')">
+                  <button class="btn btn-sm btn-danger" type="submit">删除</button>
+                </form>
+              </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted">暂无符合条件的用户</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

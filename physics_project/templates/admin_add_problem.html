@@ -42,7 +42,7 @@
                             <label for="problem_text" class="form-label">题目内容 (支持HTML和LaTeX)</label>
                             <textarea class="form-control" id="problem_text" name="problem_text" rows="8" required></textarea>
                             <div class="form-text">
-                                提示：使用 <code>&#123;&#123; problem.var_values.变量名 &#125;&#125;</code> 插入变量，使用 <code>\( LaTeX公式 \)</code> 插入数学公式
+                                提示：变量占位符请使用 <code>{% raw %}{{变量名}}{% endraw %}</code>（例如 <code>{% raw %}{{F}}{% endraw %}</code>），不要放在 LaTeX 下标里；数学公式用 <code>\( LaTeX公式 \)</code>。旧格式 <code>__F__</code> 和 <code>{% raw %}{{ problem.var_values.F }}{% endraw %}</code> 会自动转换。
                             </div>
                         </div>
 
@@ -58,8 +58,8 @@
                         <div class="mb-3">
                             <label for="variables" class="form-label">变量列表 (用逗号分隔)</label>
                             <input type="text" class="form-control" id="variables" name="variables"
-                                   placeholder="例如: r,R,i,B">
-                            <div class="form-text">定义题目中使用的变量名</div>
+                                   placeholder="例如: r,R,i,B 或 v0[0,30],a[0.2,8],t[0.5,20]">
+                            <div class="form-text">支持两种写法：<code>r,R,i,B</code> 或带范围 <code>v0[0,30],a[0.2,8],t[0.5,20]</code>，系统会自动标准化格式。</div>
                         </div>
 
                         <div class="mb-3">
