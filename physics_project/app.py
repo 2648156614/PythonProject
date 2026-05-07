@@ -1131,6 +1131,58 @@ def get_total_problem_count(paper_id=None):
         conn.close()
 
 
+def build_formula_context():
+    """构建解答公式可用的数学上下文。"""
+    x, t, h = sp.symbols('x t h')
+    return {
+        'x': x, 't': t, 'h': h, 'sp': sp,
+        'sqrt': sp.sqrt, 'exp': sp.exp, 'integrate': sp.integrate, 'diff': sp.diff,
+        'sin': sp.sin, 'cos': sp.cos, 'tan': sp.tan,
+        'asin': sp.asin, 'acos': sp.acos, 'atan': sp.atan,
+        'pi': pi, 'log': log, 'ln': sp.log,
+        'abs': abs, 'Abs': sp.Abs, 'min': min, 'max': max, 'round': round,
+        'pow': pow
+    }
+
+
+def evaluate_solution_formula(solution_formula, current_vars):
+    """计算解答公式，并把单答案/多答案统一转换为 float 列表。
+
+    数据库里部分历史模板会把每个答案表达式误写成字符串，例如
+    `'abs(m * (...))', 'abs(...)'`。直接 eval 后得到的是字符串元组，后续
+    `float('abs(...)')` 会失败。本函数会递归解析这类字符串表达式。
+    """
+    raw_answer = eval(solution_formula, {}, current_vars)
+    return coerce_formula_answers(raw_answer, current_vars)
+
+
+def coerce_formula_answers(raw_answer, current_vars, depth=0):
+    """将 eval 结果规范化为 float 列表，兼容字符串形式的表达式。"""
+    if depth > 3:
+        raise ValueError('解答公式嵌套字符串层级过深')
+
+    if isinstance(raw_answer, str):
+        stripped_answer = raw_answer.strip()
+        if not stripped_answer:
+            raise ValueError('解答公式返回空字符串')
+        try:
+            return [float(stripped_answer)]
+        except ValueError:
+            evaluated_answer = eval(stripped_answer, {}, current_vars)
+            return coerce_formula_answers(evaluated_answer, current_vars, depth + 1)
+
+    if isinstance(raw_answer, (tuple, list)):
+        normalized_answers = []
+        for answer_item in raw_answer:
+            normalized_answers.extend(coerce_formula_answers(answer_item, current_vars, depth + 1))
+        return normalized_answers
+
+    if hasattr(raw_answer, 'evalf'):
+        raw_answer = raw_answer.evalf()
+
+    return [float(raw_answer)]
+
+
 def generate_problem_from_template(template_id, max_attempts=10):
     """从模板生成具体问题 - 完全动态的合理性验证（无学习表），包含答案单位处理"""
     template = get_template(template_id)
@@ -1140,13 +1192,8 @@ def generate_problem_from_template(template_id, max_attempts=10):
 
     variables, configured_ranges = parse_variable_specs(template.get('variables', ''))
 
-    # 符号定义
-    x, t, h = sp.symbols('x t h')
-    local_vars = {
-        'x': x, 't': t, 'h': h, 'sp': sp, 'sqrt': sp.sqrt, 'exp': sp.exp,
-        'integrate': sp.integrate, 'diff': sp.diff,
-        'pi': pi, 'log': log, 'sin': sp.sin, 'cos': sp.cos
-    }
+    # 解答公式上下文
+    local_vars = build_formula_context()
 
     # 内存中的自适应范围（不持久化）
     reasonable_ranges = {}
@@ -1177,13 +1224,7 @@ def generate_problem_from_template(template_id, max_attempts=10):
             current_vars = local_vars.copy()
             current_vars.update(var_values)
 
-            correct_answer = eval(template['solution_formula'], {}, current_vars)
-
-            if isinstance(correct_answer, tuple):
-                correct_answers = [float(a.evalf()) if hasattr(a, 'evalf') else float(a) for a in correct_answer]
-            else:
-                correct_answers = [
-                    float(correct_answer.evalf()) if hasattr(correct_answer, 'evalf') else float(correct_answer)]
+            correct_answers = evaluate_solution_formula(template['solution_formula'], current_vars)
 
             answer_count = template.get('answer_count', 1)
             if len(correct_answers) != answer_count:
@@ -1273,13 +1314,7 @@ def generate_fallback_problem(template, variables, local_vars, reasonable_ranges
         try:
             current_vars = local_vars.copy()
             current_vars.update(var_values)
-            correct_answer = eval(template['solution_formula'], {}, current_vars)
-
-            if isinstance(correct_answer, tuple):
-                current_answers = [float(a.evalf()) if hasattr(a, 'evalf') else float(a) for a in correct_answer]
-            else:
-                current_answers = [
-                    float(correct_answer.evalf()) if hasattr(correct_answer, 'evalf') else float(correct_answer)]
+            current_answers = evaluate_solution_formula(template['solution_formula'], current_vars)
 
             answer_count = template.get('answer_count', 1)
             if len(current_answers) != answer_count:
@@ -1291,8 +1326,24 @@ def generate_fallback_problem(template, variables, local_vars, reasonable_ranges
         except Exception:
             continue
     else:
-        var_values = {var: 1.0 for var in variables}
+        # 如果随机尝试全部失败，也不要把所有变量硬编码为 1.0。
+        # 取当前合理范围中点生成可读题干，避免前端反复看到“全是1”的回退题。
+        var_values = {}
+        for var in variables:
+            min_val, max_val = (reasonable_ranges or {}).get(var, (1.0, 3.0))
+            var_values[var] = round((min_val + max_val) / 2, 2)
         problem_content = format_problem_text(template['problem_text'], var_values)
+
+        try:
+            current_vars = local_vars.copy()
+            current_vars.update(var_values)
+            fallback_answers = evaluate_solution_formula(template['solution_formula'], current_vars)
+            answer_count = template.get('answer_count', 1)
+            if len(fallback_answers) != answer_count:
+                fallback_answers = [fallback_answers[0]] * answer_count
+            correct_answers = fallback_answers
+        except Exception as e:
+            print(f"⚠️ 回退题目公式计算仍失败，使用默认答案: {str(e)}")
 
     # 确保答案单位数量与答案数量匹配
     answer_count = template.get('answer_count', 1)
