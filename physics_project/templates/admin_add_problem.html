@@ -42,7 +42,7 @@
                             <label for="problem_text" class="form-label">题目内容 (支持HTML和LaTeX)</label>
                             <textarea class="form-control" id="problem_text" name="problem_text" rows="8" required></textarea>
                             <div class="form-text">
-                                提示：变量占位符请使用 <code>{{变量名}}</code>（例如 <code>{{F}}</code>），不要放在 LaTeX 下标里；数学公式用 <code>\( LaTeX公式 \)</code>。旧格式 <code>__F__</code> 会自动转换。
+                                提示：变量占位符请使用 <code>{% raw %}{{变量名}}{% endraw %}</code>（例如 <code>{% raw %}{{F}}{% endraw %}</code>），不要放在 LaTeX 下标里；数学公式用 <code>\( LaTeX公式 \)</code>。旧格式 <code>__F__</code> 和 <code>{% raw %}{{ problem.var_values.F }}{% endraw %}</code> 会自动转换。
                             </div>
                         </div>
 

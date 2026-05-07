@@ -630,6 +630,45 @@ def get_template(template_id):
     return template
 
 
+def invalidate_problem_cache(template_id):
+    """编辑题目后清理模板缓存、题目池缓存和已生成题目缓存。"""
+    global TEMPLATE_CACHE, TEMPLATE_CACHE_TS
+
+    try:
+        template_id = int(template_id)
+    except (TypeError, ValueError):
+        return 0
+
+    TEMPLATE_CACHE.pop(template_id, None)
+    TEMPLATE_CACHE_TS = time.time()
+
+    deleted_count = 0
+    try:
+        deleted_count += int(redis_client.delete(get_pool_key(template_id)) or 0)
+
+        for key in redis_client.scan_iter(match="exam:problem:*", count=100):
+            raw = redis_client.get(key)
+            if not raw:
+                continue
+
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+
+            try:
+                cached_template_id = int(data.get("template_id", -1))
+            except (TypeError, ValueError):
+                continue
+
+            if cached_template_id == template_id:
+                deleted_count += int(redis_client.delete(key) or 0)
+    except redis.RedisError as err:
+        logger.warning("清理题目缓存失败: template_id=%s error=%s", template_id, err)
+
+    return deleted_count
+
+
 def refill_problem_pool(template_id, count):
     """生成题目并补充到池中"""
     created = 0
@@ -1389,21 +1428,26 @@ def check_dynamic_consistency(answer, var_values, attempt_num):
 
 
 def format_problem_text(problem_text, var_values):
-    """格式化问题文本，兼容 __var__ 与 {{var}} 两种占位符。"""
+    """格式化问题文本，兼容 {{var}}、{{ problem.var_values.var }} 与 __var__ 占位符。"""
 
     def replace_var(match):
         var_name = match.group(1) or match.group(2)
         return str(var_values.get(var_name, match.group(0)))
 
-    # 先匹配 {{var}}，再兼容历史 __var__
-    pattern = r'\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}|__([A-Za-z_][A-Za-z0-9_]*)__'
+    # 优先匹配推荐的 {{var}}，同时兼容历史 Jinja 风格和 __var__。
+    pattern = r'\{\{\s*(?:problem\.var_values\.)?([A-Za-z_][A-Za-z0-9_]*)\s*\}\}|__([A-Za-z_][A-Za-z0-9_]*)__'
     return re.sub(pattern, replace_var, problem_text)
 
 
 def normalize_problem_placeholders(problem_text):
-    """将旧格式 __var__ 统一转换为新格式 {{var}}，避免和 LaTeX 下标冲突。"""
+    """统一占位符格式，避免 __var__ 在 LaTeX 中被 MathJax 当作下标解析。"""
     if not problem_text:
         return problem_text
+    problem_text = re.sub(
+        r'\{\{\s*problem\.var_values\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}',
+        r'{{\1}}',
+        problem_text
+    )
     return re.sub(r'__([A-Za-z_][A-Za-z0-9_]*)__', r'{{\1}}', problem_text)
 
 
@@ -3021,7 +3065,28 @@ def reload_templates():
     global TEMPLATE_CACHE, TEMPLATE_CACHE_TS
     TEMPLATE_CACHE = {}
     TEMPLATE_CACHE_TS = time.time()
-    return jsonify({'success': True, 'message': '模板缓存已清空', 'timestamp': TEMPLATE_CACHE_TS})
+
+    deleted_count = 0
+    try:
+        for pattern in ("exam:pool:*", "exam:problem:*"):
+            keys = list(redis_client.scan_iter(match=pattern, count=100))
+            if keys:
+                deleted_count += int(redis_client.delete(*keys) or 0)
+    except redis.RedisError as err:
+        logger.warning("调试缓存清理失败: %s", err)
+        return jsonify({
+            'success': False,
+            'message': '模板缓存已清空，但 Redis 题目缓存清理失败',
+            'error': str(err),
+            'timestamp': TEMPLATE_CACHE_TS
+        }), 500
+
+    return jsonify({
+        'success': True,
+        'message': '模板缓存、Redis题目池和已生成题目缓存已清空',
+        'deleted_cache_count': deleted_count,
+        'timestamp': TEMPLATE_CACHE_TS
+    })
 
 
 @app.route('/history')
@@ -3194,8 +3259,15 @@ def problem_ajax(problem_id):
             session['current_problem'].get('display_number') == problem_id):
         problem_token = session['current_problem'].get('token')
         problem_data = get_problem_by_token(problem_token)
+        if problem_data and int(problem_data.get('template_id', -1)) != int(actual_id):
+            print(
+                f"会话题目实际ID不匹配，丢弃旧题目: cached={problem_data.get('template_id')} current={actual_id}"
+            )
+            problem_data = None
+            problem_token = None
+            session.pop('current_problem', None)
         if not problem_data:
-            print("缓存中的题目已过期，重新获取新题目")
+            print("缓存中的题目已过期或不匹配，重新获取新题目")
 
     if not problem_data:
         print(f"生成/获取新题目... 实际ID: {actual_id}")
@@ -3288,6 +3360,10 @@ def api_submit(problem_id):
         problem_data = get_problem_by_token(problem_token)
         if not problem_data:
             return jsonify({'success': False, 'message': '题目已过期，请刷新后重试'})
+        if int(problem_data.get('template_id', -1)) != int(actual_id):
+            session.pop('current_problem', None)
+            session.modified = True
+            return jsonify({'success': False, 'message': '题目缓存与当前题号不匹配，请刷新后重试'})
 
         correct_answers = problem_data.get('correct_answers', [])
         answer_count = problem_data.get('answer_count', 1)
@@ -3795,6 +3871,8 @@ def admin_add_problem():
             """, (template_name, problem_text, variables, solution_formula, answer_count, answer_units, difficulty, image_filename, paper_id))
 
             conn.commit()
+            session.pop('current_problem', None)
+            session.modified = True
             cursor.close()
             conn.close()
 
@@ -3898,7 +3976,12 @@ def admin_edit_problem(template_id):
                   template_id))
 
             conn.commit()
-            flash('题目更新成功！', 'success')
+            deleted_cache_count = invalidate_problem_cache(template_id)
+            session.pop('current_problem', None)
+            session.modified = True
+            cursor.close()
+            conn.close()
+            flash(f'题目更新成功！已清理 {deleted_cache_count} 条旧缓存。', 'success')
             return redirect(url_for('admin_manage_problems'))
 
         except Exception as e:
@@ -3940,6 +4023,10 @@ def admin_delete_problem(template_id):
         cursor.execute("DELETE FROM problem_templates WHERE id = %s", (template_id,))
 
         conn.commit()
+        deleted_cache_count = invalidate_problem_cache(template_id)
+        session.pop('current_problem', None)
+        session.modified = True
+        print(f"ℹ️ 删除题目后已清理 {deleted_cache_count} 条旧缓存")
 
         # 删除题目后刷新所有用户的完成状态和统计
         try:
