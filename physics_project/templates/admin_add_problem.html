@@ -23,6 +23,30 @@
                     <h5 class="mb-0"><i class="bi bi-plus-circle me-2"></i> 题目信息</h5>
                 </div>
                 <div class="card-body">
+                    <div class="alert alert-info" role="alert">
+                        <div class="d-flex align-items-center mb-2">
+                            <i class="bi bi-magic me-2"></i>
+                            <strong>模板一键识别</strong>
+                        </div>
+                        <p class="small mb-2">
+                            可以直接粘贴 AI 生成的 Python 字典模板，系统会自动识别
+                            <code>name</code>、<code>text</code>、<code>variables</code>、<code>formula</code>、
+                            <code>answer_count</code>、<code>answer_units</code> 等字段并填入下方表单。
+                            如果模板里包含 <code>image_filename</code>，图片仍请使用原来的上传框上传原图。
+                        </p>
+                        <textarea class="form-control font-monospace" id="template_import" rows="6"
+                                  placeholder="把完整模板粘贴到这里，例如：{'name': '...', 'text': r&quot;&quot;&quot;...&quot;&quot;&quot;, 'variables': '...', 'formula': '...'}"></textarea>
+                        <div class="d-flex flex-wrap gap-2 mt-2">
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="parse_template_btn">
+                                <i class="bi bi-lightning-charge"></i> 识别并填入表单
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="clear_template_btn">
+                                <i class="bi bi-x-circle"></i> 清空粘贴内容
+                            </button>
+                        </div>
+                        <div class="small mt-2 d-none" id="template_import_status"></div>
+                    </div>
+
                     <form method="POST" enctype="multipart/form-data">
                         <div class="mb-3">
                             <label for="paper_id" class="form-label">所属题库</label>
@@ -51,8 +75,9 @@
                             <input type="file" class="form-control" id="problem_image" name="problem_image"
                                    accept=".png,.jpg,.jpeg,.gif,.svg">
                             <div class="form-text">
-                                支持格式：PNG, JPG, GIF, SVG。最大16MB。
+                                支持格式：PNG, JPG, GIF, SVG。最大16MB。模板中识别到图片文件名时，仍需在这里上传对应原图。
                             </div>
+                            <div class="form-text text-primary d-none" id="detected_image_hint"></div>
                         </div>
 
                         <div class="mb-3">
@@ -207,4 +232,179 @@
         </div>
     </div>
 </div>
+
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const importTextarea = document.getElementById('template_import');
+    const parseButton = document.getElementById('parse_template_btn');
+    const clearButton = document.getElementById('clear_template_btn');
+    const statusBox = document.getElementById('template_import_status');
+    const imageHint = document.getElementById('detected_image_hint');
+
+    const fieldMap = {
+        name: 'template_name',
+        text: 'problem_text',
+        variables: 'variables',
+        formula: 'solution_formula',
+        answer_units: 'answer_units'
+    };
+
+    function setStatus(message, type) {
+        statusBox.textContent = message;
+        statusBox.className = 'small mt-2 text-' + type;
+        statusBox.classList.remove('d-none');
+    }
+
+    function hideStatus() {
+        statusBox.classList.add('d-none');
+        statusBox.textContent = '';
+    }
+
+    function skipWhitespace(source, index) {
+        while (index < source.length && /\s/.test(source[index])) {
+            index += 1;
+        }
+        return index;
+    }
+
+    function readQuotedValue(source, index) {
+        index = skipWhitespace(source, index);
+
+        while (index < source.length && /[rRuUbBfF]/.test(source[index]) && (source[index + 1] === '"' || source[index + 1] === "'")) {
+            index += 1;
+        }
+
+        const quote = source[index];
+        if (quote !== '"' && quote !== "'") {
+            return null;
+        }
+
+        const tripleQuote = source.slice(index, index + 3) === quote.repeat(3);
+        if (tripleQuote) {
+            const endIndex = source.indexOf(quote.repeat(3), index + 3);
+            if (endIndex === -1) {
+                return null;
+            }
+            return source.slice(index + 3, endIndex);
+        }
+
+        let value = '';
+        let escaped = false;
+        for (let i = index + 1; i < source.length; i += 1) {
+            const char = source[i];
+            if (escaped) {
+                const escapes = {n: '\n', r: '\r', t: '\t', '\\': '\\', '"': '"', "'": "'"};
+                value += Object.prototype.hasOwnProperty.call(escapes, char) ? escapes[char] : char;
+                escaped = false;
+            } else if (char === '\\') {
+                escaped = true;
+            } else if (char === quote) {
+                return value;
+            } else {
+                value += char;
+            }
+        }
+        return null;
+    }
+
+    function readNumberValue(source, index) {
+        const match = source.slice(index).match(/^\s*([+-]?\d+(?:\.\d+)?)/);
+        return match ? match[1] : null;
+    }
+
+    function extractTemplateValue(source, key, valueType) {
+        const keyPattern = new RegExp('[\\\'\"]' + key + '[\\\'\"]\\s*:', 'm');
+        const match = keyPattern.exec(source);
+        if (!match) {
+            return null;
+        }
+
+        const valueIndex = match.index + match[0].length;
+        if (valueType === 'number') {
+            return readNumberValue(source, valueIndex);
+        }
+        return readQuotedValue(source, valueIndex);
+    }
+
+    function parseTemplate(source) {
+        const parsed = {};
+        Object.keys(fieldMap).forEach(function (key) {
+            const value = extractTemplateValue(source, key, 'string');
+            if (value !== null) {
+                parsed[key] = value;
+            }
+        });
+
+        const answerCount = extractTemplateValue(source, 'answer_count', 'number');
+        if (answerCount !== null) {
+            parsed.answer_count = answerCount;
+        }
+
+        const imageFilename = extractTemplateValue(source, 'image_filename', 'string');
+        if (imageFilename !== null) {
+            parsed.image_filename = imageFilename;
+        }
+
+        return parsed;
+    }
+
+    function fillForm(parsed) {
+        let filledCount = 0;
+        Object.entries(fieldMap).forEach(function ([key, elementId]) {
+            if (Object.prototype.hasOwnProperty.call(parsed, key)) {
+                const element = document.getElementById(elementId);
+                if (element) {
+                    element.value = parsed[key];
+                    element.dispatchEvent(new Event('input', {bubbles: true}));
+                    filledCount += 1;
+                }
+            }
+        });
+
+        if (parsed.answer_count) {
+            const answerCountSelect = document.getElementById('answer_count');
+            if (answerCountSelect) {
+                answerCountSelect.value = parsed.answer_count;
+                filledCount += 1;
+            }
+        }
+
+        if (parsed.image_filename) {
+            imageHint.textContent = '模板中识别到图片：' + parsed.image_filename + '。浏览器不能自动选择本地文件，请在上方上传框手动上传这张原图。';
+            imageHint.classList.remove('d-none');
+        } else {
+            imageHint.classList.add('d-none');
+            imageHint.textContent = '';
+        }
+
+        return filledCount;
+    }
+
+    function parseAndFill() {
+        const source = importTextarea.value.trim();
+        if (!source) {
+            setStatus('请先粘贴题目模板。', 'warning');
+            return;
+        }
+
+        const parsed = parseTemplate(source);
+        const filledCount = fillForm(parsed);
+        if (filledCount > 0) {
+            setStatus('已识别并填入 ' + filledCount + ' 个字段，请检查后提交。', 'success');
+        } else {
+            setStatus('没有识别到可填入的字段，请确认粘贴的是包含 name/text/variables/formula 等键的模板。', 'danger');
+        }
+    }
+
+    parseButton.addEventListener('click', parseAndFill);
+    clearButton.addEventListener('click', function () {
+        importTextarea.value = '';
+        hideStatus();
+    });
+    importTextarea.addEventListener('paste', function () {
+        window.setTimeout(parseAndFill, 0);
+    });
+});
+</script>
 {% endblock %}
