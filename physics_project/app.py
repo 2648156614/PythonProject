@@ -4355,8 +4355,8 @@ def admin_delete_user(user_id):
     cursor = conn.cursor()
     try:
         cursor.execute("DELETE FROM user_responses WHERE user_id = %s", (user_id,))
-        cursor.execute("DELETE FROM user_progress WHERE user_id = %s", (user_id,))
-        cursor.execute("DELETE FROM login_audit_logs WHERE user_id = %s", (user_id,))
+        cursor.execute("DELETE FROM verification_records WHERE user_id = %s", (user_id,))
+        cursor.execute("DELETE FROM user_login_audit_logs WHERE user_id = %s", (user_id,))
         cursor.execute("DELETE FROM users WHERE id = %s AND username != 'admin'", (user_id,))
         conn.commit()
         flash('账户已删除', 'success')
