@@ -104,18 +104,73 @@
         </div>
     </div>
 
+    <div class="card mb-4 border-secondary">
+        <div class="card-header bg-secondary text-white">
+            <h5 class="mb-0"><i class="bi bi-person-badge me-2"></i>教师管理</h5>
+        </div>
+        <div class="card-body">
+            <form method="post" action="{{ url_for('admin_create_teacher') }}" class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label">教师姓名</label>
+                    <input class="form-control" name="name" required>
+                </div>
+                <div class="col-md-5">
+                    <label class="form-label">说明</label>
+                    <input class="form-control" name="description">
+                </div>
+                <div class="col-md-1">
+                    <div class="form-check mt-4 pt-2">
+                        <input class="form-check-input" type="checkbox" name="is_enabled" value="1" checked id="teacherEnabled">
+                        <label class="form-check-label" for="teacherEnabled">启用</label>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-secondary w-100">新增教师</button>
+                </div>
+            </form>
+            <div class="table-responsive mt-4">
+                <table class="table table-sm align-middle">
+                    <thead><tr><th>教师姓名</th><th>说明</th><th>状态</th><th>创建时间</th></tr></thead>
+                    <tbody>
+                    {% for teacher in teachers %}
+                        <tr>
+                            <td>{{ teacher.name }}</td>
+                            <td>{{ teacher.description or '—' }}</td>
+                            <td>{% if teacher.is_enabled %}<span class="badge bg-success">已启用</span>{% else %}<span class="badge bg-secondary">已停用</span>{% endif %}</td>
+                            <td>{{ teacher.created_at.strftime('%Y-%m-%d %H:%M') if teacher.created_at else '-' }}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="4" class="text-muted text-center">暂无教师</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <div class="card mb-4 border-primary">
         <div class="card-header bg-primary text-white">
             <h5 class="mb-0"><i class="bi bi-file-earmark-arrow-up me-2"></i>批量导入学生</h5>
         </div>
         <div class="card-body">
             <form method="post" action="{{ url_for('admin_import_students') }}" enctype="multipart/form-data" class="row g-3 align-items-end">
-                <div class="col-lg-7">
+                <div class="col-lg-5">
                     <label for="students_file" class="form-label">上传 xlsx 文件</label>
                     <input class="form-control" type="file" id="students_file" name="students_file" accept=".xlsx" required>
                     <div class="form-text">格式要求：第 1 列为学号，第 2 列为姓名，第 3 列为专业，第 4 列为班级；可包含表头。</div>
                 </div>
-                <div class="col-lg-5 text-lg-end">
+                <div class="col-lg-4">
+                    <label class="form-label">所属教师</label>
+                    <select class="form-select" name="teacher_id" required>
+                        <option value="">请选择教师</option>
+                        {% for teacher in teachers %}
+                            {% if teacher.is_enabled %}
+                            <option value="{{ teacher.id }}">{{ teacher.name }}</option>
+                            {% endif %}
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-lg-3 text-lg-end">
                     <button type="submit" class="btn btn-primary">
                         <i class="bi bi-upload me-1"></i> 开始导入
                     </button>
