@@ -1844,6 +1844,15 @@ def initialize_database():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS teachers (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL UNIQUE,
+        description TEXT DEFAULT NULL,
+        is_enabled BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS user_login_audit_logs (
@@ -2175,6 +2184,9 @@ def ensure_user_columns():
         if 'class_name' not in existing_columns:
             cursor.execute("ALTER TABLE users ADD COLUMN class_name VARCHAR(100) DEFAULT NULL AFTER major")
             print("已添加 class_name 列")
+        if 'teacher_id' not in existing_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN teacher_id INT DEFAULT NULL AFTER class_name")
+            print("已添加 teacher_id 列")
         if 'avatar_filename' not in existing_columns:
             cursor.execute("ALTER TABLE users ADD COLUMN avatar_filename VARCHAR(255) DEFAULT 'default.svg' AFTER password")
             print("已添加 avatar_filename 列")
@@ -2195,6 +2207,22 @@ def ensure_user_columns():
         if 'selected_paper_id' not in existing_columns:
             cursor.execute("ALTER TABLE users ADD COLUMN selected_paper_id INT DEFAULT NULL AFTER login_locked_until")
             print("已添加 selected_paper_id 列")
+
+        cursor.execute("""
+            SELECT CONSTRAINT_NAME
+            FROM information_schema.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'users'
+              AND COLUMN_NAME = 'teacher_id'
+              AND REFERENCED_TABLE_NAME = 'teachers'
+        """)
+        if not cursor.fetchone():
+            cursor.execute("""
+                ALTER TABLE users
+                ADD CONSTRAINT fk_users_teacher_id
+                FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE SET NULL
+            """)
+            print("已添加 users.teacher_id 外键")
         conn.commit()
     except mysql.connector.Error as err:
         print(f"更新用户表失败: {err}")
@@ -2538,11 +2566,12 @@ def get_students_by_completion(completed=True, limit=None, offset=0, paper_id=No
               )
             GROUP BY user_id
         )
-        SELECT u.id, u.username, u.name, u.major, u.class_name,
+        SELECT u.id, u.username, u.name, u.major, u.class_name, t.name AS teacher_name,
                CASE WHEN COALESCE(c.total_score, 0) >= %s AND %s > 0 THEN TRUE ELSE FALSE END AS completed_all,
                u.completed_at, COALESCE(c.total_score, 0) AS total_score, COALESCE(c.total_time, 0) AS total_time, u.created_at
         FROM users u
         LEFT JOIN completed c ON c.user_id = u.id
+        LEFT JOIN teachers t ON u.teacher_id = t.id
         WHERE u.username != 'admin'
         HAVING completed_all = %s
         ORDER BY total_score DESC, total_time ASC, created_at ASC
@@ -3653,9 +3682,67 @@ def admin_dashboard():
                            recent_completions=recent_completions,
                            incomplete_students=incomplete_students,
                            total_problems=total_problems,
+                           teachers=get_teachers(),
                            exam_papers=get_exam_papers(),
                            selected_paper=selected_paper,
                            selected_paper_id=selected_paper_id)
+
+
+def get_teachers(include_disabled=True):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        query = "SELECT id, name, description, is_enabled, created_at FROM teachers"
+        params = []
+        if not include_disabled:
+            query += " WHERE is_enabled = TRUE"
+        query += " ORDER BY id DESC"
+        cursor.execute(query, params)
+        return cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def get_teacher_by_id(teacher_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT id, name, description, is_enabled, created_at FROM teachers WHERE id = %s", (teacher_id,))
+        return cursor.fetchone()
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@app.route('/admin/teachers/create', methods=['POST'])
+@login_required(db_check=True)
+def admin_create_teacher():
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+    name = (request.form.get('name') or '').strip()
+    description = (request.form.get('description') or '').strip()
+    is_enabled = request.form.get('is_enabled') == '1'
+    if not name:
+        flash('教师姓名不能为空', 'danger')
+        return redirect(url_for('admin_dashboard'))
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("INSERT INTO teachers (name, description, is_enabled) VALUES (%s, %s, %s)", (name, description or None, is_enabled))
+        conn.commit()
+        flash('教师创建成功', 'success')
+    except mysql.connector.IntegrityError:
+        conn.rollback()
+        flash('教师姓名已存在，请更换后重试', 'danger')
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f'教师创建失败：{err}', 'danger')
+    finally:
+        cursor.close()
+        conn.close()
+    return redirect(url_for('admin_dashboard'))
 
 
 @app.route('/admin/import/students', methods=['POST'])
@@ -3665,6 +3752,14 @@ def admin_import_students():
     if session.get('username') != 'admin':
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
+    teacher_id = request.form.get('teacher_id', type=int)
+    if not teacher_id:
+        flash('请先选择所属教师', 'danger')
+        return redirect(url_for('admin_dashboard'))
+    teacher = get_teacher_by_id(teacher_id)
+    if not teacher or not teacher.get('is_enabled'):
+        flash('所选教师不存在或已停用，请重新选择', 'danger')
+        return redirect(url_for('admin_dashboard'))
 
     upload_file = request.files.get('students_file')
     if not upload_file or upload_file.filename == '':
@@ -3738,26 +3833,27 @@ def admin_import_students():
                     SET name = %s,
                         major = %s,
                         class_name = %s,
+                        teacher_id = %s,
                         password = %s,
                         password_changed = FALSE
                     WHERE username = %s
                     """,
-                    (student_name, major, class_name, initial_password_hash, student_id)
+                    (student_name, major, class_name, teacher_id, initial_password_hash, student_id)
                 )
                 updated_count += 1
             else:
                 cursor.execute(
                     """
-                    INSERT INTO users (username, name, major, class_name, password, password_changed, avatar_filename)
-                    VALUES (%s, %s, %s, %s, %s, FALSE, %s)
+                    INSERT INTO users (username, name, major, class_name, teacher_id, password, password_changed, avatar_filename)
+                    VALUES (%s, %s, %s, %s, %s, %s, FALSE, %s)
                     """,
-                    (student_id, student_name, major, class_name, initial_password_hash, DEFAULT_AVATAR)
+                    (student_id, student_name, major, class_name, teacher_id, initial_password_hash, DEFAULT_AVATAR)
                 )
                 inserted_count += 1
 
         conn.commit()
         flash(
-            f'导入完成：新增 {inserted_count} 人，更新 {updated_count} 人，跳过 {skipped_rows} 行。'
+            f'导入完成：新增 {inserted_count} 人，更新 {updated_count} 人，跳过 {skipped_rows} 行。已导入到教师：{teacher["name"]}。'
             f'初始密码已按“@ncst+学号后四位”自动设置。',
             'success'
         )
@@ -4368,6 +4464,55 @@ def admin_delete_user(user_id):
         conn.close()
 
     return redirect(url_for('admin_user_management'))
+
+
+@app.route('/admin/student/<int:user_id>/edit', methods=['GET', 'POST'])
+@login_required(db_check=True)
+def admin_edit_student(user_id):
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            "SELECT id, username, name, major, class_name, teacher_id FROM users WHERE id = %s AND username != 'admin'",
+            (user_id,)
+        )
+        student = cursor.fetchone()
+        if not student:
+            flash('学生不存在', 'danger')
+            return redirect(url_for('admin_dashboard'))
+
+        if request.method == 'POST':
+            name = (request.form.get('name') or '').strip()
+            major = (request.form.get('major') or '').strip()
+            class_name = (request.form.get('class_name') or '').strip()
+            teacher_id = request.form.get('teacher_id', type=int)
+            if not name or not teacher_id:
+                flash('姓名和所属教师不能为空', 'danger')
+                return redirect(url_for('admin_edit_student', user_id=user_id))
+
+            cursor.execute(
+                """
+                UPDATE users
+                SET name = %s,
+                    major = %s,
+                    class_name = %s,
+                    teacher_id = %s
+                WHERE id = %s AND username != 'admin'
+                """,
+                (name, major or None, class_name or None, teacher_id, user_id)
+            )
+            conn.commit()
+            flash('学生信息已更新', 'success')
+            return redirect(url_for('admin_students_by_status', status='completed'))
+    finally:
+        cursor.close()
+        conn.close()
+
+    return render_template('admin_edit_student.html', student=student, teachers=get_teachers(include_disabled=False))
 
 
 # 管理员功能 - 学生详细答题情况

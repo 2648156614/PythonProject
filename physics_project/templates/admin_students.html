@@ -65,6 +65,7 @@
                             <th>姓名</th>
                             <th>专业</th>
                             <th>班级</th>
+                            <th>教师</th>
                             <th>完成状态</th>
                             <th>正确题数</th>
                             <th>总用时</th>
@@ -86,6 +87,7 @@
                             <td>{{ student.name or '-' }}</td>
                             <td>{{ student.major or '未设置专业' }}</td>
                             <td>{{ student.class_name or '未分班' }}</td>
+                            <td>{{ student.teacher_name or '未分配教师' }}</td>
                             <td>
                                 {% if student.completed_all %}
                                 <span class="badge bg-success">已完成</span>
@@ -118,6 +120,10 @@
                                 <a href="{{ url_for('admin_student_details', user_id=student.id) }}"
                                    class="btn btn-sm btn-outline-primary">
                                     <i class="bi bi-search"></i> 查看详情
+                                </a>
+                                <a href="{{ url_for('admin_edit_student', user_id=student.id) }}"
+                                   class="btn btn-sm btn-outline-secondary">
+                                    <i class="bi bi-pencil"></i> 编辑
                                 </a>
                             </td>
                         </tr>
