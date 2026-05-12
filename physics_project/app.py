@@ -32,12 +32,21 @@ LOGIN_AUDIT_RETENTION_DAYS = 183
 LOGIN_AUDIT_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 
 app = Flask(__name__, template_folder='templates', static_folder='static', static_url_path='/static')
-app.secret_key = 'your_secret_key_here'
+
+
+def get_required_env(name):
+    value = os.getenv(name)
+    if value is None or value.strip() == '':
+        raise RuntimeError(f"缺少必需环境变量: {name}")
+    return value
+
+
+app.secret_key = get_required_env('SECRET_KEY')
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(seconds=SESSION_IDLE_TIMEOUT_SECONDS)
 logger = logging.getLogger(__name__)
 
 # Redis 配置
-redis_url = os.getenv('REDIS_URL', 'redis://172.17.66.87:6379/0')
+redis_url = get_required_env('REDIS_URL')
 redis_client = redis.Redis.from_url(redis_url, decode_responses=True)
 POOL_TARGET = 50
 POOL_LOW_WATER = 25
@@ -53,10 +62,10 @@ PROBLEM_TTL_SECONDS = int(os.getenv('PROBLEM_TTL_SECONDS', 900))
 
 # 数据库配置
 db_config = {
-    'host': 'localhost',
-    'user': 'root',
-    'password': '123456',
-    'database': 'physics_new3'
+    'host': get_required_env('DB_HOST'),
+    'user': get_required_env('DB_USER'),
+    'password': get_required_env('DB_PASSWORD'),
+    'database': get_required_env('DB_NAME')
 }
 
 DB_POOL_NAME = os.getenv('DB_POOL_NAME', 'physics_app_pool')
@@ -2290,7 +2299,7 @@ def create_admin_user():
                 ('admin', '管理员', admin_password, True, DEFAULT_AVATAR)
             )
             conn.commit()
-            print(f"管理员用户创建成功: admin / {default_admin_password}")
+            print("管理员用户创建成功: admin（默认密码已生成，请立即修改）")
         else:
             print("管理员用户已存在")
     except Exception as e:
