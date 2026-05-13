@@ -1,11 +1,12 @@
 import re
 from openpyxl import load_workbook
 import mysql.connector
+from werkzeug.security import generate_password_hash
 
 # ==================【你只需要改这里】==================
 
 EXCEL_PATH = "实验模板.xlsx"   # Excel 文件路径（可相对/绝对）
-DEFAULT_PASSWORD = "123456"
+DEFAULT_PASSWORD = "@ncst+学号后四位（入库前哈希）"
 
 DB_CONFIG = {
     "host": "localhost",
@@ -19,7 +20,7 @@ IMPORT_MODE = "skip"
 # update = 已存在学号则更新姓名（和密码）
 
 RESET_PASSWORD = True
-# True  = 导入时密码统一设为 123456
+# True  = 导入时密码按“@ncst+学号后四位”生成并以哈希存储
 # False = 不动已有用户密码
 
 # =====================================================
@@ -132,7 +133,8 @@ def main():
                 name = str(r[name_idx]).strip() if r[name_idx] else ""
 
             if RESET_PASSWORD:
-                batch.append((sid, DEFAULT_PASSWORD, name))
+                initial_password = "@ncst" + sid[-4:].zfill(4)
+                batch.append((sid, generate_password_hash(initial_password), name))
             else:
                 batch.append((sid, name))
 

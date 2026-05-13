@@ -1,5 +1,6 @@
 import mysql.connector
 import csv
+from werkzeug.security import generate_password_hash
 
  # 使用原始字符串
 
@@ -33,7 +34,7 @@ try:
                 student_id = row[0].strip()
                 # 确保学号是数字
                 if student_id and student_id.isdigit():
-                    data.append((student_id, '123456'))
+                    data.append((student_id, generate_password_hash('@ncst' + student_id[-4:].zfill(4))))
                     print(f"添加学生: {student_id}")
 
         # 批量插入
