@@ -2160,6 +2160,39 @@ def initialize_database():
     print("✅ 数据库初始化完成，所有题目已添加答案单位")
 
 
+
+
+def migrate_legacy_plaintext_passwords():
+    """将 users 表中仍为明文的历史密码升级为哈希存储。"""
+    conn = get_db_connection()
+    if not conn:
+        print("历史密码升级失败：数据库连接失败")
+        return
+
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT id, password FROM users")
+        users = cursor.fetchall()
+
+        upgraded = 0
+        for user in users:
+            stored_password = user.get('password')
+            if not is_password_hash(stored_password):
+                new_hash = generate_password_hash(str(stored_password or ''))
+                cursor.execute("UPDATE users SET password = %s WHERE id = %s", (new_hash, user['id']))
+                upgraded += 1
+
+        if upgraded:
+            conn.commit()
+            print(f"已升级 {upgraded} 条历史明文密码为哈希存储")
+        else:
+            print("未发现需要升级的历史明文密码")
+    except mysql.connector.Error as err:
+        conn.rollback()
+        print(f"历史密码升级失败: {err}")
+    finally:
+        cursor.close()
+        conn.close()
 def ensure_user_columns():
     """确保用户表包含必要字段"""
     conn = get_db_connection()
@@ -5093,6 +5126,9 @@ if __name__ == '__main__':
 
     # 确保用户表字段完整
     ensure_user_columns()
+
+    # 升级历史明文密码为哈希存储
+    migrate_legacy_plaintext_passwords()
 
     # 为高并发场景补齐关键索引
     ensure_performance_indexes()
