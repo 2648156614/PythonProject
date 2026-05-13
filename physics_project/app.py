@@ -21,9 +21,12 @@ import numpy as np
 import redis
 import sympy as sp
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, abort
+from dotenv import load_dotenv
 from openpyxl import load_workbook
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
+
+load_dotenv()
 
 SESSION_IDLE_TIMEOUT_SECONDS = 60 * 60
 MAX_LOGIN_FAILURES = 10
