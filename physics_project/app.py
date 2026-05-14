@@ -32,12 +32,12 @@ LOGIN_AUDIT_RETENTION_DAYS = 183
 LOGIN_AUDIT_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 
 app = Flask(__name__, template_folder='templates', static_folder='static', static_url_path='/static')
-app.secret_key = 'your_secret_key_here'
+app.secret_key = os.getenv('SECRET_KEY', 'change-me-in-production')
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(seconds=SESSION_IDLE_TIMEOUT_SECONDS)
 logger = logging.getLogger(__name__)
 
 # Redis 配置
-redis_url = os.getenv('REDIS_URL', 'redis://172.17.66.87:6379/0')
+redis_url = os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/0')
 redis_client = redis.Redis.from_url(redis_url, decode_responses=True)
 POOL_TARGET = 50
 POOL_LOW_WATER = 25
@@ -53,10 +53,10 @@ PROBLEM_TTL_SECONDS = int(os.getenv('PROBLEM_TTL_SECONDS', 900))
 
 # 数据库配置
 db_config = {
-    'host': 'localhost',
-    'user': 'root',
-    'password': '123456',
-    'database': 'physics_new3'
+    'host': os.getenv('DB_HOST', '127.0.0.1'),
+    'user': os.getenv('DB_USER', ''),
+    'password': os.getenv('DB_PASSWORD', ''),
+    'database': os.getenv('DB_NAME', '')
 }
 
 DB_POOL_NAME = os.getenv('DB_POOL_NAME', 'physics_app_pool')
