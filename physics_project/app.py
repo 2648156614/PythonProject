@@ -25,6 +25,29 @@ from openpyxl import load_workbook
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 
+
+
+def load_env_file(path):
+    """从 .env 文件加载环境变量（仅在变量未设置时生效）。"""
+    if not os.path.exists(path):
+        return
+
+    with open(path, 'r', encoding='utf-8') as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+
+            key, value = line.split('=', 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_env_file(os.path.join(BASE_DIR, '.env'))
+
 SESSION_IDLE_TIMEOUT_SECONDS = 60 * 60
 MAX_LOGIN_FAILURES = 10
 LOGIN_LOCK_MINUTES = 5
