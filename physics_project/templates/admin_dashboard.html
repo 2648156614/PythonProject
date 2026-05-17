@@ -110,21 +110,86 @@
         </div>
         <div class="card-body">
             <form method="post" action="{{ url_for('admin_import_students') }}" enctype="multipart/form-data" class="row g-3 align-items-end">
-                <div class="col-lg-7">
+                <div class="col-lg-6">
                     <label for="students_file" class="form-label">上传 xlsx 文件</label>
                     <input class="form-control" type="file" id="students_file" name="students_file" accept=".xlsx" required>
-                    <div class="form-text">格式要求：第 1 列为学号，第 2 列为姓名，第 3 列为专业，第 4 列为班级；可包含表头。</div>
+                    <div class="form-text">格式要求：第 1 列学号，第 2 列姓名，第 3 列专业，第 4 列班级，第 5 列任课老师；可包含表头。</div>
                 </div>
-                <div class="col-lg-5 text-lg-end">
-                    <button type="submit" class="btn btn-primary">
+                <div class="col-lg-3">
+                    <label class="form-label">统一分配给老师</label>
+                    <input class="form-control" name="teacher_name" placeholder="第 5 列为空时使用">
+                </div>
+                <div class="col-lg-3 text-lg-end">
+                    <button type="submit" class="btn btn-primary w-100">
                         <i class="bi bi-upload me-1"></i> 开始导入
                     </button>
                 </div>
             </form>
             <hr>
             <p class="mb-0 text-muted">
-                导入时会将学生密码重置为 <code>123456</code>，并标记为首次登录需修改密码。
+                导入时会将学生密码重置为 <code>@ncst+学号后四位</code>，并标记为首次登录需修改密码。
             </p>
+        </div>
+    </div>
+
+    <div class="card mb-4 border-warning">
+        <div class="card-header bg-warning text-dark">
+            <h5 class="mb-0"><i class="bi bi-alarm me-2"></i>按老师设置开考时间</h5>
+        </div>
+        <div class="card-body">
+            <form method="post" action="{{ url_for('admin_set_teacher_exam_time') }}" class="row g-3 align-items-end mb-4">
+                <div class="col-md-4">
+                    <label class="form-label">老师姓名</label>
+                    <input class="form-control" name="teacher_name" list="teacherNames" required>
+                    <datalist id="teacherNames">
+                        {% for group in teacher_exam_groups %}
+                        {% if group.teacher_name != '未分配' %}
+                        <option value="{{ group.teacher_name }}"></option>
+                        {% endif %}
+                        {% endfor %}
+                    </datalist>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">开考时间（服务器时间）</label>
+                    <input class="form-control" type="datetime-local" name="exam_start_time">
+                    <div class="form-text">留空提交可清除该老师名下学生的时间限制。</div>
+                </div>
+                <div class="col-md-2">
+                    <button class="btn btn-warning w-100" type="submit">保存时间</button>
+                </div>
+            </form>
+
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead><tr><th>老师</th><th>学生数</th><th>当前开考时间</th><th>时间状态</th></tr></thead>
+                    <tbody>
+                        {% for group in teacher_exam_groups %}
+                        <tr>
+                            <td>{{ group.teacher_name }}</td>
+                            <td>{{ group.student_count }}</td>
+                            <td>
+                                {% if group.exam_start_time %}
+                                {{ group.exam_start_time.strftime('%Y-%m-%d %H:%M') }}
+                                {% else %}
+                                <span class="text-muted">未限制</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if group.schedule_count > 1 %}
+                                <span class="badge bg-danger">存在多个时间，请统一设置</span>
+                                {% elif group.exam_start_time %}
+                                <span class="badge bg-warning text-dark">按时间开放</span>
+                                {% else %}
+                                <span class="badge bg-success">可直接答题</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="4" class="text-center text-muted">暂无学生</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 

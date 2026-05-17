@@ -26,7 +26,9 @@
         <div class="col-md-3"><input class="form-control" name="username" placeholder="学号" required></div>
         <div class="col-md-2"><input class="form-control" name="name" placeholder="姓名" required></div>
         <div class="col-md-3"><input class="form-control" name="major" placeholder="专业"></div>
-        <div class="col-md-3"><input class="form-control" name="class_name" placeholder="班级"></div>
+        <div class="col-md-2"><input class="form-control" name="class_name" placeholder="班级"></div>
+        <div class="col-md-2"><input class="form-control" name="teacher_name" placeholder="任课老师"></div>
+        <div class="col-md-2"><input class="form-control" type="datetime-local" name="exam_start_time" title="开考时间"></div>
         <div class="col-md-1 d-grid"><button class="btn btn-success" type="submit">添加</button></div>
       </form>
     </div>
@@ -36,7 +38,7 @@
     <div class="card-header">用户列表（仅基础信息）</div>
     <div class="card-body table-responsive">
       <table class="table table-bordered align-middle">
-        <thead><tr><th>学号</th><th>姓名</th><th>专业</th><th>班级</th><th>操作</th></tr></thead>
+        <thead><tr><th>学号</th><th>姓名</th><th>专业</th><th>班级</th><th>任课老师</th><th>开考时间</th><th>操作</th></tr></thead>
         <tbody>
           {% for user in users %}
           <tr>
@@ -45,6 +47,8 @@
               <td><input class="form-control" name="name" value="{{ user.name or '' }}" required></td>
               <td><input class="form-control" name="major" value="{{ user.major or '' }}"></td>
               <td><input class="form-control" name="class_name" value="{{ user.class_name or '' }}"></td>
+              <td><input class="form-control" name="teacher_name" value="{{ user.teacher_name or '' }}"></td>
+              <td><input class="form-control" type="datetime-local" name="exam_start_time" value="{{ user.exam_start_time.strftime('%Y-%m-%dT%H:%M') if user.exam_start_time else '' }}"></td>
               <td class="d-flex gap-2">
                 <button class="btn btn-sm btn-primary" type="submit">保存</button>
             </form>
@@ -54,7 +58,7 @@
               </td>
           </tr>
           {% else %}
-          <tr><td colspan="5" class="text-center text-muted">暂无符合条件的用户</td></tr>
+          <tr><td colspan="7" class="text-center text-muted">暂无符合条件的用户</td></tr>
           {% endfor %}
         </tbody>
       </table>

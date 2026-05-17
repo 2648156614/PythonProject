@@ -25,9 +25,18 @@
         <div class="col-md-4 text-md-end">
             <div class="btn-group">
                 {% if not completed_all and total_problems > 0 and selected_paper %}
-                <a href="{{ url_for('problem_ajax', problem_id=current_problem) }}" class="btn btn-light btn-lg">
+                <a id="exam-start-button"
+                   href="{{ url_for('problem_ajax', problem_id=current_problem) }}"
+                   class="btn btn-light btn-lg {% if not exam_access.allowed %}disabled{% endif %}"
+                   {% if not exam_access.allowed %}aria-disabled="true"{% endif %}>
                     <i class="bi bi-play-circle me-2"></i>
-                    {% if completed_count > 0 %}继续{% endif %}学习
+                    <span id="exam-start-button-text">
+                        {% if exam_access.allowed %}
+                            {% if completed_count > 0 %}继续{% endif %}学习
+                        {% else %}
+                            未到开考时间
+                        {% endif %}
+                    </span>
                 </a>
                 {% endif %}
                 <!-- 管理员功能按钮 -->
@@ -40,6 +49,45 @@
         </div>
     </div>
 </div>
+
+{% if not exam_access.allowed %}
+<div id="exam-waiting-alert" class="alert alert-warning border-0 shadow-sm">
+    <div class="d-flex align-items-start gap-3">
+        <i class="bi bi-clock-history fs-3"></i>
+        <div>
+            <h5 class="alert-heading mb-1">考试尚未开始</h5>
+            <p class="mb-1">{{ exam_access.message }}</p>
+            <div class="small">
+                服务器当前时间：{{ exam_access.server_time.strftime('%Y-%m-%d %H:%M:%S') }}
+                {% if exam_access.exam_start_time %}
+                · 距离开考：<span id="exam-countdown">计算中</span>
+                {% endif %}
+                {% if exam_access.teacher_name %} · 任课老师：{{ exam_access.teacher_name }}{% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if exam_access.exam_start_time and not exam_access.allowed %}
+<div class="modal fade" id="examStartedModal" tabindex="-1" aria-labelledby="examStartedModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title" id="examStartedModalLabel"><i class="bi bi-check-circle me-2"></i>考试已开始</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body">
+                已到达老师设置的开考时间，现在可以开始答题。
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">稍后开始</button>
+                <a class="btn btn-success" href="{{ url_for('problem_ajax', problem_id=current_problem) }}">开始答题</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
 
 <div class="card border-0 shadow-sm mb-4">
     <div class="card-body">
@@ -296,6 +344,8 @@
 </div>
 
 <script>
+window.examCanStart = {{ 'true' if exam_access.allowed else 'false' }};
+
 // 获取题目完成状态
 async function getProblemCompletionStatus() {
     try {
@@ -386,6 +436,15 @@ function updateProgressCircle(progress) {
 
 // 页面初始化
 document.addEventListener('DOMContentLoaded', function() {
+    const startButton = document.getElementById('exam-start-button');
+    if (startButton) {
+        startButton.addEventListener('click', function(event) {
+            if (!window.examCanStart) {
+                event.preventDefault();
+            }
+        });
+    }
+
     // 更新题目状态显示
     updateProblemStatusDisplay();
 
@@ -396,11 +455,84 @@ document.addEventListener('DOMContentLoaded', function() {
     const statusCards = document.querySelectorAll('.problem-status-card');
     statusCards.forEach(card => {
         card.addEventListener('click', function() {
+            if (!window.examCanStart) return;
             const problemId = this.getAttribute('data-problem-id');
             window.location.href = '/problem_ajax/' + problemId;
         });
     });
 });
+
+{% if exam_access.exam_start_time and not exam_access.allowed %}
+(function setupExamStartWatcher() {
+    const serverNow = {{ (exam_access.server_time.timestamp() * 1000)|int }};
+    const examStart = {{ (exam_access.exam_start_time.timestamp() * 1000)|int }};
+    const localLoadedAt = Date.now();
+    const countdownEl = document.getElementById('exam-countdown');
+    const waitingAlert = document.getElementById('exam-waiting-alert');
+    const startButton = document.getElementById('exam-start-button');
+    const startButtonText = document.getElementById('exam-start-button-text');
+    let notified = false;
+
+    function estimateServerNow() {
+        return serverNow + (Date.now() - localLoadedAt);
+    }
+
+    function formatRemaining(ms) {
+        const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        if (hours > 0) {
+            return `${hours}小时${String(minutes).padStart(2, '0')}分${String(seconds).padStart(2, '0')}秒`;
+        }
+        return `${minutes}分${String(seconds).padStart(2, '0')}秒`;
+    }
+
+    function openExam() {
+        window.examCanStart = true;
+        if (startButton) {
+            startButton.classList.remove('disabled');
+            startButton.removeAttribute('aria-disabled');
+        }
+        if (startButtonText) {
+            startButtonText.textContent = '{{ "继续学习" if completed_count > 0 else "开始学习" }}';
+        }
+        if (waitingAlert) {
+            waitingAlert.classList.remove('alert-warning');
+            waitingAlert.classList.add('alert-success');
+            waitingAlert.querySelector('.alert-heading').textContent = '考试已开始';
+            const message = waitingAlert.querySelector('p');
+            if (message) message.textContent = '已到达老师设置的开考时间，现在可以开始答题。';
+        }
+        if (countdownEl) {
+            countdownEl.textContent = '已开始';
+        }
+        if (!notified) {
+            notified = true;
+            const modalEl = document.getElementById('examStartedModal');
+            if (modalEl && window.bootstrap) {
+                new bootstrap.Modal(modalEl).show();
+            } else {
+                alert('考试已开始，现在可以开始答题。');
+            }
+        }
+    }
+
+    function tick() {
+        const remaining = examStart - estimateServerNow();
+        if (remaining <= 0) {
+            openExam();
+            return;
+        }
+        if (countdownEl) {
+            countdownEl.textContent = formatRemaining(remaining);
+        }
+        window.setTimeout(tick, Math.min(1000, remaining));
+    }
+
+    tick();
+})();
+{% endif %}
 </script>
 
 <style>
