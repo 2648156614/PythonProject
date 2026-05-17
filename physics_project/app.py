@@ -20,10 +20,21 @@ from mysql.connector import pooling
 import numpy as np
 import redis
 import sympy as sp
+from dotenv import load_dotenv
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, abort
 from openpyxl import load_workbook
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE_DIR, '.env'))
+
+
+def get_required_env(name):
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return value
 
 SESSION_IDLE_TIMEOUT_SECONDS = 60 * 60
 MAX_LOGIN_FAILURES = 10
@@ -32,12 +43,12 @@ LOGIN_AUDIT_RETENTION_DAYS = 183
 LOGIN_AUDIT_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 
 app = Flask(__name__, template_folder='templates', static_folder='static', static_url_path='/static')
-app.secret_key = 'your_secret_key_here'
+app.secret_key = get_required_env('SECRET_KEY')
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(seconds=SESSION_IDLE_TIMEOUT_SECONDS)
 logger = logging.getLogger(__name__)
 
 # Redis 配置
-redis_url = os.getenv('REDIS_URL', 'redis://172.17.66.87:6379/0')
+redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
 redis_client = redis.Redis.from_url(redis_url, decode_responses=True)
 POOL_TARGET = 50
 POOL_LOW_WATER = 25
@@ -53,10 +64,11 @@ PROBLEM_TTL_SECONDS = int(os.getenv('PROBLEM_TTL_SECONDS', 900))
 
 # 数据库配置
 db_config = {
-    'host': 'localhost',
-    'user': 'root',
-    'password': '123456',
-    'database': 'physics_new3'
+    'host': os.getenv('MYSQL_HOST', 'localhost'),
+    'port': int(os.getenv('MYSQL_PORT', 3306)),
+    'user': os.getenv('MYSQL_USER', 'root'),
+    'password': os.getenv('MYSQL_PASSWORD', ''),
+    'database': os.getenv('MYSQL_DATABASE', 'physics_new3')
 }
 
 DB_POOL_NAME = os.getenv('DB_POOL_NAME', 'physics_app_pool')
@@ -177,6 +189,116 @@ def get_exam_paper_by_id(paper_id):
     try:
         cursor.execute("SELECT id, name, description, is_enabled, created_at FROM exam_papers WHERE id = %s", (paper_id,))
         return cursor.fetchone()
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def parse_exam_start_time(value):
+    """解析后台 datetime-local 输入，返回服务器本地时间。"""
+    value = (value or '').strip()
+    if not value:
+        return None
+    for fmt in ('%Y-%m-%dT%H:%M', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M'):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    raise ValueError('时间格式不正确，请使用页面时间选择器设置。')
+
+
+def format_datetime_local(value):
+    if not value:
+        return ''
+    if isinstance(value, str):
+        try:
+            value = parse_exam_start_time(value)
+        except ValueError:
+            return ''
+    return value.strftime('%Y-%m-%dT%H:%M')
+
+
+def get_user_exam_access(user_id):
+    """按服务器当前时间判断学生是否可开始答题。管理员不受限制。"""
+    if session.get('username') == 'admin':
+        return {
+            'allowed': True,
+            'server_time': datetime.now(),
+            'exam_start_time': None,
+            'teacher_name': None,
+            'message': None
+        }
+
+    conn = get_db_connection()
+    if not conn:
+        return {
+            'allowed': False,
+            'server_time': datetime.now(),
+            'exam_start_time': None,
+            'teacher_name': None,
+            'message': '系统繁忙，请稍后重试。'
+        }
+
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            "SELECT teacher_name, exam_start_time FROM users WHERE id = %s",
+            (user_id,)
+        )
+        user = cursor.fetchone()
+    finally:
+        cursor.close()
+        conn.close()
+
+    now = datetime.now()
+    if not user:
+        return {
+            'allowed': False,
+            'server_time': now,
+            'exam_start_time': None,
+            'teacher_name': None,
+            'message': '用户不存在，请重新登录。'
+        }
+
+    start_time = user.get('exam_start_time')
+    if start_time and now < start_time:
+        return {
+            'allowed': False,
+            'server_time': now,
+            'exam_start_time': start_time,
+            'teacher_name': user.get('teacher_name'),
+            'message': f"考试将于 {start_time.strftime('%Y-%m-%d %H:%M')} 开始，请到时间后再开始答题。"
+        }
+
+    return {
+        'allowed': True,
+        'server_time': now,
+        'exam_start_time': start_time,
+        'teacher_name': user.get('teacher_name'),
+        'message': None
+    }
+
+
+def get_teacher_exam_groups():
+    conn = get_db_connection()
+    if not conn:
+        return []
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            """
+            SELECT
+                COALESCE(NULLIF(teacher_name, ''), '未分配') AS teacher_name,
+                COUNT(*) AS student_count,
+                MIN(exam_start_time) AS exam_start_time,
+                COUNT(DISTINCT exam_start_time) AS schedule_count
+            FROM users
+            WHERE username != 'admin'
+            GROUP BY COALESCE(NULLIF(teacher_name, ''), '未分配')
+            ORDER BY teacher_name
+            """
+        )
+        return cursor.fetchall()
     finally:
         cursor.close()
         conn.close()
@@ -1831,6 +1953,8 @@ def initialize_database():
         name VARCHAR(100) DEFAULT NULL,
         major VARCHAR(100) DEFAULT NULL,
         class_name VARCHAR(100) DEFAULT NULL,
+        teacher_name VARCHAR(100) DEFAULT NULL,
+        exam_start_time DATETIME NULL,
         password VARCHAR(255) NOT NULL,
         avatar_filename VARCHAR(255) DEFAULT 'default.svg',
         password_changed BOOLEAN DEFAULT TRUE,
@@ -2175,6 +2299,12 @@ def ensure_user_columns():
         if 'class_name' not in existing_columns:
             cursor.execute("ALTER TABLE users ADD COLUMN class_name VARCHAR(100) DEFAULT NULL AFTER major")
             print("已添加 class_name 列")
+        if 'teacher_name' not in existing_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN teacher_name VARCHAR(100) DEFAULT NULL AFTER class_name")
+            print("已添加 teacher_name 列")
+        if 'exam_start_time' not in existing_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN exam_start_time DATETIME NULL AFTER teacher_name")
+            print("已添加 exam_start_time 列")
         if 'avatar_filename' not in existing_columns:
             cursor.execute("ALTER TABLE users ADD COLUMN avatar_filename VARCHAR(255) DEFAULT 'default.svg' AFTER password")
             print("已添加 avatar_filename 列")
@@ -2238,6 +2368,11 @@ def ensure_performance_indexes():
                 'users',
                 'idx_users_login_lock_status',
                 "CREATE INDEX idx_users_login_lock_status ON users (username, login_locked_until, failed_login_attempts)"
+            ),
+            (
+                'users',
+                'idx_users_teacher_exam_start',
+                "CREATE INDEX idx_users_teacher_exam_start ON users (teacher_name, exam_start_time)"
             ),
         ]
 
@@ -2538,7 +2673,7 @@ def get_students_by_completion(completed=True, limit=None, offset=0, paper_id=No
               )
             GROUP BY user_id
         )
-        SELECT u.id, u.username, u.name, u.major, u.class_name,
+        SELECT u.id, u.username, u.name, u.major, u.class_name, u.teacher_name, u.exam_start_time,
                CASE WHEN COALESCE(c.total_score, 0) >= %s AND %s > 0 THEN TRUE ELSE FALSE END AS completed_all,
                u.completed_at, COALESCE(c.total_score, 0) AS total_score, COALESCE(c.total_time, 0) AS total_time, u.created_at
         FROM users u
@@ -2895,6 +3030,7 @@ def dashboard():
         selected_paper_id = resolve_selected_exam_paper_id()
         selected_paper = get_exam_paper_by_id(selected_paper_id) if selected_paper_id else None
         has_available_papers = bool(available_papers)
+        exam_access = get_user_exam_access(session['user_id'])
 
         if not has_available_papers:
             flash('教师没有布置题目。', 'info')
@@ -2934,7 +3070,8 @@ def dashboard():
             available_papers=available_papers,
             selected_paper=selected_paper,
             selected_paper_id=selected_paper_id,
-            has_available_papers=has_available_papers
+            has_available_papers=has_available_papers,
+            exam_access=exam_access
         )
 
     except mysql.connector.Error as err:
@@ -3249,6 +3386,10 @@ def debug_history():
 def refresh_problem(problem_id):
     """刷新单个题目"""
     try:
+        exam_access = get_user_exam_access(session['user_id'])
+        if not exam_access['allowed']:
+            return jsonify({'success': False, 'message': exam_access['message'], 'exam_not_started': True}), 403
+
         # 根据显示序号获取实际ID
         paper_id = resolve_selected_exam_paper_id()
         actual_id = get_actual_id(problem_id, paper_id)
@@ -3283,6 +3424,10 @@ def problem_ajax(problem_id):
     """支持Ajax的问题页面 - 内部将problem_id作为显示序号使用"""
     print(f"\n=== Ajax问题页面开始 ===")
     print(f"显示序号: {problem_id}")
+    exam_access = get_user_exam_access(session['user_id'])
+    if not exam_access['allowed']:
+        flash(exam_access['message'], 'warning')
+        return redirect(url_for('dashboard'))
 
     # 根据显示序号获取实际ID
     paper_id = resolve_selected_exam_paper_id()
@@ -3384,6 +3529,17 @@ def problem_ajax(problem_id):
 def api_submit(problem_id):
     """API接口：提交答案 - 内部将problem_id作为显示序号使用"""
     try:
+        exam_access = get_user_exam_access(session['user_id'])
+        if not exam_access['allowed']:
+            return jsonify({
+                'success': False,
+                'message': exam_access['message'],
+                'exam_not_started': True,
+                'server_time': exam_access['server_time'].strftime('%Y-%m-%d %H:%M:%S'),
+                'exam_start_time': exam_access['exam_start_time'].strftime('%Y-%m-%d %H:%M:%S')
+                if exam_access.get('exam_start_time') else None
+            }), 403
+
         data = request.get_json()
         logger.info("提交答案: problem_id=%s", problem_id)
         logger.debug("提交数据详情: problem_id=%s payload=%s", problem_id, data)
@@ -3647,6 +3803,7 @@ def admin_dashboard():
     total_problems = get_total_problem_count(selected_paper_id)
     recent_completions = get_students_by_completion(completed=True, paper_id=selected_paper_id)
     incomplete_students = get_students_by_completion(completed=False, paper_id=selected_paper_id)
+    teacher_exam_groups = get_teacher_exam_groups()
 
     return render_template('admin_dashboard.html',
                            stats=stats,
@@ -3655,13 +3812,15 @@ def admin_dashboard():
                            total_problems=total_problems,
                            exam_papers=get_exam_papers(),
                            selected_paper=selected_paper,
-                           selected_paper_id=selected_paper_id)
+                           selected_paper_id=selected_paper_id,
+                           teacher_exam_groups=teacher_exam_groups,
+                           format_datetime_local=format_datetime_local)
 
 
 @app.route('/admin/import/students', methods=['POST'])
 @login_required(db_check=True)
 def admin_import_students():
-    """管理员批量导入学生（xlsx：第1列学号，第2列姓名，第3列专业，第4列班级）"""
+    """管理员批量导入学生（xlsx：学号、姓名、专业、班级、任课老师）。"""
     if session.get('username') != 'admin':
         flash('权限不足', 'danger')
         return redirect(url_for('dashboard'))
@@ -3675,6 +3834,8 @@ def admin_import_students():
         flash('文件格式错误，仅支持 .xlsx', 'danger')
         return redirect(url_for('admin_dashboard'))
 
+    default_teacher_name = (request.form.get('teacher_name') or '').strip()
+
     try:
         workbook = load_workbook(upload_file, read_only=True, data_only=True)
         sheet = workbook.active
@@ -3685,9 +3846,10 @@ def admin_import_students():
             student_name = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ''
             major = str(row[2]).strip() if len(row) > 2 and row[2] is not None else ''
             class_name = str(row[3]).strip() if len(row) > 3 and row[3] is not None else ''
-            if not student_id and not student_name and not major and not class_name:
+            teacher_name = str(row[4]).strip() if len(row) > 4 and row[4] is not None else ''
+            if not student_id and not student_name and not major and not class_name and not teacher_name:
                 continue
-            raw_rows.append((student_id, student_name, major, class_name))
+            raw_rows.append((student_id, student_name, major, class_name, teacher_name))
     except Exception as e:
         flash(f'读取 xlsx 失败：{e}', 'danger')
         return redirect(url_for('admin_dashboard'))
@@ -3697,20 +3859,22 @@ def admin_import_students():
         return redirect(url_for('admin_dashboard'))
 
     normalized_rows = raw_rows
-    first_id, first_name, first_major, first_class = raw_rows[0]
+    first_id, first_name, first_major, first_class, first_teacher = raw_rows[0]
     if first_id.lower() in {'学号', 'student_id', 'studentid', 'id', '账号', '用户名'}:
         if (first_name.lower() in {'姓名', 'name', '学生姓名'} or not first_name) and \
                 (first_major.lower() in {'专业', 'major', 'major_name'} or not first_major) and \
-                (first_class.lower() in {'班级', 'class', 'class_name'} or not first_class):
+                (first_class.lower() in {'班级', 'class', 'class_name'} or not first_class) and \
+                (first_teacher.lower() in {'老师', '教师', '任课老师', 'teacher', 'teacher_name'} or not first_teacher):
             normalized_rows = raw_rows[1:]
 
     valid_rows = []
     skipped_rows = 0
-    for student_id, student_name, major, class_name in normalized_rows:
+    for student_id, student_name, major, class_name, teacher_name in normalized_rows:
         if not student_id:
             skipped_rows += 1
             continue
-        valid_rows.append((student_id, student_name or None, major or None, class_name or None))
+        teacher_name = teacher_name or default_teacher_name
+        valid_rows.append((student_id, student_name or None, major or None, class_name or None, teacher_name or None))
 
     if not valid_rows:
         flash('未找到可导入的学号数据', 'warning')
@@ -3726,7 +3890,7 @@ def admin_import_students():
     cursor = None
     try:
         cursor = conn.cursor()
-        for student_id, student_name, major, class_name in valid_rows:
+        for student_id, student_name, major, class_name, teacher_name in valid_rows:
             initial_password = build_initial_password(student_id)
             initial_password_hash = generate_password_hash(initial_password)
             cursor.execute("SELECT id FROM users WHERE username = %s", (student_id,))
@@ -3738,20 +3902,21 @@ def admin_import_students():
                     SET name = %s,
                         major = %s,
                         class_name = %s,
+                        teacher_name = %s,
                         password = %s,
                         password_changed = FALSE
                     WHERE username = %s
                     """,
-                    (student_name, major, class_name, initial_password_hash, student_id)
+                    (student_name, major, class_name, teacher_name, initial_password_hash, student_id)
                 )
                 updated_count += 1
             else:
                 cursor.execute(
                     """
-                    INSERT INTO users (username, name, major, class_name, password, password_changed, avatar_filename)
-                    VALUES (%s, %s, %s, %s, %s, FALSE, %s)
+                    INSERT INTO users (username, name, major, class_name, teacher_name, password, password_changed, avatar_filename)
+                    VALUES (%s, %s, %s, %s, %s, %s, FALSE, %s)
                     """,
-                    (student_id, student_name, major, class_name, initial_password_hash, DEFAULT_AVATAR)
+                    (student_id, student_name, major, class_name, teacher_name, initial_password_hash, DEFAULT_AVATAR)
                 )
                 inserted_count += 1
 
@@ -3767,6 +3932,53 @@ def admin_import_students():
     finally:
         if cursor:
             cursor.close()
+        conn.close()
+
+    return redirect(url_for('admin_dashboard'))
+
+
+@app.route('/admin/teacher_exam_time', methods=['POST'])
+@login_required(db_check=True)
+def admin_set_teacher_exam_time():
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    teacher_name = (request.form.get('teacher_name') or '').strip()
+    start_time_raw = (request.form.get('exam_start_time') or '').strip()
+
+    if not teacher_name:
+        flash('请填写老师姓名', 'danger')
+        return redirect(url_for('admin_dashboard'))
+
+    try:
+        start_time = parse_exam_start_time(start_time_raw)
+    except ValueError as err:
+        flash(str(err), 'danger')
+        return redirect(url_for('admin_dashboard'))
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            UPDATE users
+            SET exam_start_time = %s
+            WHERE username != 'admin' AND teacher_name = %s
+            """,
+            (start_time, teacher_name)
+        )
+        affected = cursor.rowcount
+        conn.commit()
+        if start_time:
+            flash(f'已为 {teacher_name} 名下 {affected} 名学生设置开考时间：{start_time.strftime("%Y-%m-%d %H:%M")}。', 'success')
+        else:
+            flash(f'已清除 {teacher_name} 名下 {affected} 名学生的开考时间限制。', 'success')
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f'设置失败：{err}', 'danger')
+    finally:
+        cursor.close()
         conn.close()
 
     return redirect(url_for('admin_dashboard'))
@@ -3797,6 +4009,8 @@ def admin_export_students(status):
         '姓名',
         '专业',
         '班级',
+        '任课老师',
+        '开考时间',
         '完成状态',
         '完成题目数',
         '总题目数',
@@ -3815,6 +4029,8 @@ def admin_export_students(status):
             student.get('name') or '',
             student.get('major') or '',
             student.get('class_name') or '',
+            student.get('teacher_name') or '',
+            student['exam_start_time'].strftime('%Y-%m-%d %H:%M:%S') if student.get('exam_start_time') else '',
             status_label,
             student['total_score'] or 0,
             total_problems,
@@ -4232,7 +4448,7 @@ def admin_user_management():
     cursor = conn.cursor(dictionary=True)
     try:
         query = """
-            SELECT id, username, name, major, class_name, created_at
+            SELECT id, username, name, major, class_name, teacher_name, exam_start_time, created_at
             FROM users
             WHERE username != 'admin'
         """
@@ -4270,9 +4486,17 @@ def admin_add_user():
     name = (request.form.get('name') or '').strip()
     major = (request.form.get('major') or '').strip()
     class_name = (request.form.get('class_name') or '').strip()
+    teacher_name = (request.form.get('teacher_name') or '').strip()
+    exam_start_time_raw = (request.form.get('exam_start_time') or '').strip()
 
     if not username or not name:
         flash('学号和姓名不能为空', 'danger')
+        return redirect(url_for('admin_user_management'))
+
+    try:
+        exam_start_time = parse_exam_start_time(exam_start_time_raw)
+    except ValueError as err:
+        flash(str(err), 'danger')
         return redirect(url_for('admin_user_management'))
 
     initial_password = build_initial_password(username)
@@ -4288,10 +4512,10 @@ def admin_add_user():
 
         cursor.execute(
             """
-            INSERT INTO users (username, name, major, class_name, password, password_changed, avatar_filename)
-            VALUES (%s, %s, %s, %s, %s, FALSE, %s)
+            INSERT INTO users (username, name, major, class_name, teacher_name, exam_start_time, password, password_changed, avatar_filename)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, %s)
             """,
-            (username, name, major or None, class_name or None, password_hash, DEFAULT_AVATAR)
+            (username, name, major or None, class_name or None, teacher_name or None, exam_start_time, password_hash, DEFAULT_AVATAR)
         )
         conn.commit()
         flash(f'账户已添加，初始密码：{initial_password}', 'success')
@@ -4316,9 +4540,17 @@ def admin_edit_user(user_id):
     major = (request.form.get('major') or '').strip()
     class_name = (request.form.get('class_name') or '').strip()
     username = (request.form.get('username') or '').strip()
+    teacher_name = (request.form.get('teacher_name') or '').strip()
+    exam_start_time_raw = (request.form.get('exam_start_time') or '').strip()
 
     if not username or not name:
         flash('学号和姓名不能为空', 'danger')
+        return redirect(url_for('admin_user_management'))
+
+    try:
+        exam_start_time = parse_exam_start_time(exam_start_time_raw)
+    except ValueError as err:
+        flash(str(err), 'danger')
         return redirect(url_for('admin_user_management'))
 
     conn = get_db_connection()
@@ -4327,10 +4559,10 @@ def admin_edit_user(user_id):
         cursor.execute(
             """
             UPDATE users
-            SET username = %s, name = %s, major = %s, class_name = %s
+            SET username = %s, name = %s, major = %s, class_name = %s, teacher_name = %s, exam_start_time = %s
             WHERE id = %s AND username != 'admin'
             """,
-            (username, name, major or None, class_name or None, user_id)
+            (username, name, major or None, class_name or None, teacher_name or None, exam_start_time, user_id)
         )
         conn.commit()
         flash('用户信息更新成功', 'success')

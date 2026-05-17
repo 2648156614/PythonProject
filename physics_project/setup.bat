@@ -20,6 +20,7 @@ echo mysql-connector-python==8.1.0
 echo sympy==1.12
 echo waitress==2.1.2
 echo Jinja2==3.1.2
+echo python-dotenv==1.0.1
 ) > requirements.txt
 
 pip install -r requirements.txt
@@ -29,6 +30,7 @@ python -c "import flask; print('FLASK: OK')"
 python -c "import mysql.connector; print('MYSQL: OK')"
 python -c "import sympy; print('SYMPY: OK')"
 python -c "import waitress; print('WAITRESS: OK')"
+python -c "import dotenv; print('DOTENV: OK')"
 
 echo.
 echo ========================================

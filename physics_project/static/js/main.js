@@ -18,8 +18,8 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
-    // 自动隐藏警告消息
-    const alerts = document.querySelectorAll('.alert');
+    // 只自动隐藏明确标记的临时消息，避免误关页面里的说明/考试提示区域。
+    const alerts = document.querySelectorAll('.alert[data-auto-dismiss="true"]');
     alerts.forEach(alert => {
         setTimeout(() => {
             const bsAlert = new bootstrap.Alert(alert);
