@@ -1,4 +1,5 @@
 import csv
+import base64
 import io
 import json
 import logging
@@ -194,7 +195,7 @@ def get_exam_paper_by_id(paper_id):
         conn.close()
 
 
-def parse_exam_start_time(value):
+def parse_exam_time(value):
     """解析后台 datetime-local 输入，返回服务器本地时间。"""
     value = (value or '').strip()
     if not value:
@@ -212,7 +213,7 @@ def format_datetime_local(value):
         return ''
     if isinstance(value, str):
         try:
-            value = parse_exam_start_time(value)
+            value = parse_exam_time(value)
         except ValueError:
             return ''
     return value.strftime('%Y-%m-%dT%H:%M')
@@ -225,7 +226,9 @@ def get_user_exam_access(user_id):
             'allowed': True,
             'server_time': datetime.now(),
             'exam_start_time': None,
+            'exam_end_time': None,
             'teacher_name': None,
+            'status': 'open',
             'message': None
         }
 
@@ -235,14 +238,16 @@ def get_user_exam_access(user_id):
             'allowed': False,
             'server_time': datetime.now(),
             'exam_start_time': None,
+            'exam_end_time': None,
             'teacher_name': None,
+            'status': 'error',
             'message': '系统繁忙，请稍后重试。'
         }
 
     cursor = conn.cursor(dictionary=True)
     try:
         cursor.execute(
-            "SELECT teacher_name, exam_start_time FROM users WHERE id = %s",
+            "SELECT teacher_name, exam_start_time, exam_end_time FROM users WHERE id = %s",
             (user_id,)
         )
         user = cursor.fetchone()
@@ -256,25 +261,42 @@ def get_user_exam_access(user_id):
             'allowed': False,
             'server_time': now,
             'exam_start_time': None,
+            'exam_end_time': None,
             'teacher_name': None,
+            'status': 'error',
             'message': '用户不存在，请重新登录。'
         }
 
     start_time = user.get('exam_start_time')
+    end_time = user.get('exam_end_time')
     if start_time and now < start_time:
         return {
             'allowed': False,
             'server_time': now,
             'exam_start_time': start_time,
+            'exam_end_time': end_time,
             'teacher_name': user.get('teacher_name'),
+            'status': 'not_started',
             'message': f"考试将于 {start_time.strftime('%Y-%m-%d %H:%M')} 开始，请到时间后再开始答题。"
+        }
+    if end_time and now >= end_time:
+        return {
+            'allowed': False,
+            'server_time': now,
+            'exam_start_time': start_time,
+            'exam_end_time': end_time,
+            'teacher_name': user.get('teacher_name'),
+            'status': 'ended',
+            'message': f"考试已于 {end_time.strftime('%Y-%m-%d %H:%M')} 结束，无法继续答题。"
         }
 
     return {
         'allowed': True,
         'server_time': now,
         'exam_start_time': start_time,
+        'exam_end_time': end_time,
         'teacher_name': user.get('teacher_name'),
+        'status': 'open',
         'message': None
     }
 
@@ -291,7 +313,9 @@ def get_teacher_exam_groups():
                 COALESCE(NULLIF(teacher_name, ''), '未分配') AS teacher_name,
                 COUNT(*) AS student_count,
                 MIN(exam_start_time) AS exam_start_time,
-                COUNT(DISTINCT exam_start_time) AS schedule_count
+                MIN(exam_end_time) AS exam_end_time,
+                COUNT(DISTINCT COALESCE(CAST(exam_start_time AS CHAR), '')) AS start_schedule_count,
+                COUNT(DISTINCT COALESCE(CAST(exam_end_time AS CHAR), '')) AS end_schedule_count
             FROM users
             WHERE username != 'admin'
             GROUP BY COALESCE(NULLIF(teacher_name, ''), '未分配')
@@ -463,6 +487,47 @@ def save_uploaded_file(file):
         file.save(file_path)
         return filename
     return None
+
+
+def get_upload_folder_path():
+    upload_folder = app.config['UPLOAD_FOLDER']
+    if os.path.isabs(upload_folder):
+        return upload_folder
+    return os.path.join(app.root_path, upload_folder)
+
+
+def build_unique_image_filename(filename):
+    filename = secure_filename(filename or '')
+    if not filename:
+        filename = f"imported_{int(time.time())}.png"
+    base, ext = os.path.splitext(filename)
+    if not ext:
+        ext = '.png'
+    candidate = f"{base}{ext}"
+    counter = 1
+    upload_folder = get_upload_folder_path()
+    while os.path.exists(os.path.join(upload_folder, candidate)):
+        candidate = f"{base}_{counter}{ext}"
+        counter += 1
+    return candidate
+
+
+def save_imported_image(image_payload):
+    if not image_payload:
+        return None
+    original_filename = image_payload.get('filename') or ''
+    if not allowed_file(original_filename):
+        return None
+    content_base64 = image_payload.get('content_base64') or ''
+    if not content_base64:
+        return None
+    image_bytes = base64.b64decode(content_base64)
+    filename = build_unique_image_filename(original_filename)
+    upload_folder = get_upload_folder_path()
+    os.makedirs(upload_folder, exist_ok=True)
+    with open(os.path.join(upload_folder, filename), 'wb') as image_file:
+        image_file.write(image_bytes)
+    return filename
 
 
 def get_avatar_choices():
@@ -787,6 +852,40 @@ def invalidate_problem_cache(template_id):
                 deleted_count += int(redis_client.delete(key) or 0)
     except redis.RedisError as err:
         logger.warning("清理题目缓存失败: template_id=%s error=%s", template_id, err)
+
+    return deleted_count
+
+
+def invalidate_exam_paper_cache(paper_id=None):
+    """清理某个题库相关的模板缓存、题目池和已生成题目缓存。"""
+    global TEMPLATE_CACHE, TEMPLATE_CACHE_TS
+
+    template_ids = []
+    if paper_id is not None:
+        conn = get_db_connection()
+        if conn:
+            cursor = conn.cursor(dictionary=True)
+            try:
+                cursor.execute("SELECT id FROM problem_templates WHERE paper_id = %s", (paper_id,))
+                template_ids = [row['id'] for row in cursor.fetchall()]
+            finally:
+                cursor.close()
+                conn.close()
+
+    deleted_count = 0
+    if template_ids:
+        for template_id in template_ids:
+            deleted_count += invalidate_problem_cache(template_id)
+    else:
+        TEMPLATE_CACHE = {}
+        TEMPLATE_CACHE_TS = time.time()
+        try:
+            for pattern in ("exam:pool:*", "exam:problem:*"):
+                keys = list(redis_client.scan_iter(match=pattern, count=100))
+                if keys:
+                    deleted_count += int(redis_client.delete(*keys) or 0)
+        except redis.RedisError as err:
+            logger.warning("清理题库缓存失败: paper_id=%s error=%s", paper_id, err)
 
     return deleted_count
 
@@ -1955,6 +2054,7 @@ def initialize_database():
         class_name VARCHAR(100) DEFAULT NULL,
         teacher_name VARCHAR(100) DEFAULT NULL,
         exam_start_time DATETIME NULL,
+        exam_end_time DATETIME NULL,
         password VARCHAR(255) NOT NULL,
         avatar_filename VARCHAR(255) DEFAULT 'default.svg',
         password_changed BOOLEAN DEFAULT TRUE,
@@ -2305,6 +2405,9 @@ def ensure_user_columns():
         if 'exam_start_time' not in existing_columns:
             cursor.execute("ALTER TABLE users ADD COLUMN exam_start_time DATETIME NULL AFTER teacher_name")
             print("已添加 exam_start_time 列")
+        if 'exam_end_time' not in existing_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN exam_end_time DATETIME NULL AFTER exam_start_time")
+            print("已添加 exam_end_time 列")
         if 'avatar_filename' not in existing_columns:
             cursor.execute("ALTER TABLE users ADD COLUMN avatar_filename VARCHAR(255) DEFAULT 'default.svg' AFTER password")
             print("已添加 avatar_filename 列")
@@ -2372,7 +2475,7 @@ def ensure_performance_indexes():
             (
                 'users',
                 'idx_users_teacher_exam_start',
-                "CREATE INDEX idx_users_teacher_exam_start ON users (teacher_name, exam_start_time)"
+                "CREATE INDEX idx_users_teacher_exam_start ON users (teacher_name, exam_start_time, exam_end_time)"
             ),
         ]
 
@@ -2673,7 +2776,7 @@ def get_students_by_completion(completed=True, limit=None, offset=0, paper_id=No
               )
             GROUP BY user_id
         )
-        SELECT u.id, u.username, u.name, u.major, u.class_name, u.teacher_name, u.exam_start_time,
+        SELECT u.id, u.username, u.name, u.major, u.class_name, u.teacher_name, u.exam_start_time, u.exam_end_time,
                CASE WHEN COALESCE(c.total_score, 0) >= %s AND %s > 0 THEN TRUE ELSE FALSE END AS completed_all,
                u.completed_at, COALESCE(c.total_score, 0) AS total_score, COALESCE(c.total_time, 0) AS total_time, u.created_at
         FROM users u
@@ -3388,7 +3491,12 @@ def refresh_problem(problem_id):
     try:
         exam_access = get_user_exam_access(session['user_id'])
         if not exam_access['allowed']:
-            return jsonify({'success': False, 'message': exam_access['message'], 'exam_not_started': True}), 403
+            return jsonify({
+                'success': False,
+                'message': exam_access['message'],
+                'exam_blocked': True,
+                'exam_status': exam_access.get('status')
+            }), 403
 
         # 根据显示序号获取实际ID
         paper_id = resolve_selected_exam_paper_id()
@@ -3534,11 +3642,14 @@ def api_submit(problem_id):
             return jsonify({
                 'success': False,
                 'message': exam_access['message'],
-                'exam_not_started': True,
+                'exam_blocked': True,
                 'server_time': exam_access['server_time'].strftime('%Y-%m-%d %H:%M:%S'),
-                'exam_start_time': exam_access['exam_start_time'].strftime('%Y-%m-%d %H:%M:%S')
-                if exam_access.get('exam_start_time') else None
-            }), 403
+            'exam_start_time': exam_access['exam_start_time'].strftime('%Y-%m-%d %H:%M:%S')
+                if exam_access.get('exam_start_time') else None,
+            'exam_end_time': exam_access['exam_end_time'].strftime('%Y-%m-%d %H:%M:%S')
+                if exam_access.get('exam_end_time') else None,
+            'exam_status': exam_access.get('status')
+        }), 403
 
         data = request.get_json()
         logger.info("提交答案: problem_id=%s", problem_id)
@@ -3946,15 +4057,20 @@ def admin_set_teacher_exam_time():
 
     teacher_name = (request.form.get('teacher_name') or '').strip()
     start_time_raw = (request.form.get('exam_start_time') or '').strip()
+    end_time_raw = (request.form.get('exam_end_time') or '').strip()
 
     if not teacher_name:
         flash('请填写老师姓名', 'danger')
         return redirect(url_for('admin_dashboard'))
 
     try:
-        start_time = parse_exam_start_time(start_time_raw)
+        start_time = parse_exam_time(start_time_raw)
+        end_time = parse_exam_time(end_time_raw)
     except ValueError as err:
         flash(str(err), 'danger')
+        return redirect(url_for('admin_dashboard'))
+    if start_time and end_time and end_time <= start_time:
+        flash('结束时间必须晚于开始时间。', 'danger')
         return redirect(url_for('admin_dashboard'))
 
     conn = get_db_connection()
@@ -3963,17 +4079,20 @@ def admin_set_teacher_exam_time():
         cursor.execute(
             """
             UPDATE users
-            SET exam_start_time = %s
+            SET exam_start_time = %s,
+                exam_end_time = %s
             WHERE username != 'admin' AND teacher_name = %s
             """,
-            (start_time, teacher_name)
+            (start_time, end_time, teacher_name)
         )
         affected = cursor.rowcount
         conn.commit()
-        if start_time:
-            flash(f'已为 {teacher_name} 名下 {affected} 名学生设置开考时间：{start_time.strftime("%Y-%m-%d %H:%M")}。', 'success')
+        if start_time or end_time:
+            start_label = start_time.strftime("%Y-%m-%d %H:%M") if start_time else '不限制开始'
+            end_label = end_time.strftime("%Y-%m-%d %H:%M") if end_time else '不限制结束'
+            flash(f'已为 {teacher_name} 名下 {affected} 名学生设置考试时段：{start_label} 至 {end_label}。', 'success')
         else:
-            flash(f'已清除 {teacher_name} 名下 {affected} 名学生的开考时间限制。', 'success')
+            flash(f'已清除 {teacher_name} 名下 {affected} 名学生的考试时间限制。', 'success')
     except mysql.connector.Error as err:
         conn.rollback()
         flash(f'设置失败：{err}', 'danger')
@@ -4011,6 +4130,7 @@ def admin_export_students(status):
         '班级',
         '任课老师',
         '开考时间',
+        '结束时间',
         '完成状态',
         '完成题目数',
         '总题目数',
@@ -4031,6 +4151,7 @@ def admin_export_students(status):
             student.get('class_name') or '',
             student.get('teacher_name') or '',
             student['exam_start_time'].strftime('%Y-%m-%d %H:%M:%S') if student.get('exam_start_time') else '',
+            student['exam_end_time'].strftime('%Y-%m-%d %H:%M:%S') if student.get('exam_end_time') else '',
             status_label,
             student['total_score'] or 0,
             total_problems,
@@ -4089,11 +4210,208 @@ def admin_toggle_exam_paper(paper_id):
         new_status = not bool(paper['is_enabled'])
         cursor.execute("UPDATE exam_papers SET is_enabled = %s WHERE id = %s", (new_status, paper_id))
         conn.commit()
-        flash(f"题库《{paper['name']}》已{'开启' if new_status else '关闭'}", 'success')
+        deleted_cache_count = invalidate_exam_paper_cache(paper_id)
+        session.pop('current_problem', None)
+        session.modified = True
+        flash(f"题库《{paper['name']}》已{'开启' if new_status else '关闭'}，已清理 {deleted_cache_count} 条题目缓存。", 'success')
     finally:
         cursor.close()
         conn.close()
     return redirect(url_for('admin_dashboard', paper_id=paper_id))
+
+
+@app.route('/admin/exam_papers/<int:paper_id>/export')
+@login_required(db_check=True)
+def admin_export_exam_paper(paper_id):
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT id, name, description, is_enabled, created_at FROM exam_papers WHERE id = %s", (paper_id,))
+        paper = cursor.fetchone()
+        if not paper:
+            flash('题库不存在，无法导出。', 'danger')
+            return redirect(url_for('admin_manage_problems'))
+
+        cursor.execute(
+            """
+            SELECT template_name, problem_text, variables, solution_formula,
+                   answer_count, answer_units, difficulty, image_filename
+            FROM problem_templates
+            WHERE paper_id = %s
+            ORDER BY id
+            """,
+            (paper_id,)
+        )
+        templates = cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+    upload_folder = get_upload_folder_path()
+    exported_templates = []
+    for template in templates:
+        image_payload = None
+        image_filename = template.get('image_filename')
+        if image_filename:
+            image_path = os.path.join(upload_folder, image_filename)
+            if os.path.exists(image_path):
+                with open(image_path, 'rb') as image_file:
+                    image_payload = {
+                        'filename': image_filename,
+                        'content_base64': base64.b64encode(image_file.read()).decode('ascii')
+                    }
+
+        exported_templates.append({
+            'template_name': template.get('template_name'),
+            'problem_text': template.get('problem_text'),
+            'variables': template.get('variables'),
+            'solution_formula': template.get('solution_formula'),
+            'answer_count': template.get('answer_count'),
+            'answer_units': template.get('answer_units'),
+            'difficulty': template.get('difficulty'),
+            'image_filename': image_filename,
+            'image': image_payload
+        })
+
+    export_payload = {
+        'export_format': 'physics_exam_paper_backup',
+        'version': 1,
+        'exported_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'paper': {
+            'name': paper.get('name'),
+            'description': paper.get('description'),
+            'is_enabled': bool(paper.get('is_enabled')),
+            'created_at': paper['created_at'].strftime('%Y-%m-%d %H:%M:%S') if paper.get('created_at') else None
+        },
+        'templates': exported_templates
+    }
+
+    safe_name = secure_filename(paper.get('name') or f"paper_{paper_id}") or f"paper_{paper_id}"
+    filename = f"{safe_name}_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    content = json.dumps(export_payload, ensure_ascii=False, indent=2)
+    response = Response(content, mimetype='application/json; charset=utf-8')
+    response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
+
+
+@app.route('/admin/exam_papers/import', methods=['POST'])
+@login_required(db_check=True)
+def admin_import_exam_paper():
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    upload_file = request.files.get('paper_file')
+    replace_existing = request.form.get('replace_existing') == '1'
+    if not upload_file or upload_file.filename == '':
+        flash('请先选择题库备份 JSON 文件。', 'danger')
+        return redirect(url_for('admin_manage_problems'))
+
+    try:
+        payload = json.loads(upload_file.read().decode('utf-8-sig'))
+    except Exception as err:
+        flash(f'读取题库备份失败：{err}', 'danger')
+        return redirect(url_for('admin_manage_problems'))
+
+    if payload.get('export_format') != 'physics_exam_paper_backup' or not isinstance(payload.get('paper'), dict):
+        flash('文件格式不正确：请选择本系统导出的题库备份文件。', 'danger')
+        return redirect(url_for('admin_manage_problems'))
+
+    paper_payload = payload.get('paper') or {}
+    templates_payload = payload.get('templates') or []
+    paper_name = (paper_payload.get('name') or '').strip()
+    if not paper_name:
+        flash('导入失败：备份文件缺少题库名称。', 'danger')
+        return redirect(url_for('admin_manage_problems'))
+    if not isinstance(templates_payload, list):
+        flash('导入失败：题目列表格式不正确。', 'danger')
+        return redirect(url_for('admin_manage_problems'))
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT id FROM exam_papers WHERE name = %s", (paper_name,))
+        existing_paper = cursor.fetchone()
+        if existing_paper and replace_existing:
+            paper_id = existing_paper['id']
+            cursor.execute("SELECT id FROM problem_templates WHERE paper_id = %s", (paper_id,))
+            old_template_ids = [row['id'] for row in cursor.fetchall()]
+            deleted_cache_count = 0
+            if old_template_ids:
+                placeholders = ', '.join(['%s'] * len(old_template_ids))
+                cursor.execute(f"DELETE FROM user_responses WHERE template_id IN ({placeholders})", old_template_ids)
+                cursor.execute(f"DELETE FROM problem_templates WHERE id IN ({placeholders})", old_template_ids)
+                for template_id in old_template_ids:
+                    deleted_cache_count += invalidate_problem_cache(template_id)
+            cursor.execute(
+                "UPDATE exam_papers SET description = %s, is_enabled = %s WHERE id = %s",
+                (paper_payload.get('description'), bool(paper_payload.get('is_enabled', True)), paper_id)
+            )
+        else:
+            deleted_cache_count = 0
+            import_name = paper_name
+            if existing_paper:
+                suffix = datetime.now().strftime('%Y%m%d_%H%M%S')
+                import_name = f"{paper_name}（导入 {suffix}）"
+            cursor.execute(
+                "INSERT INTO exam_papers (name, description, is_enabled) VALUES (%s, %s, %s)",
+                (import_name, paper_payload.get('description'), bool(paper_payload.get('is_enabled', True)))
+            )
+            paper_id = cursor.lastrowid
+
+        imported_count = 0
+        for item in templates_payload:
+            if not isinstance(item, dict):
+                continue
+            template_name = (item.get('template_name') or '').strip()
+            problem_text = item.get('problem_text') or ''
+            solution_formula = item.get('solution_formula') or ''
+            if not template_name or not problem_text or not solution_formula:
+                continue
+
+            old_image_filename = item.get('image_filename')
+            image_filename = save_imported_image(item.get('image'))
+            if old_image_filename and image_filename and image_filename != old_image_filename:
+                problem_text = problem_text.replace(f"/static/images/{old_image_filename}", f"/static/images/{image_filename}")
+
+            cursor.execute(
+                """
+                INSERT INTO problem_templates
+                (template_name, problem_text, variables, solution_formula,
+                 answer_count, answer_units, difficulty, image_filename, paper_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    template_name,
+                    problem_text,
+                    normalize_variable_specs(item.get('variables') or ''),
+                    item.get('solution_formula'),
+                    int(item.get('answer_count') or 1),
+                    item.get('answer_units') or '',
+                    item.get('difficulty') or 'medium',
+                    image_filename or old_image_filename,
+                    paper_id
+                )
+            )
+            imported_count += 1
+
+        conn.commit()
+        deleted_cache_count += invalidate_exam_paper_cache(paper_id)
+        session.pop('current_problem', None)
+        session.modified = True
+        flash(f'题库导入完成：已导入 {imported_count} 道题，已清理 {deleted_cache_count} 条题目缓存。', 'success')
+    except Exception as err:
+        conn.rollback()
+        flash(f'题库导入失败：{err}', 'danger')
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(url_for('admin_manage_problems', paper_id=paper_id if 'paper_id' in locals() else None))
 
 
 @app.route('/admin/add_problem', methods=['GET', 'POST'])
@@ -4136,14 +4454,16 @@ def admin_add_problem():
                 (template_name, problem_text, variables, solution_formula, answer_count, answer_units, difficulty, image_filename, paper_id)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (template_name, problem_text, variables, solution_formula, answer_count, answer_units, difficulty, image_filename, paper_id))
+            new_template_id = cursor.lastrowid
 
             conn.commit()
+            deleted_cache_count = invalidate_exam_paper_cache(paper_id)
             session.pop('current_problem', None)
             session.modified = True
             cursor.close()
             conn.close()
 
-            flash('题目添加成功！', 'success')
+            flash(f'题目添加成功！已清理 {deleted_cache_count} 条题目缓存。', 'success')
             return redirect(url_for('admin_manage_problems'))
 
         except Exception as e:
@@ -4448,7 +4768,7 @@ def admin_user_management():
     cursor = conn.cursor(dictionary=True)
     try:
         query = """
-            SELECT id, username, name, major, class_name, teacher_name, exam_start_time, created_at
+            SELECT id, username, name, major, class_name, teacher_name, exam_start_time, exam_end_time, created_at
             FROM users
             WHERE username != 'admin'
         """
@@ -4468,11 +4788,59 @@ def admin_user_management():
         query += " ORDER BY created_at DESC, id DESC"
         cursor.execute(query, params)
         users = cursor.fetchall()
+
+        cursor.execute(
+            """
+            SELECT TRIM(teacher_name) AS name, COUNT(*) AS student_count
+            FROM users
+            WHERE username != 'admin'
+              AND teacher_name IS NOT NULL
+              AND TRIM(teacher_name) != ''
+            GROUP BY TRIM(teacher_name)
+            ORDER BY name
+            """
+        )
+        teacher_groups = cursor.fetchall()
+
+        cursor.execute(
+            """
+            SELECT TRIM(class_name) AS name, COUNT(*) AS student_count
+            FROM users
+            WHERE username != 'admin'
+              AND class_name IS NOT NULL
+              AND TRIM(class_name) != ''
+            GROUP BY TRIM(class_name)
+            ORDER BY name
+            """
+        )
+        class_groups = cursor.fetchall()
+
+        cursor.execute(
+            """
+            SELECT TRIM(major) AS name, COUNT(*) AS student_count
+            FROM users
+            WHERE username != 'admin'
+              AND major IS NOT NULL
+              AND TRIM(major) != ''
+            GROUP BY TRIM(major)
+            ORDER BY name
+            """
+        )
+        major_groups = cursor.fetchall()
     finally:
         cursor.close()
         conn.close()
 
-    return render_template('admin_user_management.html', users=users, keyword=keyword, class_name=class_name, major=major)
+    return render_template(
+        'admin_user_management.html',
+        users=users,
+        keyword=keyword,
+        class_name=class_name,
+        major=major,
+        teacher_groups=teacher_groups,
+        class_groups=class_groups,
+        major_groups=major_groups
+    )
 
 
 @app.route('/admin/users/add', methods=['POST'])
@@ -4488,15 +4856,20 @@ def admin_add_user():
     class_name = (request.form.get('class_name') or '').strip()
     teacher_name = (request.form.get('teacher_name') or '').strip()
     exam_start_time_raw = (request.form.get('exam_start_time') or '').strip()
+    exam_end_time_raw = (request.form.get('exam_end_time') or '').strip()
 
     if not username or not name:
         flash('学号和姓名不能为空', 'danger')
         return redirect(url_for('admin_user_management'))
 
     try:
-        exam_start_time = parse_exam_start_time(exam_start_time_raw)
+        exam_start_time = parse_exam_time(exam_start_time_raw)
+        exam_end_time = parse_exam_time(exam_end_time_raw)
     except ValueError as err:
         flash(str(err), 'danger')
+        return redirect(url_for('admin_user_management'))
+    if exam_start_time and exam_end_time and exam_end_time <= exam_start_time:
+        flash('结束时间必须晚于开始时间。', 'danger')
         return redirect(url_for('admin_user_management'))
 
     initial_password = build_initial_password(username)
@@ -4512,10 +4885,10 @@ def admin_add_user():
 
         cursor.execute(
             """
-            INSERT INTO users (username, name, major, class_name, teacher_name, exam_start_time, password, password_changed, avatar_filename)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, %s)
+            INSERT INTO users (username, name, major, class_name, teacher_name, exam_start_time, exam_end_time, password, password_changed, avatar_filename)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s)
             """,
-            (username, name, major or None, class_name or None, teacher_name or None, exam_start_time, password_hash, DEFAULT_AVATAR)
+            (username, name, major or None, class_name or None, teacher_name or None, exam_start_time, exam_end_time, password_hash, DEFAULT_AVATAR)
         )
         conn.commit()
         flash(f'账户已添加，初始密码：{initial_password}', 'success')
@@ -4542,15 +4915,20 @@ def admin_edit_user(user_id):
     username = (request.form.get('username') or '').strip()
     teacher_name = (request.form.get('teacher_name') or '').strip()
     exam_start_time_raw = (request.form.get('exam_start_time') or '').strip()
+    exam_end_time_raw = (request.form.get('exam_end_time') or '').strip()
 
     if not username or not name:
         flash('学号和姓名不能为空', 'danger')
         return redirect(url_for('admin_user_management'))
 
     try:
-        exam_start_time = parse_exam_start_time(exam_start_time_raw)
+        exam_start_time = parse_exam_time(exam_start_time_raw)
+        exam_end_time = parse_exam_time(exam_end_time_raw)
     except ValueError as err:
         flash(str(err), 'danger')
+        return redirect(url_for('admin_user_management'))
+    if exam_start_time and exam_end_time and exam_end_time <= exam_start_time:
+        flash('结束时间必须晚于开始时间。', 'danger')
         return redirect(url_for('admin_user_management'))
 
     conn = get_db_connection()
@@ -4559,16 +4937,149 @@ def admin_edit_user(user_id):
         cursor.execute(
             """
             UPDATE users
-            SET username = %s, name = %s, major = %s, class_name = %s, teacher_name = %s, exam_start_time = %s
+            SET username = %s, name = %s, major = %s, class_name = %s, teacher_name = %s,
+                exam_start_time = %s, exam_end_time = %s
             WHERE id = %s AND username != 'admin'
             """,
-            (username, name, major or None, class_name or None, teacher_name or None, exam_start_time, user_id)
+            (username, name, major or None, class_name or None, teacher_name or None, exam_start_time, exam_end_time, user_id)
         )
         conn.commit()
         flash('用户信息更新成功', 'success')
     except mysql.connector.Error as err:
         conn.rollback()
         flash(f'更新失败：{err}', 'danger')
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(url_for('admin_user_management'))
+
+
+@app.route('/admin/users/batch_update', methods=['POST'])
+@login_required
+def admin_batch_update_users():
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    filter_class_name = (request.form.get('filter_class_name') or '').strip()
+    filter_major = (request.form.get('filter_major') or '').strip()
+    new_teacher_name = (request.form.get('teacher_name') or '').strip()
+    exam_start_time_raw = (request.form.get('exam_start_time') or '').strip()
+    exam_end_time_raw = (request.form.get('exam_end_time') or '').strip()
+    update_exam_time = request.form.get('update_exam_time') == '1'
+
+    if not filter_class_name and not filter_major:
+        flash('请至少填写一个筛选条件：班级或专业。', 'danger')
+        return redirect(url_for('admin_user_management'))
+    if not new_teacher_name and not update_exam_time:
+        flash('请填写要设置的任课老师，或勾选批量设置考试时间。', 'danger')
+        return redirect(url_for('admin_user_management'))
+
+    try:
+        exam_start_time = parse_exam_time(exam_start_time_raw)
+        exam_end_time = parse_exam_time(exam_end_time_raw)
+    except ValueError as err:
+        flash(str(err), 'danger')
+        return redirect(url_for('admin_user_management'))
+    if update_exam_time and exam_start_time and exam_end_time and exam_end_time <= exam_start_time:
+        flash('结束时间必须晚于开始时间。', 'danger')
+        return redirect(url_for('admin_user_management'))
+
+    set_clauses = []
+    params = []
+    if new_teacher_name:
+        set_clauses.append("teacher_name = %s")
+        params.append(new_teacher_name)
+    if update_exam_time:
+        set_clauses.append("exam_start_time = %s")
+        set_clauses.append("exam_end_time = %s")
+        params.extend([exam_start_time, exam_end_time])
+
+    where_clauses = ["username != 'admin'"]
+    if filter_class_name:
+        where_clauses.append("TRIM(COALESCE(class_name, '')) = %s")
+        params.append(filter_class_name)
+    if filter_major:
+        where_clauses.append("TRIM(COALESCE(major, '')) = %s")
+        params.append(filter_major)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        sql = f"""
+            UPDATE users
+            SET {', '.join(set_clauses)}
+            WHERE {' AND '.join(where_clauses)}
+        """
+        cursor.execute(sql, params)
+        affected = cursor.rowcount
+        conn.commit()
+        if affected:
+            flash(f'批量修改完成：已更新 {affected} 名学生。', 'success')
+        else:
+            flash('没有找到符合条件的学生。', 'warning')
+    except Exception as err:
+        conn.rollback()
+        flash(f'批量修改失败：{err}', 'danger')
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(url_for('admin_user_management'))
+
+
+@app.route('/admin/users/batch_delete', methods=['POST'])
+@login_required
+def admin_batch_delete_users():
+    if session.get('username') != 'admin':
+        flash('权限不足', 'danger')
+        return redirect(url_for('dashboard'))
+
+    delete_by = (request.form.get('delete_by') or '').strip()
+    delete_value = (request.form.get('delete_value') or '').strip()
+    allowed_fields = {
+        'teacher_name': ('teacher_name', '任课老师'),
+        'class_name': ('class_name', '班级')
+    }
+
+    if delete_by not in allowed_fields:
+        flash('请选择按任课老师或班级删除。', 'danger')
+        return redirect(url_for('admin_user_management'))
+    if not delete_value:
+        flash('请填写要删除的任课老师或班级名称。', 'danger')
+        return redirect(url_for('admin_user_management'))
+
+    column_name, label = allowed_fields[delete_by]
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            f"""
+            SELECT id, username
+            FROM users
+            WHERE username != 'admin'
+              AND TRIM(COALESCE({column_name}, '')) = %s
+            """,
+            (delete_value,)
+        )
+        matched_users = cursor.fetchall()
+        user_ids = [user['id'] for user in matched_users]
+        if not user_ids:
+            flash(f'没有找到{label}为“{delete_value}”的学生。', 'warning')
+            return redirect(url_for('admin_user_management'))
+
+        placeholders = ', '.join(['%s'] * len(user_ids))
+        cursor.execute(f"DELETE FROM user_responses WHERE user_id IN ({placeholders})", user_ids)
+        cursor.execute(f"DELETE FROM verification_records WHERE user_id IN ({placeholders})", user_ids)
+        cursor.execute(f"DELETE FROM user_login_audit_logs WHERE user_id IN ({placeholders})", user_ids)
+        cursor.execute(f"DELETE FROM users WHERE id IN ({placeholders}) AND username != 'admin'", user_ids)
+        deleted_count = cursor.rowcount
+        conn.commit()
+        flash(f'已删除{label}为“{delete_value}”的学生 {deleted_count} 人，并清理相关答题记录。', 'success')
+    except Exception as e:
+        conn.rollback()
+        flash(f'批量删除失败：{e}', 'danger')
     finally:
         cursor.close()
         conn.close()

@@ -34,7 +34,7 @@
                         {% if exam_access.allowed %}
                             {% if completed_count > 0 %}继续{% endif %}学习
                         {% else %}
-                            未到开考时间
+                            {% if exam_access.status == 'ended' %}考试已结束{% else %}未到开考时间{% endif %}
                         {% endif %}
                     </span>
                 </a>
@@ -51,16 +51,19 @@
 </div>
 
 {% if not exam_access.allowed %}
-<div id="exam-waiting-alert" class="alert alert-warning border-0 shadow-sm">
+<div id="exam-waiting-alert" class="alert {% if exam_access.status == 'ended' %}alert-secondary{% else %}alert-warning{% endif %} border-0 shadow-sm">
     <div class="d-flex align-items-start gap-3">
         <i class="bi bi-clock-history fs-3"></i>
         <div>
-            <h5 class="alert-heading mb-1">考试尚未开始</h5>
+            <h5 class="alert-heading mb-1">{% if exam_access.status == 'ended' %}考试已结束{% else %}考试尚未开始{% endif %}</h5>
             <p class="mb-1">{{ exam_access.message }}</p>
             <div class="small">
                 服务器当前时间：{{ exam_access.server_time.strftime('%Y-%m-%d %H:%M:%S') }}
-                {% if exam_access.exam_start_time %}
+                {% if exam_access.status == 'not_started' and exam_access.exam_start_time %}
                 · 距离开考：<span id="exam-countdown">计算中</span>
+                {% endif %}
+                {% if exam_access.exam_end_time %}
+                · 结束时间：{{ exam_access.exam_end_time.strftime('%Y-%m-%d %H:%M') }}
                 {% endif %}
                 {% if exam_access.teacher_name %} · 任课老师：{{ exam_access.teacher_name }}{% endif %}
             </div>
@@ -69,7 +72,24 @@
 </div>
 {% endif %}
 
-{% if exam_access.exam_start_time and not exam_access.allowed %}
+{% if exam_access.allowed and exam_access.exam_end_time %}
+<div id="exam-active-alert" class="alert alert-info border-0 shadow-sm">
+    <div class="d-flex align-items-start gap-3">
+        <i class="bi bi-hourglass-split fs-3"></i>
+        <div>
+            <h5 class="alert-heading mb-1">考试进行中</h5>
+            <p class="mb-1">请在结束时间前完成答题。</p>
+            <div class="small">
+                服务器当前时间：{{ exam_access.server_time.strftime('%Y-%m-%d %H:%M:%S') }}
+                · 距离结束：<span id="exam-end-countdown">计算中</span>
+                {% if exam_access.teacher_name %} · 任课老师：{{ exam_access.teacher_name }}{% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if exam_access.status == 'not_started' and exam_access.exam_start_time and not exam_access.allowed %}
 <div class="modal fade" id="examStartedModal" tabindex="-1" aria-labelledby="examStartedModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -83,6 +103,25 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">稍后开始</button>
                 <a class="btn btn-success" href="{{ url_for('problem_ajax', problem_id=current_problem) }}">开始答题</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if exam_access.exam_end_time and exam_access.allowed %}
+<div class="modal fade" id="examEndedModal" tabindex="-1" aria-labelledby="examEndedModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-secondary text-white">
+                <h5 class="modal-title" id="examEndedModalLabel"><i class="bi bi-lock me-2"></i>考试已结束</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body">
+                已到达老师设置的结束时间，系统已关闭答题入口。
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">知道了</button>
             </div>
         </div>
     </div>
@@ -462,7 +501,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-{% if exam_access.exam_start_time and not exam_access.allowed %}
+{% if exam_access.status == 'not_started' and exam_access.exam_start_time and not exam_access.allowed %}
 (function setupExamStartWatcher() {
     const serverNow = {{ (exam_access.server_time.timestamp() * 1000)|int }};
     const examStart = {{ (exam_access.exam_start_time.timestamp() * 1000)|int }};
@@ -522,6 +561,78 @@ document.addEventListener('DOMContentLoaded', function() {
         const remaining = examStart - estimateServerNow();
         if (remaining <= 0) {
             openExam();
+            return;
+        }
+        if (countdownEl) {
+            countdownEl.textContent = formatRemaining(remaining);
+        }
+        window.setTimeout(tick, Math.min(1000, remaining));
+    }
+
+    tick();
+})();
+{% endif %}
+
+{% if exam_access.exam_end_time and exam_access.allowed %}
+(function setupExamEndWatcher() {
+    const serverNow = {{ (exam_access.server_time.timestamp() * 1000)|int }};
+    const examEnd = {{ (exam_access.exam_end_time.timestamp() * 1000)|int }};
+    const localLoadedAt = Date.now();
+    const countdownEl = document.getElementById('exam-end-countdown');
+    const activeAlert = document.getElementById('exam-active-alert');
+    const startButton = document.getElementById('exam-start-button');
+    const startButtonText = document.getElementById('exam-start-button-text');
+    let notified = false;
+
+    function estimateServerNow() {
+        return serverNow + (Date.now() - localLoadedAt);
+    }
+
+    function formatRemaining(ms) {
+        const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        if (hours > 0) {
+            return `${hours}小时${String(minutes).padStart(2, '0')}分${String(seconds).padStart(2, '0')}秒`;
+        }
+        return `${minutes}分${String(seconds).padStart(2, '0')}秒`;
+    }
+
+    function closeExam() {
+        window.examCanStart = false;
+        if (startButton) {
+            startButton.classList.add('disabled');
+            startButton.setAttribute('aria-disabled', 'true');
+        }
+        if (startButtonText) {
+            startButtonText.textContent = '考试已结束';
+        }
+        if (activeAlert) {
+            activeAlert.classList.remove('alert-info');
+            activeAlert.classList.add('alert-secondary');
+            activeAlert.querySelector('.alert-heading').textContent = '考试已结束';
+            const message = activeAlert.querySelector('p');
+            if (message) message.textContent = '已到达老师设置的结束时间，无法继续答题。';
+        }
+        if (countdownEl) {
+            countdownEl.textContent = '已结束';
+        }
+        if (!notified) {
+            notified = true;
+            const modalEl = document.getElementById('examEndedModal');
+            if (modalEl && window.bootstrap) {
+                new bootstrap.Modal(modalEl).show();
+            } else {
+                alert('考试已结束，无法继续答题。');
+            }
+        }
+    }
+
+    function tick() {
+        const remaining = examEnd - estimateServerNow();
+        if (remaining <= 0) {
+            closeExam();
             return;
         }
         if (countdownEl) {
